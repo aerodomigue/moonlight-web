@@ -386,8 +386,9 @@ public:
      *            connectivity check to a private address succeed. This is the
      *            same statement /api/auth/host-key already trusts on this path.
      */
+    /// viaProxy is set only after resolving headers from a trusted socket peer.
     static bool canUnlockAdmin(const QString& ip, bool hostTrusted, bool viaTunnel,
-                               bool internet = false);
+                               bool internet = false, bool viaProxy = false);
     /** Rate-limit bucket key for an address: the raw IPv4, or the /64 prefix for
      *  IPv6 (a single client trivially owns a whole /64, so per-/128 buckets are
      *  pointless against guessing). */

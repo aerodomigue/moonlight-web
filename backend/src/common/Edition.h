@@ -113,6 +113,14 @@ bool lanOnlyFrom(const QByteArray& value);
 /// build configured with MW_LAN_ONLY in its environment embedded.
 bool lanOnly();
 
+/// Self-hosted reverse proxy profile; enabled unless MW_REVERSE_PROXY=0.
+/// Independent of LAN-only: public access uses the operator's own HTTPS proxy.
+bool reverseProxy();
+/// Validated HTTPS origin from MW_PUBLIC_URL, without a trailing slash.
+QString publicUrl();
+/// Local infrastructure discovery and project-operated services are disabled.
+bool externalServicesDisabled();
+
 /// The error every refused Internet Access request answers with.
 QString lanOnlyRefusal();
 

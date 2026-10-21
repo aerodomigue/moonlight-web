@@ -16,6 +16,7 @@
  */
 
 #include "StunClient.h"
+#include "common/Edition.h"
 
 #include <QUdpSocket>
 #include <QUrl>
@@ -60,6 +61,7 @@ StunClient::StunClient(QObject* parent)
 
 QList<StunClient::StunServer> StunClient::defaultServers()
 {
+    if (mw::edition::externalServicesDisabled()) return {};
     // Ours first, and the public ones only behind it. A STUN binding hands the
     // server the address it is asking about, so whoever answers learns this
     // machine's public IP — which is exactly what the consent text names, and it

@@ -836,6 +836,8 @@ export const MoonlightApp = {
         let localIp = '';
         let upnpAvailable = false;
         let internetActive = false;
+        let reverseProxy = false;
+        let publicUrl = '';
         let rendezvousUrl = '';
         let rendezvousOnline = false;
         try {
@@ -851,6 +853,8 @@ export const MoonlightApp = {
                 BackendClient.getInternetStatus(),
             ]);
             httpsPort = (adminRes && adminRes.https_port) || 443;
+            reverseProxy = !!status.reverse_proxy;
+            publicUrl = status.public_url || '';
             domain = status.domain || '';
             localIp = status.local_ip || '';
             extPort = status.external_https_port || httpsPort;
@@ -869,7 +873,13 @@ export const MoonlightApp = {
 
         let url = '';
         let remote = false;
-        if (rendezvousUrl && internetActive) {
+        if (reverseProxy) {
+            url = publicUrl || window.location.origin;
+            remote = true;
+            internetActive = true;
+            rendezvousUrl = '';
+            rendezvousOnline = false;
+        } else if (rendezvousUrl && internetActive) {
             // Not gated on the LINE being up: a line that dropped comes back on
             // its own, the address is still the right one, and callers say so
             // from `rendezvousOnline`. The switch is another matter — see above.
@@ -886,6 +896,7 @@ export const MoonlightApp = {
             remote,
             rendezvousUrl,
             rendezvousOnline,
+            reverseProxy,
             domain,
             localIp,
             httpsPort,
@@ -990,6 +1001,7 @@ export const MoonlightApp = {
      * would be told the same URL twice, one line apart.
      */
     _buildAddressHintBanner(info, shownUrl) {
+        if (info.reverseProxy) return null;
         const hostname = window.location.hostname;
 
         if (!info.internetActive) {

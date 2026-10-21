@@ -37,7 +37,7 @@ namespace {
 
 // The public MoonlightWeb repository whose Releases carry the installers built
 // by .github/workflows/release.yml. Kept as a single source of truth here.
-const char* kReleasesApi = "https://api.github.com/repos/linckosz/moonlight-web/releases/latest";
+const char* kReleasesApi = "https://api.github.com/repos/aerodomigue/moonlight-web/releases/latest";
 
 // arm64 vs x64 — CI names installers with these tokens. QSysInfo reports e.g.
 // "arm64" / "x86_64" for the running process.
@@ -88,7 +88,8 @@ bool isGitHubUrl(const QString& url)
 // themselves, who therefore never phones our infrastructure at all.
 QString buildRelayUrl(const QString& version)
 {
-    if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY")) return {};
+    if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY") || mw::edition::externalServicesDisabled())
+        return {};
 
     const QString domain = QString::fromUtf8(qgetenv("MW_DOMAIN")).trimmed();
     const QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN")).trimmed();
@@ -144,11 +145,12 @@ QJsonObject UpdateChecker::statusJson()
     // could be offered is a production one — which installs a different
     // application beside it rather than updating it. Nothing to check, then;
     // "channel" says why, for whoever reads the answer.
-    if (mw::edition::isDevBuild()) {
+    if (mw::edition::isDevBuild() || mw::edition::reverseProxy()) {
         QJsonObject obj;
         obj["current"] = m_current;
         obj["update_available"] = false;
-        obj["channel"] = QStringLiteral("dev");
+        obj["channel"] =
+            mw::edition::reverseProxy() ? QStringLiteral("self-hosted") : QStringLiteral("dev");
         return obj;
     }
 
@@ -184,7 +186,7 @@ void UpdateChecker::doFetch()
     if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY")) return;
     // A DEV build answers without asking anyone (see statusJson), and so does a
     // LAN-only instance: the only release it could be offered is an official one.
-    if (mw::edition::isDevBuild() || mw::edition::lanOnly()) return;
+    if (mw::edition::isDevBuild() || mw::edition::externalServicesDisabled()) return;
 
     // The relay when this build has one, GitHub otherwise. Either way a single
     // release JSON comes back in the same shape, so nothing downstream cares

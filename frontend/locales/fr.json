@@ -167,7 +167,8 @@
         "upToDate": "Vous avez la dernière version de MoonlightWeb ({{version}}).",
         "checking": "Recherche d'une mise à jour…",
         "checkFailed": "Impossible de vérifier les mises à jour pour le moment.",
-        "installed": "Version installée : {{version}}"
+        "installed": "Version installée : {{version}}",
+        "selfHosted": "Installez les mises à jour depuis votre dépôt ou votre image de conteneur."
     },
     "stats": {
         "title": "Aidez à décider ce que MoonlightWeb prendra en charge",
@@ -730,7 +731,11 @@
         "logsFailed": "Impossible de télécharger les logs : {{message}}",
         "internetNotActive": "L'accès Internet est activé mais inactif : l'enregistrement DNS n'a pas abouti. Vérifiez le token PowerDNS et votre réseau, puis réactivez l'accès Internet.",
         "changesDiscarded": "Modifications des paramètres abandonnées",
-        "confirmRevoke": "Révoquer la session de « {{name}} » ? Cet appareil devra saisir un PIN à nouveau."
+        "confirmRevoke": "Révoquer la session de « {{name}} » ? Cet appareil devra saisir un PIN à nouveau.",
+        "reverseProxy": "Reverse proxy personnel",
+        "reverseProxyDescription": "Accès direct via votre proxy HTTPS. Les services externes MoonlightWeb et la télémétrie sont désactivés.",
+        "publicUrl": "URL publique",
+        "reverseProxyConfiguration": "Configurez MW_PUBLIC_URL et MW_TRUSTED_PROXIES sur le serveur. Le proxy doit transmettre les WebSockets."
     },
     "stream": {
         "stop": "Arrêter",

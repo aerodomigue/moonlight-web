@@ -17,6 +17,7 @@
 
 #include "HttpServer.h"
 #include "HttpParser.h"
+#include "ProxyHeaders.h"
 #include "PortFallback.h"
 #include "RequestGuard.h"
 #include "RestRouter.h"
@@ -1012,6 +1013,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 {
     HttpRequest req = HttpParser::parse(requestData);
     req.clientAddress = socket->peerAddress().toString();
+    const bool proxyHttps = ProxyHeaders::apply(req);
 
     // A request target carrying control characters is refused before anything
     // reads it: the redirect below puts the path in a Location header, and a
@@ -1024,7 +1026,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         return;
     }
 
-    const bool peerLocal = isLocalRequest(req.clientAddress);
+    const bool peerLocal = !req.viaProxy && isLocalRequest(req.clientAddress);
 
     // HTTP→HTTPS redirect for plain HTTP connections.
     //
@@ -1049,7 +1051,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // It lives here rather than in serveRequest() because it is a property of
     // the socket the request arrived on, not of the request: a tunnel carries no
     // scheme of its own, and there is nowhere for it to redirect to.
-    if (!qobject_cast<QSslSocket*>(socket) && m_ActiveHttpsPort > 0) {
+    if (!qobject_cast<QSslSocket*>(socket) && m_ActiveHttpsPort > 0 && !proxyHttps) {
         QString host = req.headers.value("host");
         int portSep = host.lastIndexOf(':');
         QString hostname = (portSep >= 0) ? host.left(portSep) : host;
@@ -1176,7 +1178,7 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         return;
     }
 
-    const bool peerLocal = !viaTunnel && isLocalRequest(req.clientAddress);
+    const bool peerLocal = !viaTunnel && !req.viaProxy && isLocalRequest(req.clientAddress);
     const QString sessionToken = sessionTokenFromRequest(req);
 
     // The single exception, computed once so the two lines below cannot drift
@@ -1199,7 +1201,9 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     // was, is a second proof of location: adminSession is only ever set by the
     // password unlock, which judged that on the ICE address before promoting.
     ctx.adminKeyOk = (!viaTunnel || tunnelHost || ctx.adminSession) && adminKeyMatches(req);
-    ctx.publicDomain = m_Certs.domain();
+    ctx.publicDomain = mw::edition::reverseProxy() && !mw::edition::publicUrl().isEmpty()
+                           ? QUrl(mw::edition::publicUrl()).host()
+                           : m_Certs.domain();
     ctx.adminLocked = m_AdminLocked;
 
     const RequestGuard::Decision decision =
@@ -1416,8 +1420,10 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
 
 void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData)
 {
-    const HttpRequest up = HttpParser::parse(requestData);
-    const QString peerAddr = clientSocket->peerAddress().toString();
+    HttpRequest up = HttpParser::parse(requestData);
+    up.clientAddress = clientSocket->peerAddress().toString();
+    ProxyHeaders::apply(up);
+    const QString peerAddr = up.clientAddress;
 
     // Same refusal as the REST path: a control character in the target means the
     // handshake was crafted, and it is forwarded verbatim to the WS server below.
@@ -1492,7 +1498,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // A player's slot is the exception: those callers have no MoonlightWeb
     // session and never will, so the mw_player cookie bound to that slot's
     // activation is what opens it — and nothing else, not even a local peer.
-    const bool localPrivilege = HttpServer::isLocalRequest(peerAddr) &&
+    const bool localPrivilege = !up.viaProxy && HttpServer::isLocalRequest(peerAddr) &&
                                 RequestGuard::isLocalHostName(up.headers.value("host"));
     if (playerSlot) {
         if (!m_PlayerSlotAuth || !m_PlayerSlotAuth(up, wsSlot)) {

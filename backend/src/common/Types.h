@@ -49,6 +49,7 @@ struct HttpRequest
                                 // a LAN address, an mDNS name, or our domain) —
                                 // false means we were reached under someone
                                 // else's name, e.g. a third-party tunnel.
+    bool viaProxy = false;      // Trusted reverse proxy; never grants local peer privileges.
     bool viaTunnel = false;     // Carried in over a rendezvous control tunnel rather
                                 // than accepted on a socket. Set by HttpServer, never
                                 // by anything a caller sends. It is what the local

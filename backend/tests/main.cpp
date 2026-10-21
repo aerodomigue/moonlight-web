@@ -69,6 +69,8 @@ void run_control_channel_tests();
 void run_feed_ipc_tests();
 void run_cert_manager_tests();
 
+void run_reverse_proxy_tests();
+
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
@@ -82,6 +84,13 @@ int main(int argc, char** argv)
         return g_stats.failed ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
+    run_reverse_proxy_tests();
+    if (app.arguments().contains(QStringLiteral("--reverse-proxy"))) {
+        std::fprintf(stderr, "Reverse proxy: %d passed, %d failed\n", g_stats.passed,
+                     g_stats.failed);
+        return g_stats.failed ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+    qputenv("MW_REVERSE_PROXY", "0");
     run_input_encoder_tests();
     run_stream_config_tests();
     run_input_crypto_tests();

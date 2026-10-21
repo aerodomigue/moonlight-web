@@ -292,6 +292,8 @@ export class AdminView {
     async _loadInternetState() {
         try {
             const status = await BackendClient.getInternetStatus();
+            this._reverseProxy = !!status.reverse_proxy;
+            this._publicUrl = status.public_url || '';
             this._internetEnabled = status.internet_access_enabled || false;
             this._domain = status.domain || '';
             this._externalHttpsPort = status.external_https_port || this._httpsPort;
@@ -843,6 +845,20 @@ export class AdminView {
 
                 ${this._renderRemoteAdmin()}
 
+                ${
+                    this._reverseProxy
+                        ? `
+                <div class="settings-section" id="admin-section-internet">
+                    <h3 class="settings-section-title">${t('admin.reverseProxy')}</h3>
+                    <p>${t('admin.reverseProxyDescription')}</p>
+                    <div class="settings-field">
+                        <label>${t('admin.publicUrl')}</label>
+                        <code>${this.esc(this._publicUrl || window.location.origin)}</code>
+                    </div>
+                    <p>${t('admin.reverseProxyConfiguration')}</p>
+                </div>
+                `
+                        : `
                 <!-- Internet -->
                 <div class="settings-section" id="admin-section-internet">
                     <h3 class="settings-section-title">${t('admin.internet')}${
@@ -995,6 +1011,8 @@ export class AdminView {
                     }
                 </div>
 
+                `
+                }
                 <!-- Local Access -->
                 ${
                     this._localIps.length

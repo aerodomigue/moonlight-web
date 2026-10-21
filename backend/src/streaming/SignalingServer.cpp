@@ -270,7 +270,7 @@ void SignalingServer::sendIceConfig(bool needStun, int iceTimeoutMs)
     // made on host candidates either way. The browser only keeps its own list
     // when no ice-config arrives at all (an older host).
     QJsonArray iceServers;
-    if (needStun) {
+    if (needStun && !m_StunServerUrl.isEmpty()) {
         QJsonObject iceServer;
         iceServer["urls"] = m_StunServerUrl;
         iceServers.append(iceServer);
