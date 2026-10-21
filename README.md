@@ -1,3 +1,8 @@
+> **Fork auto-hébergé** : accès direct derrière votre reverse proxy HTTPS,
+> sans services externes MoonlightWeb ni télémétrie par défaut.
+> URL configurable avec `MW_PUBLIC_URL`. Voir [la configuration](docs/reverse-proxy.md).
+> Image : `ghcr.io/aerodomigue/moonlight-web-dev:dev`.
+
 <div align="center">
 
 <img src="frontend/assets/logo.png" alt="Moonlight‑Web logo" width="128" />

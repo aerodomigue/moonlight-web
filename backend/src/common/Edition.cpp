@@ -16,6 +16,7 @@
  */
 
 #include "common/Edition.h"
+#include <QUrl>
 
 #include <cstring>
 
@@ -139,8 +140,34 @@ bool lanOnly()
     return lanOnlyFrom(value);
 }
 
+bool reverseProxy()
+{
+    const QByteArray value = qgetenv("MW_REVERSE_PROXY").trimmed().toLower();
+    return value != "0" && value != "false" && value != "no" && value != "off";
+}
+
+bool externalServicesDisabled()
+{
+    return reverseProxy() || lanOnly();
+}
+
+QString publicUrl()
+{
+    const QUrl url(QString::fromUtf8(qgetenv("MW_PUBLIC_URL")).trimmed(), QUrl::StrictMode);
+    if (!url.isValid() || url.scheme() != QLatin1String("https") || url.host().isEmpty() ||
+        !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment() ||
+        (!url.path().isEmpty() && url.path() != QLatin1String("/")))
+        return {};
+    QUrl origin = url;
+    origin.setPath(QString());
+    return origin.toString(QUrl::FullyEncoded);
+}
+
 QString lanOnlyRefusal()
 {
+    if (reverseProxy())
+        return QStringLiteral("Managed Internet access is disabled. Use your own HTTPS reverse "
+                              "proxy and configure MW_PUBLIC_URL instead.");
     return QStringLiteral("This instance is LAN-only (MW_LAN_ONLY is set): Internet access "
                           "cannot be enabled. Open it at its LAN address instead.");
 }

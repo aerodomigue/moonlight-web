@@ -673,7 +673,12 @@ static int runStatusCommand(quint16 persistedHttpsPort)
     const QJsonObject rdv = inet.value("rendezvous").toObject();
     const QString rdvUrl = rdv.value("url").toString();
     const bool internetWanted = inet.value("internet_access_enabled").toBool(false);
-    if (internetOn) {
+    if (inet.value("reverse_proxy").toBool(false)) {
+        const QString publicUrl = inet.value("public_url").toString();
+        out << "  Reverse proxy  "
+            << (publicUrl.isEmpty() ? QStringLiteral("set MW_PUBLIC_URL") : publicUrl)
+            << "\n                 direct access; project services and telemetry disabled\n";
+    } else if (internetOn) {
         const int extPort = inet.value("external_https_port").toInt(443);
         out << "  From internet  https://" << inet.value("domain").toString()
             << (extPort == 443 ? QString() : QStringLiteral(":%1").arg(extPort)) << "\n";
@@ -943,7 +948,7 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
 {
     QTextStream out(stdout);
     // Before the agreement is shown: there is nothing here to agree to.
-    if (mw::edition::lanOnly()) {
+    if (mw::edition::externalServicesDisabled()) {
         out << mw::edition::lanOnlyRefusal() << "\n";
         out.flush();
         return 1;
@@ -1687,13 +1692,23 @@ int main(int argc, char* argv[])
     // dev build is pointed at production to check compatibility — while the
     // domain CI bakes into a release binary must not.
     // A LAN-only instance talks to no introduction server, staging included.
-    if (devMode && !mw::edition::lanOnly() && qEnvironmentVariableIsEmpty("MW_DOMAIN") &&
+    if (devMode && !mw::edition::externalServicesDisabled() &&
+        qEnvironmentVariableIsEmpty("MW_DOMAIN") &&
         qEnvironmentVariableIsEmpty("MW_RENDEZVOUS_URL")) {
         qputenv("MW_DOMAIN", "dev.moonlightweb.top");
         Logger::info("[--dev] MW_DOMAIN defaulted to dev.moonlightweb.top (staging); set "
                      "MW_DOMAIN=moonlightweb.top to target production");
     }
     applyEmbeddedEnvDefaults();
+    if (mw::edition::reverseProxy()) {
+        Logger::info(
+            "[Self-hosted] Direct HTTPS proxy access; project services and telemetry disabled");
+        if (!qEnvironmentVariableIsEmpty("MW_PUBLIC_URL") && mw::edition::publicUrl().isEmpty()) {
+            Logger::error("MW_PUBLIC_URL must be an HTTPS origin without credentials, path, query "
+                          "or fragment");
+            return 1;
+        }
+    }
     if (mw::edition::lanOnly())
         Logger::info("[LAN-only] MW_LAN_ONLY is set: no rendezvous line, no STUN, no UPnP, no "
                      "update check — Internet Access requests are refused");
@@ -5124,6 +5139,12 @@ int main(int argc, char* argv[])
     // is not answering; the link itself stays valid and stays the same
     // characters.
     shareDeps.playerLink = [&rendezvous, rendezvousShouldRun](const QString& token) -> QString {
+        if (mw::edition::reverseProxy()) {
+            const QString entry = mw::edition::publicUrl();
+            return entry.isEmpty() ? QString()
+                                   : entry + QStringLiteral("/p/") +
+                                         QString::fromLatin1(QUrl::toPercentEncoding(token));
+        }
         if (!rendezvousShouldRun()) return {};
         // Empty until the identifier has been claimed: an address that answers
         // to nobody is worse than no address.
@@ -5136,7 +5157,10 @@ int main(int argc, char* argv[])
         // into a message, and one thing in the link instead of two.
         return entry + QStringLiteral("#t=") + QString::fromLatin1(QUrl::toPercentEncoding(token));
     };
-    shareDeps.remoteReachable = [&rendezvous]() { return rendezvous.isOnline(); };
+    shareDeps.remoteReachable = [&rendezvous]() {
+        return mw::edition::reverseProxy() ? !mw::edition::publicUrl().isEmpty()
+                                           : rendezvous.isOnline();
+    };
     // The Sunshine identity of each player slot's latest join. A join on a later
     // rung of the transport chain is the same browser coming back after the
     // previous rung failed, and reuses it — the app session that rung left
@@ -6040,6 +6064,10 @@ int main(int argc, char* argv[])
     // because a link that cannot work is worse than no link: it is single-use
     // and the user would have spent it. Every caller falls back to loopback.
     auto remoteLink = [&](const QString& path) -> QString {
+        if (mw::edition::reverseProxy()) {
+            const QString entry = mw::edition::publicUrl();
+            return entry.isEmpty() ? QString() : entry + path;
+        }
         if (!rendezvousShouldRun() || !rendezvous.isOnline()) return {};
         // Refreshes the verdict for next time; this call reads the last one.
         probeEntry();

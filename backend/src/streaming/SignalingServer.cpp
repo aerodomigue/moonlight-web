@@ -270,7 +270,7 @@ void SignalingServer::sendIceConfig(bool needStun, int iceTimeoutMs)
     // made on host candidates either way. The browser only keeps its own list
     // when no ice-config arrives at all (an older host).
     QJsonArray iceServers;
-    if (needStun) {
+    if (needStun && !m_StunServerUrl.isEmpty()) {
         QJsonObject iceServer;
         iceServer["urls"] = m_StunServerUrl;
         iceServers.append(iceServer);
@@ -363,7 +363,7 @@ void SignalingServer::onNewWsConnection()
     // Same condition buildIceConfig uses below, so the two ends of the
     // connection never disagree about whether STUN is in play. A LAN-only
     // instance asks no STUN server at all, on either end (Edition.h).
-    const bool lanOnly = mw::edition::lanOnly();
+    const bool lanOnly = mw::edition::externalServicesDisabled();
     sendIceConfig((isInternet || m_ForceIceTcp) && !lanOnly, iceTimeoutMs);
 
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port

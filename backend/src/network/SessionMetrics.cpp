@@ -58,7 +58,8 @@ QString archToken()
 // level, by a user at their firewall — without touching the update path.
 QString buildEndpoint()
 {
-    if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY") || mw::edition::lanOnly()) return {};
+    if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY") || mw::edition::externalServicesDisabled())
+        return {};
 
     const QString domain = QString::fromUtf8(qgetenv("MW_DOMAIN")).trimmed();
     const QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN")).trimmed();

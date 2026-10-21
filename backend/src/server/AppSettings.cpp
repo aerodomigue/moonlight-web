@@ -255,6 +255,7 @@ void AppSettings::setNativeHostEnabled(bool enabled)
 
 bool AppSettings::updateRelayEnabled() const
 {
+    if (mw::edition::externalServicesDisabled()) return false;
     QJsonObject obj = readAll();
     return obj.value("update_relay_enabled").toBool(true);
 }
@@ -265,6 +266,7 @@ bool AppSettings::updateRelayEnabled() const
 
 bool AppSettings::sessionMetricsEnabled() const
 {
+    if (mw::edition::externalServicesDisabled()) return false;
     QJsonObject obj = readAll();
     return obj.value("session_metrics_enabled").toBool(true);
 }
@@ -314,6 +316,7 @@ QString AppSettings::metricsConsentDecision() const
 
 bool AppSettings::sessionLocationEnabled() const
 {
+    if (mw::edition::externalServicesDisabled()) return false;
     QJsonObject obj = readAll();
     return obj.value("session_location_enabled").toBool(false);
 }
@@ -868,6 +871,7 @@ void AppSettings::setRouterLanIp(const QString& ip)
 
 QString AppSettings::stunServer() const
 {
+    if (mw::edition::externalServicesDisabled()) return {};
     QJsonObject obj = readAll();
     const QString configured = obj.value("stun_server").toString();
     if (!configured.isEmpty()) return configured;
@@ -910,6 +914,7 @@ void AppSettings::setHmacKey(const QByteArray& key)
 
 bool AppSettings::upnpEnabled() const
 {
+    if (mw::edition::externalServicesDisabled()) return false;
     QJsonObject obj = readAll();
     // Default to true — UPnP is beneficial for most users
     return obj.value("upnp_enabled").toBool(true);
@@ -928,7 +933,7 @@ bool AppSettings::internetAccessEnabled() const
 {
     // Off on a LAN-only instance whatever the file says: a settings.json
     // carried over from an install that had it on must open nothing here.
-    if (mw::edition::lanOnly()) return false;
+    if (mw::edition::externalServicesDisabled()) return false;
     QJsonObject obj = readAll();
     return obj.value("internet_access_enabled").toBool(false);
 }
@@ -1118,6 +1123,7 @@ void AppSettings::setPublicIp(const QString& ip)
 
 bool AppSettings::autoIpDetection() const
 {
+    if (mw::edition::externalServicesDisabled()) return false;
     QJsonObject obj = readAll();
     return obj.value("auto_ip_detection").toBool(true);
 }
@@ -1133,6 +1139,7 @@ QString AppSettings::transportMode() const
 {
     QJsonObject obj = readAll();
     QString t = obj.value("transport_mode").toString();
+    if (mw::edition::reverseProxy()) return "wss";
     if (t.isEmpty()) return "auto";
     return t;
 }

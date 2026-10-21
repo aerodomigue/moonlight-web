@@ -4,8 +4,9 @@
 #      docker compose up -d
 #      docker compose exec moonlightweb moonlightweb --status
 #
-#  Then open https://<this-machine-ip> from any device on the LAN and accept the
-#  self-signed certificate. The access PIN is printed by `--status`.
+#  Configure MW_PUBLIC_URL and MW_TRUSTED_PROXIES in .env, then point your
+#  HTTPS reverse proxy to port 8080 with WebSocket forwarding enabled.
+#  Instructions: ../docs/reverse-proxy.md. PIN: `--status`.
 #
 #  Why host networking rather than published ports: MoonlightWeb needs three
 #  things a bridge network does not give it —
@@ -15,14 +16,15 @@
 #      published in advance. On the host network there is nothing to publish.
 #    • mDNS. Sunshine hosts are discovered by multicast on UDP 5353, which does
 #      not cross the default bridge.
-#    • UPnP. The router is found by SSDP multicast — same story.
+#    • Wake-on-LAN. The real LAN interface and netmask are required to send
+#      local broadcast packets to registered computers while they are offline.
 #
 #  The bridged variant, and what you give up with it, is in
 #  docker-compose.bridge.yml.
 # =============================================================================
 services:
   moonlightweb:
-    image: ghcr.io/linckosz/moonlight-web:latest
+    image: ghcr.io/aerodomigue/moonlight-web-dev:dev
     container_name: moonlightweb
     restart: unless-stopped
     network_mode: host
@@ -41,6 +43,12 @@ services:
 
     environment:
       TZ: Etc/UTC
+      MW_REVERSE_PROXY: "1"
+      MW_NO_TELEMETRY: "1"
+      MW_PUBLIC_URL: ${MW_PUBLIC_URL:-}
+      MW_TRUSTED_PROXIES: ${MW_TRUSTED_PROXIES:-127.0.0.1/32,::1/128}
+      MW_HTTP_PORT: 8080
+      MW_HTTPS_PORT: 8443
       # Defaults; uncomment to move the listeners off the privileged ports.
       # MW_HTTP_PORT: 8080
       # MW_HTTPS_PORT: 8443

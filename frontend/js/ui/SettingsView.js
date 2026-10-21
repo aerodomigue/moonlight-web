@@ -294,6 +294,9 @@ export class SettingsView {
             info && info.current
                 ? `<p class="setting-desc">${escapeHtml(t('update.installed', { version: info.current }))}</p>`
                 : '';
+        if (info && info.channel === 'self-hosted') {
+            return `<p class="setting-desc">${escapeHtml(t('update.selfHosted'))}</p>${installed}`;
+        }
         const button = canUpdate
             ? `<button class="btn btn-secondary settings-update-apply">${escapeHtml(t('update.updateNow'))}</button>`
             : '';

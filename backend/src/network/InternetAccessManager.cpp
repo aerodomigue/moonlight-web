@@ -117,6 +117,7 @@ InternetAccessManager::~InternetAccessManager()
 
 void InternetAccessManager::start()
 {
+    if (mw::edition::externalServicesDisabled()) return;
     if (m_Active) {
         qInfo() << "[InternetAccess] Already active";
         return;
@@ -255,6 +256,7 @@ void InternetAccessManager::updateHairpinStatus()
 
 void InternetAccessManager::forceRefresh()
 {
+    if (mw::edition::externalServicesDisabled()) return;
     qInfo() << "[InternetAccess] Force refresh triggered";
 
     // Re-detect the public IP. Nothing is published with it — it is shown on

@@ -344,13 +344,15 @@ bool AuthManager::isLanAddress(const QString& ip)
     return false;
 }
 
-bool AuthManager::canUnlockAdmin(const QString& ip, bool hostTrusted, bool viaTunnel, bool internet)
+bool AuthManager::canUnlockAdmin(const QString& ip, bool hostTrusted, bool viaTunnel, bool internet,
+                                 bool viaProxy)
 {
     if (!isLanAddress(ip)) {
         // Outside the LAN the password buys nothing unless the owner opened
-        // that door, and then only on the rendezvous tunnel, from a peer ICE
-        // gave an address to — a label ("peer-4f2a") parses as nothing.
-        return internet && viaTunnel && !QHostAddress(cleanClientAddress(ip)).isNull();
+        // that door. Accept either an ICE tunnel peer or an address resolved
+        // through an explicitly trusted reverse proxy on our public host.
+        return internet && (viaTunnel || (viaProxy && hostTrusted)) &&
+               !QHostAddress(cleanClientAddress(ip)).isNull();
     }
 
     // On the tunnel, that address is ICE's own conclusion and is the whole

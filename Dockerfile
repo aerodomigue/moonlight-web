@@ -139,7 +139,9 @@ ENV HOME=/data \
     LANG=C.UTF-8 \
     XDG_RUNTIME_DIR=/tmp/runtime-moonlightweb \
     QT_QPA_PLATFORM=offscreen \
-    MW_SERVICE=1
+    MW_SERVICE=1 \
+    MW_REVERSE_PROXY=1 \
+    MW_NO_TELEMETRY=1
 VOLUME ["/data"]
 
 # Documentation only — EXPOSE publishes nothing. 443 is the web UI and the

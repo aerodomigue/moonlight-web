@@ -535,8 +535,8 @@ public:
     //
     // STUN server URL for WebRTC ICE connectivity. Used by both the backend's
     // libdatachannel PeerConnection and forwarded to the browser for its
-    // RTCPeerConnection. Default when the key is absent: "stun:stream.{MW_DOMAIN}:3478"
-    // — our own server, the one the Internet-access consent names.
+    // RTCPeerConnection. Always empty in the self-hosted profile (WSS); even
+    // a configured server from an older installation cannot trigger discovery.
 
     QString stunServer() const;
     void setStunServer(const QString& url);

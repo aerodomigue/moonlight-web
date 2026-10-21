@@ -167,7 +167,8 @@
         "upToDate": "You have the latest version of MoonlightWeb ({{version}}).",
         "checking": "Checking for an update…",
         "checkFailed": "Could not check for an update right now.",
-        "installed": "Installed version: {{version}}"
+        "installed": "Installed version: {{version}}",
+        "selfHosted": "Install updates from your repository or container image."
     },
     "stats": {
         "title": "Help decide what MoonlightWeb supports next",
@@ -730,7 +731,11 @@
         "logsFailed": "Could not download the logs: {{message}}",
         "internetNotActive": "Internet access is enabled but not active: DNS registration did not complete. Check the PowerDNS token and your network, then re-enable Internet access.",
         "changesDiscarded": "Settings changes discarded",
-        "confirmRevoke": "Revoke the session of \"{{name}}\"? That device will have to enter a PIN again."
+        "confirmRevoke": "Revoke the session of \"{{name}}\"? That device will have to enter a PIN again.",
+        "reverseProxy": "Your reverse proxy",
+        "reverseProxyDescription": "Direct access through your HTTPS proxy. External MoonlightWeb services and telemetry are disabled.",
+        "publicUrl": "Public URL",
+        "reverseProxyConfiguration": "Set MW_PUBLIC_URL and MW_TRUSTED_PROXIES on the server. Enable WebSocket forwarding on the proxy."
     },
     "stream": {
         "stop": "Stop",

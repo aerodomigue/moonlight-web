@@ -101,6 +101,7 @@ add_executable(run_tests
     test_keyboard_layout.cpp
     test_native_capabilities_json.cpp
     test_edition.cpp
+    test_reverse_proxy.cpp
     test_mdns_advertiser.cpp
     test_router_port_core.cpp
     test_logger_rotation.cpp

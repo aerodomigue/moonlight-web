@@ -146,7 +146,9 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // Counted against the socket peer, or the visitor a local reverse proxy
         // names (AuthManager::attemptAddress).
         auto result = authManager.validatePin(
-            AuthManager::attemptAddress(req.clientAddress, req.headers), pin);
+            (req.viaProxy ? req.clientAddress
+                          : AuthManager::attemptAddress(req.clientAddress, req.headers)),
+            pin);
 
         QJsonObject obj;
         switch (result.result) {
@@ -372,13 +374,13 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
         // The LAN's door by default: the password is a convenience for the
         // machines in the same house, and a front door on the internet only
-        // when the owner opened that side, through the rendezvous tunnel alone.
+        // when the owner opened that side, through the rendezvous or a trusted proxy.
         // What "on this LAN" is worth proving with differs by arrival — see
         // AuthManager::canUnlockAdmin. Every device now reaches an instance
         // through the rendezvous, LAN ones included, so the tunnel case is not
         // an exception carved out of this door: it is the door.
         if (!AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
-                                         authManager.remoteAdminInternet())) {
+                                         authManager.remoteAdminInternet(), req.viaProxy)) {
             QJsonObject obj;
             obj["status"] = "error";
             obj["error"] = "lan_only";
@@ -467,7 +469,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         if (callerWasRemoteAdmin && authManager.remoteAdminEnabled() &&
             authManager.adminPasswordSet() &&
             AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
-                                        authManager.remoteAdminInternet()))
+                                        authManager.remoteAdminInternet(), req.viaProxy))
             authManager.promoteSessionToAdmin(token);
 
         QJsonObject obj;
@@ -537,9 +539,11 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             obj["authenticated"] = auth;
             if (!auth) {
                 obj["remaining"] = authManager.remainingAttempts(
-                    AuthManager::attemptAddress(req.clientAddress, req.headers));
+                    (req.viaProxy ? req.clientAddress
+                                  : AuthManager::attemptAddress(req.clientAddress, req.headers)));
                 int lockoutSecs = authManager.lockoutSeconds(
-                    AuthManager::attemptAddress(req.clientAddress, req.headers));
+                    (req.viaProxy ? req.clientAddress
+                                  : AuthManager::attemptAddress(req.clientAddress, req.headers)));
                 if (lockoutSecs > 0) obj["lockout_seconds"] = lockoutSecs;
             }
         }
@@ -554,7 +558,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             !isLocal && !req.adminLocked && obj["authenticated"].toBool() &&
             authManager.remoteAdminEnabled() && authManager.adminPasswordSet() &&
             AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
-                                        authManager.remoteAdminInternet());
+                                        authManager.remoteAdminInternet(), req.viaProxy);
 
         // Whether this browser holds a session cookie at all — true even on
         // localhost, where authenticated is hardcoded. It is what tells the UI
