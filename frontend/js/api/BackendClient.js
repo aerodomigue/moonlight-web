@@ -277,6 +277,9 @@ export class BackendClient {
     static async removeHost(uuid) {
         return this.del(`/api/hosts/${uuid}`);
     }
+    static async setWakeConfig(uuid, address, mac) {
+        return this.post(`/api/hosts/${uuid}/wol-config`, { address, mac });
+    }
     static async wakeHost(uuid) {
         return this.post(`/api/hosts/${uuid}/wol`);
     }

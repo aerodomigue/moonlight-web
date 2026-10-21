@@ -332,6 +332,14 @@ export class HostListView {
                 return;
             }
 
+            const wakeConfigBtn = e.target.closest('.btn-wol-config');
+            if (wakeConfigBtn) {
+                this._closeAllMenus();
+                const host = this.hosts.find((h) => h.uuid === wakeConfigBtn.dataset.uuid);
+                if (host) this._configureWake(host);
+                return;
+            }
+
             const renameBtn = e.target.closest('.btn-rename');
             if (renameBtn) {
                 this._closeAllMenus();
@@ -788,6 +796,7 @@ export class HostListView {
                 h.customName,
                 h.port,
                 h.gpuModel,
+                h.wakeSupported,
                 // A running session drives the kebab's "Stop session" entry and
                 // the running app's card; without it here the card never
                 // re-renders when a Stop leaves the Sunshine app running.
@@ -997,6 +1006,11 @@ export class HostListView {
                                 booth
                                     ? ''
                                     : `<button class="host-menu-item btn-rename" data-uuid="${host.uuid}">${t('hosts.rename')}</button>`
+                            }
+                            ${
+                                !booth && host.backendType !== 'native'
+                                    ? `<button class="host-menu-item btn-wol-config" data-uuid="${host.uuid}">${t('hosts.wolConfigure')}</button>`
+                                    : ''
                             }
                             ${
                                 // Sharing without a stream: the board opens
@@ -1690,6 +1704,70 @@ export class HostListView {
         // False means the backend was built with sharing off: every share route
         // answers 404, so say nothing rather than showing an empty overlay.
         if (!(await board.open())) Toast.show(t('sharing.unavailable'), 'error');
+    }
+
+    _configureWake(host) {
+        if (document.querySelector('.host-wol-overlay')) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'pairing-overlay host-wol-overlay';
+        overlay.innerHTML = `
+            <form class="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="wol-title">
+                <h3 id="wol-title">${this.esc(t('hosts.wolConfigure'))}</h3>
+                <p class="pairing-instruction">${this.esc(t('hosts.wolConfigHint'))}</p>
+                <label>${this.esc(t('hosts.wolLocalIp'))}
+                    <input name="address" class="settings-input" placeholder="192.168.1.20"
+                           autocomplete="off" maxlength="15" />
+                </label>
+                <label>${this.esc(t('hosts.wolMac'))}
+                    <input name="mac" class="settings-input" placeholder="02:11:22:33:44:55"
+                           autocomplete="off" maxlength="17" />
+                </label>
+                <p class="wol-error" role="alert"></p>
+                <div class="pairing-actions">
+                    <button type="button" class="btn btn-secondary wol-cancel">${t('common.cancel')}</button>
+                    <button type="submit" class="btn wol-save">${t('common.save')}</button>
+                </div>
+            </form>`;
+        const address = /** @type {HTMLInputElement} */ (overlay.querySelector('[name="address"]'));
+        const mac = /** @type {HTMLInputElement} */ (overlay.querySelector('[name="mac"]'));
+        const save = /** @type {HTMLButtonElement} */ (overlay.querySelector('.wol-save'));
+        const previousFocus = document.activeElement;
+        const close = () => {
+            document.removeEventListener('keydown', onKey, true);
+            overlay.remove();
+            if (previousFocus instanceof HTMLElement && previousFocus.isConnected)
+                previousFocus.focus();
+        };
+        const onKey = (e) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopPropagation();
+            close();
+        };
+        document.addEventListener('keydown', onKey, true);
+        overlay.querySelector('.wol-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+        overlay.querySelector('form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (save.disabled) return;
+            save.disabled = true;
+            try {
+                await BackendClient.setWakeConfig(
+                    host.uuid,
+                    address.value.trim(),
+                    mac.value.trim(),
+                );
+                close();
+                await this.refresh();
+            } catch (err) {
+                overlay.querySelector('.wol-error').textContent = err.message;
+                save.disabled = false;
+            }
+        });
+        document.body.appendChild(overlay);
+        address.focus();
     }
 
     async _renameHost(host) {

@@ -16,6 +16,7 @@
  */
 
 #include "NvComputer.h"
+#include "WakeOnLan.h"
 
 #include "server/NetClassify.h"
 
@@ -63,13 +64,7 @@ NvComputer::NvComputer(const QString& serverInfo, const NvAddress& activeAddr)
 
     uuid = NvHTTP::getXmlString(serverInfo, "uniqueid");
 
-    // MAC address: parse colon-separated hex
-    QString macStr = NvHTTP::getXmlString(serverInfo, "mac");
-    if (!macStr.isEmpty() && macStr != "00:00:00:00:00:00") {
-        QStringList bytes = macStr.split(':');
-        for (const QString& b : bytes)
-            macAddress.append(static_cast<char>(b.toInt(nullptr, 16)));
-    }
+    macAddress = WakeOnLan::parseMac(NvHTTP::getXmlString(serverInfo, "mac"));
 
     // Pair status
     pairState = pairStateFromString(NvHTTP::getXmlString(serverInfo, "PairStatus"));
@@ -123,6 +118,8 @@ NvComputer::NvComputer(QSettings& settings)
     customName = settings.value("customName").toString();
     uuid = settings.value("uuid").toString();
     macAddress = settings.value("mac").toByteArray();
+    wakeAddress = settings.value("wakeAddress").toString();
+    wakeMacOverride = settings.value("wakeMacOverride").toByteArray();
 
     // The address that last answered, restored first: it is the only candidate we
     // have actually seen work. Without it a restart falls back to the host's
@@ -161,6 +158,8 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("customName", customName);
     settings.setValue("uuid", uuid);
     settings.setValue("mac", macAddress);
+    settings.setValue("wakeAddress", wakeAddress);
+    settings.setValue("wakeMacOverride", wakeMacOverride);
     settings.setValue("activeaddress", activeAddress.address());
     settings.setValue("activeport", activeAddress.port());
     settings.setValue("localaddress", localAddress.address());
@@ -182,6 +181,7 @@ void NvComputer::serialize(QSettings& settings) const
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
 {
     return name == that.name && customName == that.customName && uuid == that.uuid &&
+           wakeAddress == that.wakeAddress && wakeMacOverride == that.wakeMacOverride &&
            macAddress == that.macAddress && activeAddress == that.activeAddress &&
            localAddress == that.localAddress && remoteAddress == that.remoteAddress &&
            manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
@@ -226,7 +226,7 @@ bool NvComputer::update(const NvComputer& that)
     ASSIGN_IF_CHANGED_NONEMPTY(gpuModel)
     ASSIGN_IF_CHANGED_NONEMPTY(name)
 
-    if (!that.macAddress.isEmpty() && this->macAddress != that.macAddress) {
+    if (WakeOnLan::isValidMac(that.macAddress) && this->macAddress != that.macAddress) {
         this->macAddress = that.macAddress;
         changed = true;
     }
@@ -437,8 +437,9 @@ QJsonObject NvComputer::toJson() const
     // Wake-on-LAN is sent by the server (POST /api/hosts/:id/wol), so the MAC
     // itself never has to reach the browser — the UI only needs to know whether
     // the button can be offered at all.
-    obj["wakeSupported"] =
-        !macAddress.isEmpty() && macAddress != QByteArray(macAddress.size(), '\0');
+    obj["wakeSupported"] = WakeOnLan::isValidMac(wakeMac()) &&
+                           !WakeOnLan::targets(wakeAddresses(), WakeOnLan::lanEntries()).isEmpty();
+    obj["wakeConfigured"] = !wakeAddress.isEmpty();
 
     // Display modes
     QJsonArray modesArr;
@@ -480,4 +481,15 @@ QString NvComputer::computerStateToString(ComputerState cs)
     case CS_OFFLINE: return "offline";
     default: return "unknown";
     }
+}
+
+QStringList NvComputer::wakeAddresses() const
+{
+    if (!wakeAddress.isEmpty()) return {wakeAddress};
+    return {localAddress.address(), manualAddress.address(), activeAddress.address()};
+}
+
+QByteArray NvComputer::wakeMac() const
+{
+    return wakeMacOverride.isEmpty() ? macAddress : wakeMacOverride;
 }

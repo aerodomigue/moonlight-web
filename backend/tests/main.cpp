@@ -29,6 +29,7 @@ void run_request_guard_tests();
 void run_api_csrf_tests();
 void run_session_pool_tests();
 void run_port_fallback_tests();
+void run_wake_on_lan_tests();
 void run_host_persistence_tests();
 void run_rendezvous_id_tests();
 void run_rendezvous_line_tests();
@@ -75,6 +76,12 @@ int main(int argc, char** argv)
     QCoreApplication::setApplicationName("mw-server-tests");
     QCoreApplication::setOrganizationName("moonlightweb");
 
+    if (app.arguments().contains(QStringLiteral("--wake-on-lan"))) {
+        run_wake_on_lan_tests();
+        std::fprintf(stderr, "Wake-on-LAN: %d passed, %d failed\n", g_stats.passed, g_stats.failed);
+        return g_stats.failed ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+
     run_input_encoder_tests();
     run_stream_config_tests();
     run_input_crypto_tests();
@@ -92,6 +99,7 @@ int main(int argc, char** argv)
     run_api_csrf_tests();
     run_session_pool_tests();
     run_port_fallback_tests();
+    run_wake_on_lan_tests();
     run_host_persistence_tests();
     run_rendezvous_id_tests();
     run_rendezvous_line_tests();

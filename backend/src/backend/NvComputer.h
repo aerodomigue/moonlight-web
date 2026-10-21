@@ -128,6 +128,11 @@ public:
     NvAddress remoteAddress;
     NvAddress manualAddress;
     QByteArray macAddress;
+    // Optional operator overrides; polling never overwrites these.
+    QString wakeAddress;
+    QByteArray wakeMacOverride;
+    QStringList wakeAddresses() const;
+    QByteArray wakeMac() const;
     QString name;
 
     // A name the user gave this host here, which wins over `name` everywhere it

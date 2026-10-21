@@ -70,6 +70,7 @@ add_executable(run_tests
     test_api_csrf.cpp
     test_session_pool.cpp
     test_port_fallback.cpp
+    test_wake_on_lan.cpp
     test_host_persistence.cpp
     test_rendezvous_id.cpp
     test_rendezvous_line.cpp
@@ -147,6 +148,7 @@ add_executable(run_tests
     # how fast it comes back when the line fails under it.
     ${_src}/src/network/RendezvousClient.cpp
     # Host persistence: the restart path for a paired host (issue #9).
+    ${_src}/src/backend/WakeOnLan.cpp
     ${_src}/src/backend/NvComputer.cpp
     ${_src}/src/backend/NvHTTP.cpp
     # Backend detection: what a host runs, worked out rather than asked for.
@@ -207,7 +209,7 @@ target_link_libraries(run_tests PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(run_tests PRIVATE ws2_32 winmm Bcrypt Crypt32)
+    target_link_libraries(run_tests PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi)
     # Emit PDB debug info even in release so OpenCppCoverage can map line coverage.
     target_compile_options(run_tests PRIVATE /Zi)
     target_link_options(run_tests PRIVATE /DEBUG)
@@ -224,3 +226,5 @@ endif()
 
 enable_testing()
 add_test(NAME backend-tnr COMMAND run_tests)
+
+add_test(NAME wake-on-lan COMMAND run_tests --wake-on-lan)
