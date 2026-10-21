@@ -63,7 +63,8 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 | `POST /api/hosts/scan` | 🔑 | Trigger an ephemeral mDNS scan. |
 | `POST /api/hosts/manual` | 🔑 | Add a host by IP/hostname. |
 | `DELETE /api/hosts/:id` | 🔑 | Forget a host. |
-| `POST /api/hosts/:id/wol` | 🔑 | Wake-on-LAN. |
+| `POST /api/hosts/:id/wol` | 🔑 | Send a magic packet from the server to the host's LAN broadcast on UDP 9 and 7. Requires a valid saved MAC and a private IPv4 address on a directly connected broadcast-capable interface; otherwise returns 400. Uses the interface's actual netmask, never a public IP or a guessed /24. Success confirms packet transmission, not that the host has booted. |
+| `POST /api/hosts/:id/wol-config` | 🔑 | Optional override for an existing host: `{address, mac}` (private LAN IPv4 and unicast MAC). Both empty clears the override. Available while the host is offline; locked in booth mode. No target is contacted when saving. |
 | `POST /api/hosts/:id/pair/start` / `POST /api/hosts/:id/pair` (async) | 🔑 | Start pairing (returns the PIN to type into Sunshine) / poll status. Fully event-driven (no nested loop). Starting is a POST because it acts on the host: a GET gets fetched by link-preview bots, prefetchers and URL-following antivirus, and those arrive as ordinary navigations that no cross-site check can tell apart from the user. |
 | `GET /api/hosts/:id/apps` (async) | 🔑 | App list (with box-art fetched in background). |
 | `GET /api/hosts/:id/appasset` | 🔑 | Box-art image. |

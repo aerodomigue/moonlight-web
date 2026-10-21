@@ -88,6 +88,8 @@ public:
 
     // Wake-on-LAN — broadcasts a magic packet to the host's MAC on the LAN
     std::pair<int, QJsonObject> handleWakeHost(const QString& uuid);
+    std::pair<int, QJsonObject> handleSetWakeConfig(const QString& uuid, const QString& address,
+                                                 const QString& mac);
 
     // Pairing — client generates PIN, user enters it in Sunshine.
     // handleSubmitPin is async: it kicks off (or reports on) the background
@@ -222,8 +224,6 @@ private:
 
     // A provider bound to one host. Returns nullptr for an unknown uuid.
 
-    // Resolve a host MAC from the OS ARP cache (Windows). Empty if unavailable.
-    static QByteArray resolveMacFromArp(const QString& ip);
     void addOrUpdateHost(const QString& serverInfo, const NvAddress& addr);
     void tryAddHostFromAddress(const NvAddress& addr, bool fromMdns,
                                const QString& name = QString());

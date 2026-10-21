@@ -97,6 +97,15 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(result, status);
     });
 
+    server.router()->post("/api/hosts/:id/wol-config", [&computerManager](const HttpRequest& req) {
+        const auto body = QJsonDocument::fromJson(req.body).object();
+        if (!body.value("address").isString() || !body.value("mac").isString())
+            return HttpResponse::error(400, "Missing 'address' or 'mac' string field");
+        auto [status, result] = computerManager.handleSetWakeConfig(
+            req.pathParams.value("id"), body["address"].toString(), body["mac"].toString());
+        return HttpResponse::json(result, status);
+    });
+
     // Phase 3: Pairing routes.
     //
     // Starting a pairing is a POST even though it reads like a query, because it

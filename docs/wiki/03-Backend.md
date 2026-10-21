@@ -154,3 +154,29 @@ Two modes, each switched on from **Admin → Advanced** (kept in `settings.json`
 ---
 
 [← Architecture](02-Architecture.md) · [Home](Home.md) · [Next: Frontend →](04-Frontend.md)
+
+
+## Wake-on-LAN for saved hosts
+
+At registration, the server stores the host's advertised local IP and valid MAC
+alongside its UUID. If serverinfo omits the MAC, Windows resolves it with SendARP
+and Linux reads the completed entry for the directly connected target in
+`/proc/net/arp`, immediately after the successful serverinfo request. Later polls
+retry missing MAC collection for previously registered hosts. A missing or invalid
+MAC in a later response never erases the saved one. These values survive a restart;
+an offline host needs no fresh serverinfo request before it can be woken.
+
+The browser's **Wake** action asks the server to broadcast a magic packet on the
+target's LAN. The server matches saved private IPv4 addresses against its active
+broadcast-capable interfaces and uses the real subnet mask (including `/16`).
+Public, loopback, IPv6, VPN-only, and off-subnet targets cannot produce a wake
+destination. The sender must be on the target's LAN; visiting the UI over the
+Internet does not move the sender to the browser. No public-IP forwarding or
+router configuration is required or attempted.
+
+For an old host whose MAC was never collected, bring it online once so a poll
+can learn it, or use **Host options → Configure Wake-on-LAN** to enter its local
+IPv4 and MAC while it stays offline. Overrides are stored separately so polling
+cannot replace them; clearing both fields restores automatic settings. The host
+list exposes only capability/configuration booleans, never these addresses.
+The target's firmware and network adapter must already support and enable WOL.

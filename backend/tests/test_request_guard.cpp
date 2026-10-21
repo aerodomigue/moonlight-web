@@ -497,6 +497,7 @@ void run_request_guard_tests()
     CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/pair/start"));
     CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/pair"));
     CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/restart"));
+    CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/wol-config"));
     CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/backend"));
     CHECK(lockedByNoAdmin("DELETE", "/api/hosts/uuid-1/backend"));
     CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/seats"));
