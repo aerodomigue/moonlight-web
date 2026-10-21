@@ -11,13 +11,14 @@ void run_wake_on_lan_tests()
     const QByteArray mac = WakeOnLan::parseMac("02:11:22:33:44:55");
     CHECK_EQ(mac.size(), 6);
     CHECK_EQ(WakeOnLan::parseMac("02-11-22-33-44-55"), mac);
-    for (const auto* invalid : {"", "00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff",
-                               "01:11:22:33:44:55", "02:11:22:33:44:zz", "02:11"})
+    for (const auto* invalid : {"", "00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "01:11:22:33:44:55",
+                                "02:11:22:33:44:zz", "02:11"})
         CHECK(WakeOnLan::parseMac(invalid).isEmpty());
     const QByteArray packet = WakeOnLan::magicPacket(mac);
     CHECK_EQ(packet.size(), 102);
     CHECK_EQ(packet.left(6), QByteArray(6, char(0xFF)));
-    for (int i = 0; i < 16; ++i) CHECK_EQ(packet.mid(6 + 6 * i, 6), mac);
+    for (int i = 0; i < 16; ++i)
+        CHECK_EQ(packet.mid(6 + 6 * i, 6), mac);
     CHECK(WakeOnLan::magicPacket(QByteArray(6, '\0')).isEmpty());
 
     QNetworkAddressEntry lan;
@@ -29,17 +30,16 @@ void run_wake_on_lan_tests()
         CHECK_EQ(targets[0].source, QHostAddress("10.2.10.124"));
         CHECK_EQ(targets[0].broadcast, QHostAddress("10.2.255.255"));
     }
-    for (const auto* invalid : {"198.51.100.20", "8.8.8.8", "100.64.0.1", "127.0.0.1",
-                               "::1", "fd00::2", "host.example", "10.3.0.5", "10.2.0.0",
-                               "10.2.255.255", "10.2.10.124"})
+    for (const auto* invalid :
+         {"198.51.100.20", "8.8.8.8", "100.64.0.1", "127.0.0.1", "::1", "fd00::2", "host.example",
+          "10.3.0.5", "10.2.0.0", "10.2.255.255", "10.2.10.124"})
         CHECK(WakeOnLan::targets({invalid}, {lan}).isEmpty());
     QNetworkAddressEntry other;
     other.setIp(QHostAddress("192.168.5.2"));
     other.setPrefixLength(23);
     auto multiple = WakeOnLan::targets({"10.2.42.5", "192.168.4.20"}, {lan, other});
     CHECK_EQ(multiple.size(), 2);
-    if (multiple.size() == 2)
-        CHECK_EQ(multiple[1].broadcast, QHostAddress("192.168.5.255"));
+    if (multiple.size() == 2) CHECK_EQ(multiple[1].broadcast, QHostAddress("192.168.5.255"));
     QNetworkAddressEntry publicInterface;
     publicInterface.setIp(QHostAddress("198.51.100.2"));
     publicInterface.setPrefixLength(24);

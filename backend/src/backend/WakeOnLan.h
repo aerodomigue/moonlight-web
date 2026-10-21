@@ -8,7 +8,8 @@
 #include <QVector>
 
 namespace WakeOnLan {
-struct Target {
+struct Target
+{
     QHostAddress source;
     QHostAddress broadcast;
 };

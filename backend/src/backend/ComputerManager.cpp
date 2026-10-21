@@ -1248,12 +1248,14 @@ std::pair<int, QJsonObject> ComputerManager::handleWakeHost(const QString& uuid)
 
     const QByteArray packet = WakeOnLan::magicPacket(host->wakeMac());
     if (packet.isEmpty())
-        return {400, {{"status", "error"}, {"message", "No valid MAC address known for this host"}}};
+        return {400,
+                {{"status", "error"}, {"message", "No valid MAC address known for this host"}}};
 
     const auto targets = WakeOnLan::targets(host->wakeAddresses(), WakeOnLan::lanEntries());
     if (targets.isEmpty())
-        return {400, {{"status", "error"},
-                      {"message", "No local IPv4 address on a connected LAN for this host"}}};
+        return {400,
+                {{"status", "error"},
+                 {"message", "No local IPv4 address on a connected LAN for this host"}}};
 
     bool sentAny = false;
     for (const auto& target : targets) {
@@ -1276,8 +1278,9 @@ std::pair<int, QJsonObject> ComputerManager::handleWakeHost(const QString& uuid)
         {{"status", "ok"}, {"message", QString("Wake-on-LAN packet sent to %1").arg(host->name)}}};
 }
 
-std::pair<int, QJsonObject> ComputerManager::handleSetWakeConfig(
-    const QString& uuid, const QString& address, const QString& mac)
+std::pair<int, QJsonObject> ComputerManager::handleSetWakeConfig(const QString& uuid,
+                                                                 const QString& address,
+                                                                 const QString& mac)
 {
     NvComputer* host = findHostByUuid(uuid);
     if (!host) return {404, {{"status", "error"}, {"message", "Host not found"}}};
@@ -1285,8 +1288,9 @@ std::pair<int, QJsonObject> ComputerManager::handleSetWakeConfig(
     const QByteArray parsed = WakeOnLan::parseMac(mac);
     if (!(ip.isEmpty() && mac.trimmed().isEmpty()) &&
         (!WakeOnLan::isLocalIpv4(ip) || parsed.isEmpty()))
-        return {400, {{"status", "error"},
-                      {"message", "Provide a private LAN IPv4 address and a valid unicast MAC"}}};
+        return {400,
+                {{"status", "error"},
+                 {"message", "Provide a private LAN IPv4 address and a valid unicast MAC"}}};
     host->wakeAddress = ip;
     host->wakeMacOverride = parsed;
     saveHosts();

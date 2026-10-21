@@ -438,7 +438,7 @@ QJsonObject NvComputer::toJson() const
     // itself never has to reach the browser — the UI only needs to know whether
     // the button can be offered at all.
     obj["wakeSupported"] = WakeOnLan::isValidMac(wakeMac()) &&
-        !WakeOnLan::targets(wakeAddresses(), WakeOnLan::lanEntries()).isEmpty();
+                           !WakeOnLan::targets(wakeAddresses(), WakeOnLan::lanEntries()).isEmpty();
     obj["wakeConfigured"] = !wakeAddress.isEmpty();
 
     // Display modes

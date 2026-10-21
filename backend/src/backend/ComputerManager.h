@@ -89,7 +89,7 @@ public:
     // Wake-on-LAN — broadcasts a magic packet to the host's MAC on the LAN
     std::pair<int, QJsonObject> handleWakeHost(const QString& uuid);
     std::pair<int, QJsonObject> handleSetWakeConfig(const QString& uuid, const QString& address,
-                                                 const QString& mac);
+                                                    const QString& mac);
 
     // Pairing — client generates PIN, user enters it in Sunshine.
     // handleSubmitPin is async: it kicks off (or reports on) the background

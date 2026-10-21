@@ -7,8 +7,8 @@
 #include <QRegularExpression>
 
 #ifdef Q_OS_WIN
-extern "C" __declspec(dllimport) unsigned long __stdcall
-SendARP(unsigned long, unsigned long, void*, unsigned long*);
+extern "C" __declspec(dllimport) unsigned long __stdcall SendARP(unsigned long, unsigned long,
+                                                                 void*, unsigned long*);
 #endif
 
 namespace WakeOnLan {
@@ -39,7 +39,8 @@ QByteArray magicPacket(const QByteArray& mac)
 {
     if (!isValidMac(mac)) return {};
     QByteArray packet(6, static_cast<char>(0xFF));
-    for (int i = 0; i < 16; ++i) packet.append(mac);
+    for (int i = 0; i < 16; ++i)
+        packet.append(mac);
     return packet;
 }
 
@@ -51,7 +52,8 @@ QList<QNetworkAddressEntry> lanEntries()
         if (!flags.testFlag(QNetworkInterface::IsUp) ||
             !flags.testFlag(QNetworkInterface::IsRunning) ||
             !flags.testFlag(QNetworkInterface::CanBroadcast) ||
-            flags.testFlag(QNetworkInterface::IsLoopBack)) continue;
+            flags.testFlag(QNetworkInterface::IsLoopBack))
+            continue;
         entries.append(iface.addressEntries());
     }
     return entries;
@@ -62,7 +64,8 @@ QVector<Target> targets(const QStringList& addresses, const QList<QNetworkAddres
     QVector<Target> result;
     for (const auto& entry : entries) {
         if (!isLocalIpv4(entry.ip().toString()) || entry.prefixLength() <= 0 ||
-            entry.prefixLength() >= 31) continue;
+            entry.prefixLength() >= 31)
+            continue;
         const quint32 mask = entry.netmask().toIPv4Address();
         const quint32 network = entry.ip().toIPv4Address() & mask;
         const QHostAddress broadcast(network | ~mask);
@@ -71,7 +74,8 @@ QVector<Target> targets(const QStringList& addresses, const QList<QNetworkAddres
             if (!isLocalIpv4(text)) continue;
             const QHostAddress host(text);
             if (host == entry.ip() || host == broadcast || host.toIPv4Address() == network ||
-                !host.isInSubnet(entry.ip(), entry.prefixLength())) continue;
+                !host.isInSubnet(entry.ip(), entry.prefixLength()))
+                continue;
             result.append({entry.ip(), broadcast});
             break;
         }
