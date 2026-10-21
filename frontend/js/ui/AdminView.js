@@ -856,6 +856,12 @@ export class AdminView {
                         <code>${this.esc(this._publicUrl || window.location.origin)}</code>
                     </div>
                     <p>${t('admin.reverseProxyConfiguration')}</p>
+                    <label class="settings-checkbox-label">
+                        <input type="checkbox" id="chk-internet-enable" ${this._internetEnabled ? 'checked' : ''} />
+                        <span class="settings-checkbox-text">${t('admin.enableInternet')}</span>
+                    </label>
+                    <p>${this._internetConsentText()}</p>
+                    <p>${t('admin.upnpLabel')} ${!this._upnpEnabled ? t('admin.upnpDisabled') : this._upnpAvailable ? t('admin.available') : t('admin.notAvailable')}</p>
                 </div>
                 `
                         : `
@@ -2045,7 +2051,7 @@ export class AdminView {
     // server-side as consent_message: per-session UPnP, peer-visible IP, no DNS
     // record, no certificate.
     _internetConsentText() {
-        return t('admin.internetInfo1');
+        return t(this._reverseProxy ? 'admin.selfHostedInternetInfo' : 'admin.internetInfo1');
     }
 
     async _enableInternet() {
@@ -2160,6 +2166,7 @@ export class AdminView {
     // intended. When the deadline passes we simply render what the backend does
     // report, which is exactly what a reload would have shown.
     _awaitRendezvousUrl(timeoutMs = 20000) {
+        if (this._reverseProxy) return;
         if (this._rendezvousUrl) return;
         this._stopRendezvousPolling();
         this._awaitingRdv = true;

@@ -12,7 +12,7 @@ ghcr.io/aerodomigue/moonlight-web-dev:dev
 
 L'image est publiée pour **linux/amd64** et **linux/arm64**. Le tag `dev` suit
 les publications du fork ; les tags `sha-…` permettent de sélectionner un commit
-publié, par exemple `sha-77ec4b6` pour la version WOL + reverse proxy.
+publié, par exemple `sha-<commit>` en remplaçant `<commit>` par le tag publié souhaité.
 
 ## Installation
 
@@ -57,7 +57,8 @@ rejoint l'adresse de la machine exécutant Moonlight-Web, au port 8080.
 Le flux suit ce chemin :
 
 ```text
-Navigateur → votre proxy HTTPS/WSS → backend HTTP :8080 → Apollo/Sunshine sur le LAN
+Interface / WSS : navigateur → votre proxy HTTPS → Moonlight-Web
+Média WebRTC : navigateur ↔ ports média UPnP ↔ Moonlight-Web → Apollo/Sunshine sur le LAN
 ```
 
 Le proxy termine TLS avec votre certificat et transmet tous les chemins, dont
@@ -65,10 +66,15 @@ Le proxy termine TLS avec votre certificat et transmet tous les chemins, dont
 écrasez `X-Forwarded-Proto` avec `https`, et ajoutez l'adresse réelle du client à
 `X-Forwarded-For`. Désactivez le buffering et adaptez les délais au streaming.
 
-Le profil utilise WSS pour les flux et ne nécessite pas de port média UDP public,
-de STUN public ou d'ouverture UPnP. Les anciennes valeurs activées dans
-`settings.json` ne réactivent pas ces services. Les requêtes proxifiées doivent
-s'authentifier ; elles n'héritent pas des privilèges de l'hôte local.
+Le bouton **Activer l'accès Internet** reste disponible : il déclenche la détection
+STUN de l'IP publique et autorise les ouvertures des ports média par UPnP. WebRTC
+reste le transport direct, avec WSS en secours par le proxy. Cloudflare et Google
+peuvent être interrogés pour le STUN ; aucun relais ou STUN MoonlightWeb n'est
+utilisé. La télémétrie et la géolocalisation restent désactivées.
+
+Les requêtes proxifiées doivent s'authentifier ; elles n'héritent pas des privilèges
+de l'hôte local. Les clients du LAN restent accessibles directement sur les ports
+du backend : seuls les proxys déclarés ont le droit de fournir des en-têtes d'adresse.
 
 Voir [le guide de configuration complet](../docs/reverse-proxy.md).
 

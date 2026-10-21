@@ -24,8 +24,8 @@ void run_reverse_proxy_tests()
     qunsetenv("MW_REVERSE_PROXY");
     CHECK(!mw::edition::lanOnly());
     CHECK(mw::edition::externalServicesDisabled());
-    CHECK_EQ(TransportPriorities::orderedTransports(), QStringList{QStringLiteral("wss")});
-    CHECK_EQ(TransportPriorities::orderedTransports(true), QStringList{QStringLiteral("wss")});
+    CHECK(TransportPriorities::orderedTransports().contains(QStringLiteral("webrtc-dc-udp")));
+    CHECK(TransportPriorities::orderedTransports(true).contains(QStringLiteral("wss")));
 
     QTemporaryDir tmp;
     CHECK(tmp.isValid());
@@ -38,16 +38,28 @@ void run_reverse_proxy_tests()
     settings.setMetricsReporting(true);
     settings.setSessionLocationEnabled(true);
     settings.setTransportMode(QStringLiteral("webrtc-dc-udp"));
+    CHECK(settings.internetAccessEnabled());
+    settings.setInternetAccessEnabled(false);
     CHECK(!settings.internetAccessEnabled());
+    settings.setInternetAccessEnabled(true);
+    CHECK(settings.upnpEnabled());
+    settings.setUpnpEnabled(false);
     CHECK(!settings.upnpEnabled());
-    CHECK(!settings.autoIpDetection());
+    settings.setUpnpEnabled(true);
+    CHECK(settings.upnpEnabled());
+    qputenv("MW_LAN_ONLY", "1");
+    CHECK(!settings.upnpEnabled());
+    qputenv("MW_LAN_ONLY", "0");
+    CHECK(settings.autoIpDetection());
     CHECK(!settings.sessionMetricsAllowed());
     CHECK(!settings.updateRelayAllowed());
     CHECK(!settings.sessionLocationEnabled());
-    CHECK(settings.stunServer().isEmpty());
-    CHECK_EQ(settings.transportMode(), QStringLiteral("wss"));
+    CHECK_EQ(settings.stunServer(), QStringLiteral("stun:stun.cloudflare.com:3478"));
+    CHECK_EQ(settings.transportMode(), QStringLiteral("webrtc-dc-udp"));
     settings.setStunServer(QStringLiteral("stun:ice.example.test:3478"));
-    CHECK(settings.stunServer().isEmpty());
+    CHECK_EQ(settings.stunServer(), QStringLiteral("stun:ice.example.test:3478"));
+    settings.setStunServer(QStringLiteral("stun:stream.moonlightweb.top:3478"));
+    CHECK_EQ(settings.stunServer(), QStringLiteral("stun:stun.cloudflare.com:3478"));
 
     qputenv("MW_DOMAIN", "example.invalid");
     qputenv("MW_PDNS_TOKEN", "test-token");

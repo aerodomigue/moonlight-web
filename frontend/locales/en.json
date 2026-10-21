@@ -735,7 +735,8 @@
         "reverseProxy": "Your reverse proxy",
         "reverseProxyDescription": "Direct access through your HTTPS proxy. External MoonlightWeb services and telemetry are disabled.",
         "publicUrl": "Public URL",
-        "reverseProxyConfiguration": "Set MW_PUBLIC_URL and MW_TRUSTED_PROXIES on the server. Enable WebSocket forwarding on the proxy."
+        "reverseProxyConfiguration": "Set MW_PUBLIC_URL and MW_TRUSTED_PROXIES on the server. Enable WebSocket forwarding on the proxy.",
+        "selfHostedInternetInfo": "Enable Internet to detect the public IP with STUN and configure media ports through UPnP. The browser uses your HTTPS proxy for the interface; video can connect directly with WebRTC or fall back to WSS. STUN providers and connected peers see the public IP. No MoonlightWeb rendezvous, external relay or telemetry is used."
     },
     "stream": {
         "stop": "Stop",

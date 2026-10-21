@@ -535,8 +535,8 @@ public:
     //
     // STUN server URL for WebRTC ICE connectivity. Used by both the backend's
     // libdatachannel PeerConnection and forwarded to the browser for its
-    // RTCPeerConnection. Always empty in the self-hosted profile (WSS); even
-    // a configured server from an older installation cannot trigger discovery.
+    // RTCPeerConnection. The self-hosted profile uses explicit settings or
+    // Cloudflare; inherited MoonlightWeb STUN addresses are replaced.
 
     QString stunServer() const;
     void setStunServer(const QString& url);

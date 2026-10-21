@@ -1,71 +1,75 @@
-# Accès direct via votre reverse proxy
+# Accès Internet et reverse proxy personnel
 
-Ce fork utilise par défaut votre propre entrée HTTPS. Aucun rendez-vous,
-relais externe, serveur STUN public, rapport de session, géolocalisation IP ou
-vérification automatique de mise à jour n'est contacté dans ce mode. Les anciennes
-valeurs d'activation dans `settings.json` ne peuvent pas réactiver ces services.
-Les mises à jour se font en remplaçant l'image du conteneur.
+Ce fork conserve le fonctionnement réseau de Moonlight-Web : **Activer l'accès
+Internet**, découverte de l'IP publique, ouverture UPnP des ports média, WebRTC et
+secours WSS. Le rendez-vous/relais MoonlightWeb et la télémétrie sont désactivés,
+même si un ancien réglage les activait. La géolocalisation et les mises à jour
+automatiques amont restent désactivées.
 
-Le serveur local reste nécessaire : il se connecte à Apollo/Sunshine sur votre
-réseau et transporte le flux vers le navigateur en WebSocket sécurisé, via votre
-reverse proxy. Le streaming et la signalisation utilisent la même origine HTTPS.
-Aucun port média UDP public ni redirection UPnP ne sont nécessaires.
+L'interface et l'API passent par votre proxy HTTPS. Le flux peut circuler
+directement en WebRTC via les ports média UPnP ou par le proxy en WSS. Le serveur
+local continue de joindre Apollo/Sunshine sur votre LAN.
 
 ## Configuration
-
-Variables d'environnement au démarrage :
 
 ```dotenv
 MW_REVERSE_PROXY=1
 MW_NO_TELEMETRY=1
-MW_PUBLIC_URL=https://moonlight.navet.dev
-MW_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+MW_PUBLIC_URL=https://moonlight.example.com
+MW_TRUSTED_PROXIES=127.0.0.1/32,::1/128,10.2.10.103/32
 ```
 
-`MW_PUBLIC_URL` est configurable ; `moonlight.navet.dev` est seulement un exemple.
-Indiquez une origine HTTPS, éventuellement avec un port, sans sous-chemin. Elle
-sert aux liens de partage et aux raccourcis. Sans cette variable, l'interface
-fonctionne sur l'origine courante ; les invitations publiques nécessitent l'URL.
-Une valeur non vide invalide empêche le démarrage avec une erreur explicite.
+L'URL est configurable au démarrage. Indiquez une origine HTTPS sans sous-chemin,
+identifiants, paramètres ou fragment. Elle sert aux raccourcis et aux invitations.
+Une valeur invalide non vide empêche le démarrage avec une erreur explicite.
 
-Dans `MW_TRUSTED_PROXIES`, remplacez les adresses de boucle locale par les IP
-réelles de votre proxy vues par MoonlightWeb, ou leur CIDR si nécessaire. Par
-exemple, si le proxy s'y connecte depuis `10.2.10.50`, utilisez `10.2.10.50/32`.
-Ne faites pas confiance à tous les réseaux privés par défaut. Les en-têtes d'une
-source non approuvée sont ignorés ; ils ne peuvent ni contourner HTTPS ni
-accorder les privilèges de l'hôte local.
+Les IP dans `MW_TRUSTED_PROXIES` sont celles du proxy vues par le backend.
+`10.2.10.103/32` est un exemple : remplacez-le par votre proxy réel. Cette liste
+ne limite pas l'accès des clients locaux. Un appareil sur `10.2.0.0/16` peut
+accéder directement au serveur avec le PIN ; il n'a pas besoin d'être déclaré
+comme proxy. Ne faites pas confiance à tout le LAN pour les en-têtes transférés.
+
+## Reverse proxy
 
 Dans votre proxy existant :
 
 - Terminez TLS avec le certificat de votre domaine.
-- Transmettez tous les chemins vers le port HTTP du backend (8080 dans le fichier
-  Compose), y compris `/api/*`, `/ws*` et `/p/*`.
+- Transmettez tous les chemins vers le backend, dont `/api/*`, `/ws*` et `/p/*`.
 - Conservez le `Host` public et l'en-tête `Origin` du navigateur.
-- Activez l'upgrade WebSocket (HTTP/1.1, `Upgrade`, `Connection`).
+- Activez l'upgrade WebSocket pour la signalisation et le transport WSS.
 - Écrasez `X-Forwarded-Proto` avec `https` et ajoutez l'IP réelle du client à
-  `X-Forwarded-For`. Ne transmettez pas aveuglément les valeurs du client.
-- Désactivez le buffering du flux et prévoyez un délai de lecture long pour les
-  WebSockets, compatible avec une session de jeu.
+  `X-Forwarded-For`.
+- Désactivez le buffering du flux et prévoyez des délais adaptés au streaming.
 
-Le PIN et les contrôles d'accès restent nécessaires. L'administration distante
-par mot de passe doit être activée explicitement, avec l'autorisation Internet
-si vous souhaitez administrer depuis une IP publique. Une requête proxifiée ne
-bénéficie jamais de l'exemption locale, y compris pour les WebSockets.
+Le fichier Compose utilise HTTP 8080 et HTTPS 8443 ; une installation native
+conserve ses ports configurés. Gardez votre redirection HTTP/HTTPS existante :
+Moonlight-Web ne crée pas de redirection web automatique par UPnP.
 
-## Docker et Wake-on-LAN
+## Activer l'accès Internet
 
-Image : `ghcr.io/aerodomigue/moonlight-web-dev:dev` (amd64 et arm64).
-Utilisez le fichier `docker/docker-compose.yml` avec les variables précédentes
-dans le `.env` de Compose. Conservez le volume `/data` existant pour garder vos
-machines et associations. Les ports HTTP/HTTPS du conteneur sont configurables
-avec `MW_HTTP_PORT` et `MW_HTTPS_PORT` ; 8080/8443 évitent les ports du proxy.
+Gardez **Activer l'accès Internet** coché dans l'administration pour la détection
+d'IP et les ouvertures média UPnP. Ce réglage est enregistré et repris au démarrage.
+`upnp_enabled` reste activé par défaut et peut être désactivé séparément.
 
-Le fichier recommandé conserve le réseau hôte pour que le Wake-on-LAN puisse
-utiliser l'interface LAN et son masque réels. Un conteneur sur le bridge Docker
-standard n'a généralement pas de route directement connectée vers le LAN de la
-cible : dans ce cas, le WOL restera indisponible. Aucune ouverture de port public
-n'est requise pour le WOL ; le paquet part du serveur vers le réseau local.
+Le STUN utilise Cloudflare, avec Google en secours pour la détection du backend,
+ou le serveur configuré dans `stun_server`. Les fournisseurs STUN et les pairs
+connectés voient l'IP publique. Aucun serveur STUN MoonlightWeb n'est utilisé
+par le profil auto-hébergé. Le trafic vidéo et les rapports de session ne sont
+pas envoyés à un relais ou service de télémétrie MoonlightWeb.
 
-`MW_LAN_ONLY=1` reste une restriction distincte. `MW_REVERSE_PROXY=0` réactive
-explicitement le comportement amont historique ; ne le configurez pas pour ce
-déploiement autonome.
+Le PIN reste nécessaire. L'administration distante doit être activée avec un mot
+de passe, et son option Internet si le client a une IP publique. Une requête
+proxifiée n'obtient jamais automatiquement les privilèges de l'hôte local.
+
+## Wake-on-LAN et données
+
+Le WOL part du backend vers le sous-réseau directement connecté de la cible,
+avec sa MAC et son IP locale. Il ne passe pas par une IP publique. En Docker,
+le réseau hôte sous Linux permet de conserver l'interface LAN et son masque réels.
+
+Conservez le volume `/data` pour Docker, ou le répertoire de données du compte
+exécutant le service natif, pour garder les machines, associations et réglages.
+Le [guide Docker](../docker/README.md) décrit le déploiement et les mises à jour.
+
+`MW_LAN_ONLY=1` est une restriction distincte, qui désactive les fonctions réseau
+Internet. Ne l'activez pas pour une installation devant être joignable à distance.

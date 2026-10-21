@@ -117,7 +117,7 @@ InternetAccessManager::~InternetAccessManager()
 
 void InternetAccessManager::start()
 {
-    if (mw::edition::externalServicesDisabled()) return;
+    if (mw::edition::lanOnly()) return;
     if (m_Active) {
         qInfo() << "[InternetAccess] Already active";
         return;
@@ -145,8 +145,8 @@ void InternetAccessManager::start()
     // cover what happens now. The price is one re-tick per existing user, on
     // the admin page, the first time they open Internet Access after
     // upgrading. A custom domain involves no service of ours to consent to.
-    if (!m_CustomDomain && m_Settings->internetConsentVersion() < 2 &&
-        !m_Settings->internetConsent().isEmpty()) {
+    if (!mw::edition::reverseProxy() && !m_CustomDomain &&
+        m_Settings->internetConsentVersion() < 2 && !m_Settings->internetConsent().isEmpty()) {
         qInfo() << "[InternetAccess] Stored consent predates the current mechanism —"
                 << "waiting for renewed consent before opening anything";
         m_Phase = QStringLiteral("consent_required");
@@ -256,7 +256,7 @@ void InternetAccessManager::updateHairpinStatus()
 
 void InternetAccessManager::forceRefresh()
 {
-    if (mw::edition::externalServicesDisabled()) return;
+    if (mw::edition::lanOnly()) return;
     qInfo() << "[InternetAccess] Force refresh triggered";
 
     // Re-detect the public IP. Nothing is published with it — it is shown on
@@ -311,7 +311,8 @@ QJsonObject InternetAccessManager::statusJson() const
     QStringList availableTransports = TransportPriorities::orderedTransports();
 #ifndef QT_DEBUG
     const QString savedMode = m_Settings->transportMode();
-    if (savedMode != QStringLiteral("all") && savedMode != QStringLiteral("wss"))
+    if (!mw::edition::reverseProxy() && savedMode != QStringLiteral("all") &&
+        savedMode != QStringLiteral("wss"))
         availableTransports.removeAll(QStringLiteral("wss"));
 #endif
     obj[QStringLiteral("available_transports")] = QJsonArray::fromStringList(availableTransports);

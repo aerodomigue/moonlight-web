@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include "common/Edition.h"
 #include <QString>
 #include <QStringList>
 
@@ -42,7 +41,6 @@ struct TransportPriorities
     //     5. webrtc-media-tcp  MediaTrack  (TCP)  → <video> (no enhancement)
     static QStringList orderedTransports(bool videoEnhancement = false)
     {
-        if (mw::edition::reverseProxy()) return {QStringLiteral("wss")};
         if (videoEnhancement) {
             return {QStringLiteral("webrtc-dc-udp"), QStringLiteral("webrtc-dc-tcp"),
                     QStringLiteral("wss"), QStringLiteral("webrtc-media-udp"),

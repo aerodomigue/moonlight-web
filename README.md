@@ -20,22 +20,25 @@ Navigateur → votre reverse proxy HTTPS / WSS → Moonlight-Web → Apollo / Su
 ```
 
 Le profil auto-hébergé est actif par défaut, même sans variable d'environnement.
-Le flux vidéo, le son et les commandes passent en **WebSocket sécurisé (WSS)** par
-votre proxy. Aucun relais ni serveur de rendez-vous MoonlightWeb n'est nécessaire.
+Il conserve **« Activer l'accès Internet »**, la découverte d'IP publique par STUN,
+la configuration des ports média par **UPnP** et les transports **WebRTC**, avec
+**WSS** en secours via votre proxy.
 
-Dans ce profil, les services suivants sont désactivés, même si un ancien fichier
-`settings.json` les activait :
+Seuls le rendez-vous/relais MoonlightWeb et la télémétrie sont désactivés. Les
+anciennes valeurs d'activation dans `settings.json` ne peuvent pas réactiver ces
+services. Le STUN utilise Cloudflare, avec Google en secours pour la détection
+backend, ou votre serveur explicitement configuré ; aucun STUN MoonlightWeb
+n'est utilisé dans ce profil. Les fournisseurs STUN et les pairs connectés
+peuvent voir l'IP publique, ce qui sert à établir la connexion directe.
 
-- Rendez-vous et relais externes MoonlightWeb.
-- STUN public et listes de secours du navigateur.
-- Télémétrie des sessions et géolocalisation IP.
-- Détection automatique de l'IP publique et ouvertures de ports par UPnP.
-- Vérifications et installation automatiques des mises à jour amont.
+Activez **l'accès Internet** pour lancer la détection d'IP et autoriser les
+ouvertures UPnP des ports média. Le trafic de l'interface reste accessible par
+votre domaine HTTPS et sur le LAN. Les vérifications automatiques de mises à
+jour amont et la géolocalisation restent désactivées.
 
-Le serveur Moonlight-Web local reste nécessaire pour joindre les hôtes
-Apollo/Sunshine et adapter leur flux au navigateur. Les fonctionnalités héritées
-du projet amont, dont l'hôte natif et le partage de session, restent dans le dépôt.
-Les limites du navigateur, des codecs et du matériel continuent de s'appliquer.
+Le serveur Moonlight-Web local reste nécessaire pour joindre Apollo/Sunshine
+et adapter leur flux au navigateur. L'hôte natif et le partage de session hérités
+du projet amont restent disponibles selon les capacités du matériel et du navigateur.
 
 ## Démarrage avec Docker Compose
 
@@ -44,7 +47,7 @@ Images publiées pour **Linux amd64 et arm64** :
 | Image                                               | Usage                                                         |
 | --------------------------------------------------- | ------------------------------------------------------------- |
 | `ghcr.io/aerodomigue/moonlight-web-dev:dev`         | Dernière image de développement publiée du fork.              |
-| `ghcr.io/aerodomigue/moonlight-web-dev:sha-77ec4b6` | Version identifiée contenant le WOL et le mode reverse proxy. |
+| `ghcr.io/aerodomigue/moonlight-web-dev:sha-<commit>` | Tag d’une version publiée, à remplacer par son identifiant de commit. |
 
 ```bash
 git clone https://github.com/aerodomigue/moonlight-web.git
@@ -99,7 +102,7 @@ Configurez votre proxy existant pour :
 6. Désactiver le buffering du flux et prévoir des délais adaptés à une session
    de streaming.
 
-Aucun port média UDP public n'est nécessaire dans ce mode. L'authentification
+Les ports média WebRTC sont configurés par UPnP lorsque l'accès Internet est activé ; WSS passe par le proxy en secours. L'authentification
 par PIN reste active. L'administration distante nécessite le mot de passe et,
 pour un client sur une IP publique, l'autorisation Internet correspondante.
 Une requête proxifiée ne bénéficie jamais de l'exemption de l'hôte local.
@@ -133,7 +136,7 @@ Il n'est pas nécessaire d'exposer un port WOL sur Internet.
 
 | Variable                         | Valeur par défaut               | Rôle                                                                       |
 | -------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| `MW_REVERSE_PROXY`               | `1`                             | Profil auto-hébergé et transport WSS.                                      |
+| `MW_REVERSE_PROXY`               | `1`                             | Profil auto-hébergé, sans relais ni télémétrie MoonlightWeb.                                      |
 | `MW_PUBLIC_URL`                  | Vide                            | Origine HTTPS utilisée pour les liens publics et le partage.               |
 | `MW_TRUSTED_PROXIES`             | `127.0.0.1/32,::1/128`          | Proxys autorisés à fournir l'adresse client et le schéma HTTPS.            |
 | `MW_NO_TELEMETRY`                | `1` dans l'image                | Désactivation supplémentaire des rapports et vérifications de mise à jour. |
@@ -190,9 +193,7 @@ de couverture. Le [workflow Docker](https://github.com/aerodomigue/moonlight-web
 construit les deux architectures ; un lancement manuel avec `publish=true`
 publie dans `ghcr.io/aerodomigue/moonlight-web-dev`.
 
-La [documentation technique héritée](docs/wiki/Home.md) reste disponible ; ses
-sections sur le rendez-vous, le STUN et la télémétrie décrivent le comportement
-amont, désactivé dans le profil auto-hébergé de ce fork.
+La [documentation technique héritée](docs/wiki/Home.md) reste disponible ; ses sections sur le rendez-vous et la télémétrie décrivent le comportement amont, désactivé ici. Le réseau et les transports restent fonctionnels.
 
 ## Origine et licence
 

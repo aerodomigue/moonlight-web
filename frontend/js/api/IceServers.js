@@ -1,8 +1,8 @@
 /* Copyright (C) 2026 Bruno Martin. GPLv3 — see repository LICENSE. */
 
-/** No third-party ICE discovery. Explicit backend ICE configuration may replace this list. */
+/** Public ICE discovery for direct streaming; no MoonlightWeb rendezvous/STUN. */
 export function defaultIceServers() {
-    return [];
+    return [{ urls: 'stun:stun.cloudflare.com:3478' }];
 }
 
 /** Retained for callers of the legacy Internet Access UI. */

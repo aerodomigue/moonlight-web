@@ -219,7 +219,7 @@ void RouterPortAllocator::ensureStarted()
 
 void RouterPortAllocator::discover()
 {
-    if (mw::edition::externalServicesDisabled()) return;
+    if (mw::edition::lanOnly() || !m_Settings->upnpEnabled()) return;
     if (m_State == GatewayState::Unknown) {
         startWorker();
         return;

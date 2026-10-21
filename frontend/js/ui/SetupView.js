@@ -184,7 +184,7 @@ export class SetupView {
             this._passMasked = !fresh;
             // An instance whose link is already up opens straight on page 2 —
             // there is no consent left to ask it for.
-            this._page = this._reverseProxy || this._internetActive ? 'options' : 'internet';
+            this._page = this._internetActive ? 'options' : 'internet';
             this._step = 'config';
         } catch (err) {
             console.error('[Setup] status failed:', err);
@@ -239,9 +239,7 @@ export class SetupView {
     // "change" can go back to it, which is why this is not simply
     // `_internetNeedsAnswer()`.
     _configPage() {
-        return this._page === 'internet' && !this._internetActive && !this._reverseProxy
-            ? 'internet'
-            : 'options';
+        return this._page === 'internet' && !this._internetActive ? 'internet' : 'options';
     }
 
     _renderConfig() {
@@ -260,7 +258,7 @@ export class SetupView {
 
             <div class="setup-section">
                 <h2 class="setup-section-title">${t('setup.internetTitle')}</h2>
-                <p class="setup-note">${t('setup.internetBody')}</p>
+                <p class="setup-note">${t(this._reverseProxy ? 'admin.selfHostedInternetInfo' : 'setup.internetBody')}</p>
                 <p class="consent-highlight">${t('setup.internetOption')}</p>
                 <div class="setup-choice" role="group"
                      aria-label="${this.esc(t('setup.internetTitle'))}">
@@ -304,15 +302,13 @@ export class SetupView {
         // and this one is recorded — so it stays visible and stays changeable
         // right up to the moment Done sends it.
         const address = this._publicAddress();
-        const internetBlock = this._reverseProxy
-            ? `<p class="setup-note">${t('admin.reverseProxyDescription')}</p>`
-            : this._internetActive
-              ? this._okNote(
-                    address
-                        ? t('setup.internetActive', { domain: address })
-                        : t('setup.internetActiveLan'),
-                )
-              : `
+        const internetBlock = this._internetActive
+            ? this._okNote(
+                  address
+                      ? t('setup.internetActive', { domain: address })
+                      : t('setup.internetActiveLan'),
+              )
+            : `
                 ${
                     this._internetAuth === true
                         ? this._okNote(t('setup.internetChosenYes'))
@@ -348,7 +344,7 @@ export class SetupView {
         return `
             <p class="login-subtitle">${t('setup.intro')}</p>
             ${
-                this._reverseProxy || this._internetActive
+                this._internetActive
                     ? ''
                     : `<p class="setup-note">${t('setup.stepCount', { current: 2, total: 2 })}</p>`
             }
@@ -693,15 +689,14 @@ export class SetupView {
     // instance whose link is already up is not asking anything, so it never
     // holds the page.
     _internetNeedsAnswer() {
-        return !this._reverseProxy && !this._internetActive && this._internetAuth === null;
+        return !this._internetActive && this._internetAuth === null;
     }
 
     async _apply() {
         if (this._internetNeedsAnswer()) return;
         // Steps already satisfied are rendered as "✓ done" (no controls) and
         // must not run again: their flags are forced off here.
-        this._internetAuth =
-            !this._reverseProxy && !this._internetActive && this._internetAuth === true;
+        this._internetAuth = !this._internetActive && this._internetAuth === true;
         // Applied with the rest, by default; the done page shows it ticked and
         // lets it be taken back. Never re-applied over an item already there.
         this._autoStart = this._autostartSupported && !this._autostartInstalled;

@@ -118,7 +118,7 @@ bool lanOnly();
 bool reverseProxy();
 /// Validated HTTPS origin from MW_PUBLIC_URL, without a trailing slash.
 QString publicUrl();
-/// Local infrastructure discovery and project-operated services are disabled.
+/// Project-operated services are disabled; local NAT/UPnP has its own policy.
 bool externalServicesDisabled();
 
 /// The error every refused Internet Access request answers with.

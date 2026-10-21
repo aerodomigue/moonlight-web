@@ -735,7 +735,8 @@
         "reverseProxy": "自建反向代理",
         "reverseProxyDescription": "通过您自己的 HTTPS 代理直接访问。已禁用 MoonlightWeb 外部服务和遥测。",
         "publicUrl": "公共 URL",
-        "reverseProxyConfiguration": "在服务器上设置 MW_PUBLIC_URL 和 MW_TRUSTED_PROXIES，并启用代理的 WebSocket 转发。"
+        "reverseProxyConfiguration": "在服务器上设置 MW_PUBLIC_URL 和 MW_TRUSTED_PROXIES，并启用代理的 WebSocket 转发。",
+        "selfHostedInternetInfo": "启用 Internet 以通过 STUN 检测公共 IP，并通过 UPnP 配置媒体端口。界面使用您的 HTTPS 代理；视频通过 WebRTC 直接连接，必要时回退到 WSS。STUN 服务商和连接的对端可以看到公共 IP。不使用 MoonlightWeb 外部中继、会合服务或遥测。"
     },
     "stream": {
         "stop": "停止",

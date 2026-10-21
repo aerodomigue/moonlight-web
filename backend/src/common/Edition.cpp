@@ -165,9 +165,6 @@ QString publicUrl()
 
 QString lanOnlyRefusal()
 {
-    if (reverseProxy())
-        return QStringLiteral("Managed Internet access is disabled. Use your own HTTPS reverse "
-                              "proxy and configure MW_PUBLIC_URL instead.");
     return QStringLiteral("This instance is LAN-only (MW_LAN_ONLY is set): Internet access "
                           "cannot be enabled. Open it at its LAN address instead.");
 }

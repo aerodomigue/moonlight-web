@@ -617,6 +617,16 @@ static const char* kCliInternetConsent =
     "keeps it, and its existing behaviour, until the announced shutdown of "
     "the DNS service in February 2027.)";
 
+static QString cliInternetConsent()
+{
+    if (mw::edition::reverseProxy())
+        return QStringLiteral("Internet access detects the public IP with STUN and allows UPnP "
+                              "media-port mappings. Peers and STUN providers see the public IP. "
+                              "The interface uses your HTTPS reverse proxy; no MoonlightWeb "
+                              "rendezvous, external relay or telemetry is used.");
+    return QString::fromUtf8(kCliInternetConsent);
+}
+
 // stdin is a terminal — i.e. there is a human who can answer a prompt.
 static bool stdinIsInteractive()
 {
@@ -948,7 +958,7 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
 {
     QTextStream out(stdout);
     // Before the agreement is shown: there is nothing here to agree to.
-    if (mw::edition::externalServicesDisabled()) {
+    if (mw::edition::lanOnly()) {
         out << mw::edition::lanOnlyRefusal() << "\n";
         out.flush();
         return 1;
@@ -961,7 +971,7 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
         return 1;
     }
 
-    out << "\n" << kCliInternetConsent << "\n\n";
+    out << "\n" << cliInternetConsent() << "\n\n";
     if (!assumeYes) {
         if (!stdinIsInteractive()) {
             out << "Re-run with --yes to accept this and continue.\n";
@@ -986,7 +996,7 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
 
     QJsonObject body;
     body["internet_access_enabled"] = true;
-    body["consent_message"] = QString::fromUtf8(kCliInternetConsent);
+    body["consent_message"] = cliInternetConsent();
     out << "\nEnabling the Internet link…\n";
     out.flush();
 
@@ -5019,7 +5029,8 @@ int main(int argc, char* argv[])
     // this machine — so the gate InternetAccessManager stops at applies here for
     // exactly the same reason.
     auto rendezvousShouldRun = [&]() {
-        return appSettings.internetAccessEnabled() && !internetAccess.consentRequired();
+        return !mw::edition::reverseProxy() && appSettings.internetAccessEnabled() &&
+               !internetAccess.consentRequired();
     };
 
     // Everything below this line that the rendezvous touches lives further down;

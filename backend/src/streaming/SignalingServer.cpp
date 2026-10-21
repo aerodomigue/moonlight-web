@@ -363,7 +363,7 @@ void SignalingServer::onNewWsConnection()
     // Same condition buildIceConfig uses below, so the two ends of the
     // connection never disagree about whether STUN is in play. A LAN-only
     // instance asks no STUN server at all, on either end (Edition.h).
-    const bool lanOnly = mw::edition::externalServicesDisabled();
+    const bool lanOnly = mw::edition::lanOnly();
     sendIceConfig((isInternet || m_ForceIceTcp) && !lanOnly, iceTimeoutMs);
 
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port

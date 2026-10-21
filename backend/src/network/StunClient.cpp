@@ -61,7 +61,10 @@ StunClient::StunClient(QObject* parent)
 
 QList<StunClient::StunServer> StunClient::defaultServers()
 {
-    if (mw::edition::externalServicesDisabled()) return {};
+    if (mw::edition::lanOnly()) return {};
+    if (mw::edition::reverseProxy())
+        return {{QStringLiteral("stun.cloudflare.com"), 3478},
+                {QStringLiteral("stun.l.google.com"), 19302}};
     // Ours first, and the public ones only behind it. A STUN binding hands the
     // server the address it is asking about, so whoever answers learns this
     // machine's public IP — which is exactly what the consent text names, and it
