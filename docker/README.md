@@ -1,475 +1,146 @@
-# MoonlightWeb in Docker
+# Docker — fork auto-hébergé Moonlight-Web
 
-Official images for Linux servers, NAS boxes and mini PCs, built from the
-[`Dockerfile`](../Dockerfile) at the repository root on **official Debian**
-(`debian:trixie`), published to the GitHub Container Registry for
-**`linux/amd64`** and **`linux/arm64`**.
+Ce guide concerne l'image **aerodomigue**, avec le WOL des hôtes enregistrés et
+l'accès direct par votre reverse proxy. Les services de rendez-vous, de relais
+externe et de télémétrie du projet amont sont désactivés par défaut.
 
----
+## Image
 
-## Quick start — headless Linux server (Ubuntu x64, Debian, a VM, a NUC)
-
-Four steps. Copy them in order; the container prints the same list back at you
-in `docker logs` if you lose your place.
-
-### 1. Run it
-
-```sh
-sudo docker run -d --name moonlightweb \
-  --network host \
-  --cap-drop ALL --cap-add NET_BIND_SERVICE \
-  -v mw-data:/data \
-  --restart unless-stopped \
-  ghcr.io/linckosz/moonlight-web:latest
+```text
+ghcr.io/aerodomigue/moonlight-web-dev:dev
 ```
 
-`--network host` is what puts the container on your LAN — without it, it can
-only reach machines by IP and will never discover them. See
-[Why `--network host`](#why---network-host).
+L'image est publiée pour **linux/amd64** et **linux/arm64**. Le tag `dev` suit
+les publications du fork ; les tags `sha-…` permettent de sélectionner un commit
+publié, par exemple `sha-77ec4b6` pour la version WOL + reverse proxy.
 
-### 2. Open the ports — this is NOT automatic
+## Installation
 
-The `.deb` and `.rpm` add firewall rules for you in their postinstall. **A
-container cannot and must not touch the host's firewall**, so this one is
-yours:
+Depuis la racine du dépôt :
 
-```sh
-sudo ufw allow 443/tcp        # the web UI — required
-sudo ufw allow 80/tcp         # HTTP-to-HTTPS redirect
-sudo ufw reload
+```bash
+cp .env.example .env
 ```
 
-`firewall-cmd --permanent --add-port=443/tcp --add-port=80/tcp && firewall-cmd
---reload` on Fedora/RHEL. If `ufw status` says *inactive*, nothing is blocking
-and there is nothing to do. Full table under [Ports](#ports).
+Configurez votre origine HTTPS et les adresses du proxy dans `.env` :
 
-### 3. Set the two credentials
-
-```sh
-sudo docker exec -it moonlightweb moonlightweb --set-admin-password
-sudo docker exec     moonlightweb moonlightweb --new-pin
-sudo docker exec     moonlightweb moonlightweb --status
+```dotenv
+MW_PUBLIC_URL=https://moonlight.example.com
+MW_TRUSTED_PROXIES=127.0.0.1/32,::1/128
 ```
 
-`--status` prints the URL to open, the PIN, and what is still missing. Neither
-credential has a default, and neither is optional — see
-[First run](#first-run--the-pin-is-not-optional-here) for why a container gets
-no free pass.
+Le domaine est un exemple, remplaçable au démarrage. Les adresses de boucle
+locale conviennent seulement si le proxy s'y connecte réellement. Pour un proxy
+sur une autre machine ou dans un conteneur, indiquez son IP vue par Moonlight-Web,
+avec le CIDR adapté. N'accordez pas votre confiance à tous les clients du réseau.
 
-### 4. Pair a Sunshine machine and stream
-
-1. Open **`https://<server-ip>`** in Chrome/Edge/Safari (use the IP, not
-   `localhost` — the server is not the machine you are sitting at).
-2. Accept the self-signed certificate warning. Expected on a LAN — the
-   server serves a self-signed certificate unless you configure your own
-   domain and certificate.
-3. Type the **PIN** from step 3. One PIN per device — re-run `--new-pin` for
-   the next phone or laptop.
-4. Your Sunshine machines appear by themselves (mDNS). If one does not, or you
-   are on a bridge network, **Add computer** → its IP address.
-5. Click the machine → MoonlightWeb shows a **4-digit pairing PIN**. Type
-   *that* one into Sunshine's own web UI at `https://<sunshine-machine>:47990`
-   → *PIN*. (This is the reverse direction from step 3, and the one people mix
-   up: MoonlightWeb issues it, Sunshine consumes it.)
-6. Pick a game and launch.
-
----
-
-## First run — the PIN is not optional here
-
-On a desktop install the app trusts the machine it runs on: a browser on
-`127.0.0.1` gets in without a PIN, and the setup wizard opens by itself. **A
-container never sees that loopback peer.** Behind a bridge every request
-arrives from the Docker gateway (`172.17.0.1`), and even on the host network a
-headless server has no local browser to be trusted — so the request is remote,
-`/api/setup/status` answers `401 authentication_required`, and the page loads
-into an authentication wall rather than the wizard.
-
-That is the design working as intended, not a bug: what would otherwise be a
-"trusted local machine" is, in a container, every device that can reach the
-port. So the first thing to do after `docker run` is `--new-pin`.
-
-Two other commands are worth running while you are there — both talk to the
-server over the container's own loopback, which is why they are allowed to:
-
-```sh
-docker exec -it moonlightweb moonlightweb --set-admin-password
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d
+docker compose --env-file .env -f docker/docker-compose.yml exec moonlightweb moonlightweb --status
 ```
 
-Without an admin password **the admin page cannot be opened from anywhere** —
-there is no built-in default, and the usual "you are on the machine itself"
-exemption does not apply to a container. The PIN grants streaming; the password
-grants administration.
+Le fichier [docker-compose.yml](docker-compose.yml) :
 
-Accept the self-signed certificate warning on first connection — expected on a
-LAN, unless you configure your own domain and certificate.
+- Utilise le réseau hôte sous Linux pour le WOL et la découverte mDNS.
+- Configure HTTP sur **8080** et HTTPS sur **8443**, modifiables dans sa section
+  `environment`.
+- Active `MW_REVERSE_PROXY=1` et `MW_NO_TELEMETRY=1`.
+- Conserve l'état de l'application dans le volume `mw-data`, monté sur `/data`.
+- Vérifie la disponibilité du serveur avec `moonlightweb --status`.
 
----
+Les ports déclarés dans le Dockerfile n'ouvrent aucun accès à eux seuls. Avec le
+réseau hôte, le processus écoute directement sur les ports configurés : le proxy
+rejoint l'adresse de la machine exécutant Moonlight-Web, au port 8080.
 
-## Tags
+## Reverse proxy HTTPS et WebSockets
 
-Prefer Compose: [`docker-compose.yml`](docker-compose.yml) is the quick start in
-a file. [`docker-compose.bridge.yml`](docker-compose.bridge.yml) is the fallback
-for platforms with no host networking — read the caveats in it first.
+Le flux suit ce chemin :
 
-| Tag | What it is |
-|---|---|
-| `latest` | The newest release. What you want. |
-| `0.4.0` | That exact release, forever. |
-| `0.4` | The newest `0.4.x` — minor updates, no major jump. |
-| `sha-<commit>` | One commit, pinned forever. |
-
-**Every tag here is a release.** There is no `edge` and no nightly: an image is
-published only from a `v*` tag that already passed the quality and test gates,
-so `latest` can never hand you work in progress.
-
-Development builds exist, in a **separate and private** package —
-`ghcr.io/linckosz/moonlight-web-dev:dev`. It is produced only by running the
-Docker workflow by hand with `publish` ticked, and pulling it needs
-`docker login ghcr.io` with an account that has access: an anonymous request
-for its tag list is refused with 403, where the public package answers 200.
-Nothing you do with `docker pull …/moonlight-web:latest` can reach it.
-
-**Architectures: `linux/amd64` and `linux/arm64` only.** Both are built on native
-runners; no 32-bit `armv7`/`armhf` image is published. There is no hosted 32-bit
-ARM runner, so it would have to be emulated under QEMU — and emulating a full
-Qt + libdatachannel C++ build costs hours per commit for a target that Raspberry
-Pi OS has shipped a 64-bit default for since 2022. A Pi 3, 4, 5 or Zero 2 W runs
-the `arm64` image; genuinely 32-bit hardware can
-[build from source](#building-it-yourself), which works — it is only the CI cost
-that rules it out.
-
----
-
-## Why `--network host`
-
-MoonlightWeb is not a plain web server; it is one end of a WebRTC connection
-and an mDNS client. Three things break behind a bridge, and publishing more
-ports fixes none of them:
-
-- **WebRTC media.** libdatachannel binds an **ephemeral** UDP port for the
-  media and input transport, unless UPnP handed it a fixed one. An ephemeral
-  port cannot be published in advance. When the browser cannot reach it, the
-  stream falls back to its TCP/WebSocket transport — it works, but you pay for
-  it in latency.
-- **Host discovery.** Sunshine machines announce themselves over mDNS
-  (multicast UDP 5353), which does not cross the default bridge. On a bridge,
-  add your hosts by IP address instead — a one-time step, then everything else
-  behaves normally.
-- **UPnP.** The router is found by SSDP multicast — same story. Without it,
-  Internet Access cannot open the per-session streaming port for you.
-
-Host networking removes all three at once, and there is nothing to gain from
-isolating a service whose whole job is to be reachable.
-
-**This is not something the application can decide for itself.** A process
-cannot move into another network namespace after it has started, so there is no
-`--access-host-network` command to run and no setting to tick: it is chosen by
-`docker run`, before the binary exists. What the image *can* do is tell you
-which side of that line it landed on, which it does in the first lines of
-`docker logs`.
-
-### The three options, ranked
-
-| | LAN reach | mDNS discovery | WebRTC | When |
-|---|---|---|---|---|
-| **`--network host`** | full | ✅ | direct | **Default. Any Linux host.** |
-| **macvlan** | full, own LAN IP | ✅ | direct | You want the container isolated *and* on the LAN — a NAS with several services fighting over port 443. |
-| **bridge** (published ports) | by IP only | ❌ | may fall back to TCP | Docker Desktop on macOS/Windows, rootless Podman, a NAS UI that only offers port mappings. |
-
-macvlan gives the container its own MAC and its own address on your LAN, so
-multicast works and nothing collides with the host's ports:
-
-```sh
-# Adjust parent= to your NIC (ip -br link) and the subnet to your LAN.
-sudo docker network create -d macvlan \
-  --subnet=10.0.0.0/24 --gateway=192.168.1.1 \
-  -o parent=eth0 mw-lan
-
-sudo docker run -d --name moonlightweb \
-  --network mw-lan --ip 192.168.1.240 \
-  -v mw-data:/data --restart unless-stopped \
-  ghcr.io/linckosz/moonlight-web:latest
+```text
+Navigateur → votre proxy HTTPS/WSS → backend HTTP :8080 → Apollo/Sunshine sur le LAN
 ```
 
-One caveat worth knowing before you pick it: by design, a macvlan container and
-its **own host** cannot talk to each other. Fine when Sunshine runs elsewhere;
-not fine when Sunshine runs on that same box — use host networking there.
+Le proxy termine TLS avec votre certificat et transmet tous les chemins, dont
+`/api/*`, `/ws*` et `/p/*`. Activez les WebSockets, conservez `Host` et `Origin`,
+écrasez `X-Forwarded-Proto` avec `https`, et ajoutez l'adresse réelle du client à
+`X-Forwarded-For`. Désactivez le buffering et adaptez les délais au streaming.
 
-If none of these are available, `docker-compose.bridge.yml` states its two
-caveats up front and works for everything except discovery and the lowest
-latency.
+Le profil utilise WSS pour les flux et ne nécessite pas de port média UDP public,
+de STUN public ou d'ouverture UPnP. Les anciennes valeurs activées dans
+`settings.json` ne réactivent pas ces services. Les requêtes proxifiées doivent
+s'authentifier ; elles n'héritent pas des privilèges de l'hôte local.
 
----
+Voir [le guide de configuration complet](../docs/reverse-proxy.md).
 
-## Ports
+## PIN et administration
 
-### Inbound — what browsers connect to
+Consultez le PIN et l'état du serveur :
 
-These are the ports to publish (bridge) or to open in the **host's** firewall
-(host networking), and to forward on your router if you want access from
-outside the LAN.
-
-| Port | Proto | Needed | What goes over it |
-|---|---|---|---|
-| **443** | TCP | **Always** | The web UI, the REST API, and the `wss://…/ws` upgrade that carries WebRTC signalling. The one port a browser cannot do without. |
-| **80** | TCP | Recommended | Redirect to HTTPS, so `http://server` reaches the app instead of failing. |
-| **48550–48573** | UDP | **Always** (host firewall) | WebRTC media, audio and input. Each stream slot binds `48550 + slot`, with or without UPnP, so a host firewall can let the block through; with UPnP the router forwards a port to it (the slot's own first). |
-| **47999** | UDP | Legacy Internet Access | Mapped alongside 80/443 only by an install that still holds a legacy `moonlightweb.top` sub-domain. |
-| *ephemeral* | UDP | Fallback | When the slot's port is already taken (a second instance on the same machine), the stream takes another free port of the block. Only when the whole block is taken does libdatachannel take whatever the kernel gives it, which a host firewall blocks. |
-
-> **In short:** on a LAN, **443/tcp**, **80/tcp** and **48550–48573/udp**.
-> The `.deb`, `.rpm` and AUR package open them for you in
-> firewalld/ufw; a container does not touch the host's firewall, so that is
-> yours to do.
-
-Ports 80 and 443 are the defaults; `MW_HTTP_PORT` / `MW_HTTPS_PORT` move them.
-
-### Outbound — what MoonlightWeb connects to
-
-Nothing to publish, but these paths have to exist. On the host network they do.
-
-| Destination | Port | Proto | What for |
-|---|---|---|---|
-| Sunshine host | 47989 | TCP | GameStream HTTP: pairing, app list, host info. |
-| Sunshine host | 47984 · 47990 | TCP | GameStream HTTPS (GeForce Experience · Sunshine defaults). |
-| Sunshine host | 48010 | TCP | RTSP handshake that sets the stream up. |
-| Sunshine host | 47998 · 47999 · 48000 | UDP | Video · control/input · audio. |
-| LAN multicast | 5353 | UDP | mDNS host discovery (host networking only). |
-| LAN multicast | 1900 | UDP | SSDP, to find the UPnP router (host networking only). |
-| Internet | 19302 | UDP | STUN, to learn the public address for a stream from outside the LAN. |
-| Internet | 443 | TCP | Update check, and the held line to the rendezvous server when Internet Access is on. |
-
----
-
-## Streaming from outside the LAN (Internet Access)
-
-Internet Access is an opt-in consent, off by default. While it is on, the app
-asks the router (UPnP, SSDP multicast — so **host networking**) to open a
-streaming port during each session; whoever connects reaches this machine
-directly, and each side of a peer-to-peer connection sees the other's public IP
-address. No DNS record is created, no certificate is issued, and ports 80/443
-stay closed:
-
-```sh
-docker exec -it moonlightweb moonlightweb --enable-internet
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml exec moonlightweb moonlightweb --status
 ```
 
-A new remote entry link — reaching the web UI itself from outside without
-opening it to the internet — is in development and will be announced in the
-release notes. Until then a remote browser has no way in unless you forward
-TCP 443 yourself and accept the self-signed warning, or bring your own domain
-and certificate.
+Générez un nouveau PIN si nécessaire :
 
-**A container upgraded from v0.2.4 or earlier** stops using the
-`moonlightweb.top` sub-domain it once registered: this version registers no
-name, renews no certificate and forwards no web port. The sub-domain keeps
-resolving — that is the DNS server's doing, not the container's — until the
-shared service shuts down in February 2027. Nothing has to be reconfigured;
-the consent checkbox is asked once more, because the wording it was ticked
-under described a mechanism that no longer runs.
-
----
-
-## Storage
-
-One volume, `/data`, mounted at the container's `$HOME`. Qt derives every path
-from it:
-
-| Path inside `/data` | What lives there |
-|---|---|
-| `.local/share/MoonlightWeb/MoonlightWeb/settings.json` | Ports, codec, transport, admin password hash, access PIN. |
-| `.local/share/MoonlightWeb/MoonlightWeb/cert/` | The TLS certificate and key the browser sees. |
-| `.local/share/MoonlightWeb/MoonlightWeb/logs/` | `moonlightweb.log`, plus one file per stream worker. |
-| `.config/MoonlightWeb/MoonlightWeb.conf` | Paired hosts **and the Moonlight client identity**. |
-
-Losing the volume un-pairs every host — the identity is what Sunshine
-recognises. Back it up with the container stopped:
-
-```sh
-docker run --rm -v mw-data:/data -v "$PWD:/backup" debian:trixie-slim \
-  tar czf /backup/moonlightweb-data.tgz -C /data .
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml exec moonlightweb moonlightweb --new-pin
 ```
 
----
+L'administration depuis un autre appareil nécessite l'activation du mot de passe
+administrateur distant. Pour une IP cliente publique, activez également son
+option Internet. La présence du proxy ne dispense pas de ces contrôles.
 
-## Environment variables
+## Wake-on-LAN
 
-| Variable | Default | What it does |
-|---|---|---|
-| `MW_HTTPS_PORT` | `443` | HTTPS listener. Written into `settings.json` on every start, so it survives the fallback the server applies when a port is taken. |
-| `MW_HTTP_PORT` | `80` | HTTP listener (HTTP-to-HTTPS redirect). |
-| `MW_UPNP` | `1` | `0` stops the app asking the router to map ports — set it on a bridge network, where the request cannot reach a router anyway. |
-| `TZ` | `Etc/UTC` | Timestamps in the logs and the admin UI. |
-| `MW_DOMAIN`, `MW_PDNS_TOKEN` | baked in | The rendezvous domain and the shared API key for the update relay and aggregate metrics. The official images carry the project's, exactly like the `.deb`; without them the container never contacts our infrastructure. |
+La carte d'une machine enregistrée hors ligne propose le réveil si son IP LAN
+et sa MAC sont connues et valides. Le menu **⋯ → Configurer le Wake-on-LAN** permet de corriger
+ces informations. Elles sont conservées lorsque la cible est éteinte et après un
+redémarrage de Moonlight-Web.
 
-Everything else is configured from the admin page, or by editing
-`settings.json` in the volume and restarting — see
-[`docs/wiki/07-Settings-Reference.md`](../docs/wiki/07-Settings-Reference.md).
+Le backend émet les paquets sur le LAN directement connecté, selon le masque réel
+de l'interface, en UDP 7 et 9. Les IP publiques et les cibles hors de ces
+sous-réseaux sont refusées. Activez aussi le WOL dans le firmware et sur la carte
+réseau du PC cible.
 
-Anything after the image name is passed straight to the binary:
+Le bridge Docker standard ne fournit généralement pas l'interface LAN nécessaire :
+utilisez le Compose avec réseau hôte pour ce déploiement. Le fichier historique
+`docker-compose.bridge.yml` n'est pas le guide de déploiement de ce fork et ne
+convient pas au WOL LAN sans adaptation.
 
-```sh
-docker run … ghcr.io/linckosz/moonlight-web:latest --port 8080
+## Données et mises à jour
+
+`/data` contient notamment :
+
+- Les réglages, le PIN, les certificats et les journaux de Moonlight-Web.
+- Les associations avec les hôtes et l'identité du client Moonlight.
+
+Conservez votre volume existant lors du remplacement de l'image et sauvegardez-le.
+Ne lancez pas `docker compose down -v` pour une mise à jour : cette option supprime
+les volumes du projet.
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml pull
+docker compose --env-file .env -f docker/docker-compose.yml up -d
 ```
 
----
+Ces commandes mettent à jour un déploiement utilisant `:dev`. Si vous avez choisi
+un tag `sha-…`, changez d'abord le champ `image` pour la nouvelle version souhaitée.
+Les mises à jour automatiques vers le projet amont sont désactivées.
 
-## Operating it
+## Diagnostic
 
-```sh
-docker exec moonlightweb moonlightweb --status               # URLs, PIN, internet state
-docker exec moonlightweb moonlightweb --new-pin              # let one more device in
-docker exec -it moonlightweb moonlightweb --set-admin-password
-docker exec -it moonlightweb moonlightweb --enable-internet  # allow the internet link
-docker logs -f moonlightweb
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml ps
+docker compose --env-file .env -f docker/docker-compose.yml logs --tail 100 moonlightweb
 ```
 
-The image's `HEALTHCHECK` is `moonlightweb --status`, which answers only once
-the TLS listener is up — so `docker ps` showing *healthy* means a browser can
-actually connect.
+| Symptôme                                  | Vérification                                                                       |
+| ----------------------------------------- | ---------------------------------------------------------------------------------- |
+| Redirection vers le port HTTPS interne    | IP du proxy dans `MW_TRUSTED_PROXIES` et `X-Forwarded-Proto: https`.               |
+| Interface accessible, flux indisponible   | Upgrade WebSocket, chemins `/ws*`, buffering et délais du proxy.                   |
+| Bouton WOL absent                         | IP locale, MAC valide, interface et sous-réseau réellement accessibles au backend. |
+| Liens publics incorrects                  | Valeur HTTPS de `MW_PUBLIC_URL`, sans sous-chemin.                                 |
+| Perte des associations après remplacement | Réutilisation du même volume monté sur `/data`.                                    |
 
-### Updating
-
-`docker pull` + recreate. The volume carries the settings, the certificate and
-the pairings across, so nothing is re-entered:
-
-```sh
-sudo docker pull ghcr.io/linckosz/moonlight-web:latest
-sudo docker stop moonlightweb && sudo docker rm moonlightweb
-sudo docker run -d --name moonlightweb … # the same command as step 1
-```
-
-With Compose: `docker compose pull && docker compose up -d`.
-
-**The in-app update button is deliberately absent in a container.** On Windows
-and macOS it downloads the installer and runs it; here that would install a
-`.deb` into the image's writable layer, appear to work, and be discarded by the
-next `docker run` — the version would silently go *backwards* on the next
-restart. `SelfUpdater` detects the container and reports `supported: false`, so
-the UI never offers a button that cannot keep its promise.
-
-The update *check* still runs: you are told a new version exists, and the
-registry is where you get it. Pin `0.2` instead of `latest` if you would rather
-take minor releases and skip a major one, or a `sha-…` tag to freeze entirely.
-
----
-
-## Hardware acceleration: none needed
-
-There is nothing to pass through — no `--device /dev/dri`, no NVIDIA container
-runtime, no VA-API packages.
-
-MoonlightWeb never decodes or re-encodes the stream. Sunshine encodes on the
-gaming PC's GPU; this server re-packetises the encrypted RTP into WebRTC and
-the **browser** decodes it on the viewer's device. The upscaling and sharpening
-(FSR1 / SGSRv1) run in the browser on WebGL2 (WebGPU in HDR), on the viewer's GPU. The
-container's job is packet plumbing and TLS, and it is comfortable on a
-Raspberry Pi 4 or an N100 mini PC.
-
-Gamepads, keyboard and mouse are the same story: input is captured by the
-browser, arrives over the WebRTC data channel and leaves as GameStream input
-packets to Sunshine. No `/dev/input`, no `uinput`, no privileged container.
-
-**Sunshine is not in this image and cannot be.** A container has no display to
-capture. Run Sunshine on the machine with the GPU, and add it here by IP.
-
----
-
-## Running as a service
-
-`--restart unless-stopped` (or `restart: unless-stopped` in Compose) is enough
-on any host where Docker itself starts at boot. For a systemd unit that owns
-the Compose project instead:
-
-```ini
-# /etc/systemd/system/moonlightweb-docker.service
-[Unit]
-Description=MoonlightWeb (Docker Compose)
-Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=/opt/moonlightweb
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
-ExecReload=/usr/bin/docker compose pull && /usr/bin/docker compose up -d
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```sh
-sudo systemctl enable --now moonlightweb-docker
-```
-
-Not running in Docker at all? [`../backend/packaging/systemd/moonlightweb.service`](../backend/packaging/systemd/moonlightweb.service)
-is the native unit the `.deb` and `.rpm` install.
-
----
-
-## Running as a non-root user
-
-The image runs as root so it can bind 80 and 443, with every capability except
-`NET_BIND_SERVICE` dropped. To run as somebody else, move the listeners above
-1024 **and** give that user the volume — a fresh named volume is created
-root-owned, and the container has no privilege left to fix that itself:
-
-```sh
-mkdir -p /srv/moonlightweb && chown 1000:1000 /srv/moonlightweb
-docker run -d --name moonlightweb --network host \
-  --user 1000:1000 --cap-drop ALL \
-  -e MW_HTTP_PORT=8080 -e MW_HTTPS_PORT=8443 \
-  -v /srv/moonlightweb:/data \
-  ghcr.io/linckosz/moonlight-web:latest
-```
-
-The URL becomes `https://<server-ip>:8443`.
-
----
-
-## Building it yourself
-
-```sh
-git clone --recurse-submodules https://github.com/linckosz/moonlight-web
-cd moonlight-web
-docker build -t moonlightweb --build-arg MW_VERSION=0.0.0-dev .
-```
-
-The submodules are not optional: moonlight-common-c, libdatachannel, miniupnpc
-and qmdnsengine are compiled into the binary, and `.dockerignore` sends only
-`backend/`, `frontend/` and `docker/` to the daemon. `--build-arg
-DEBIAN_RELEASE=bookworm` builds against Debian 12 (Qt 6.4) instead of trixie
-(Qt 6.8) if you need the older base.
-
-The build stage uses Debian's Qt 6 and OpenSSL development packages and the
-runtime stage the matching runtime ones, so nothing is privately bundled:
-rebuilding on a patched base is how this image gets its security updates.
-
----
-
-## Troubleshooting
-
-**The container starts and immediately exits 0.** A single-instance lock left
-by a previous container. The entrypoint deletes it on every start — if you see
-this, you are running the binary without the entrypoint. Delete
-`/data/.local/share/MoonlightWeb/MoonlightWeb/moonlightweb.lock`.
-
-**`HTTPS server started on port 8443`** (not 443). Something else on the host
-already holds 443 — on host networking that is a real conflict with a reverse
-proxy or another web server. Either free the port or set `MW_HTTPS_PORT` and
-put your proxy in front.
-
-**The web UI loads but the stream never starts.** The signalling worked and the
-media path did not — the usual bridge-network symptom. Check
-`docker logs` for the ICE state, and move to host networking.
-
-**No hosts found.** mDNS does not cross a bridge, and some LANs block multicast
-outright. Add the host by IP from *Add computer* — discovery is a convenience,
-not a requirement.
-
-**`Qt platform: offscreen (no display — headless)` in the log.** Expected. It
-is what the image is supposed to say.
+Le [README principal](../README.md) décrit le fork ; la configuration des variables
+se trouve dans [`.env.example`](../.env.example).
