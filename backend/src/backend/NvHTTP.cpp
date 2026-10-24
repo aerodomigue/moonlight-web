@@ -307,21 +307,27 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
 
 QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPort,
                                       const QString& uniqueId, const QByteArray& rikey, int rikeyid,
+                                      int width, int height, int fps,
                                       const QByteArray& clientCertPem,
                                       const QByteArray& clientKeyPem, int localAudioPlayMode,
                                       int timeoutMs)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString uid = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
-    // No appid/mode: resume reconnects to the app already running for this client.
+    // Resume keeps the app, but Apollo constructs a new display/capture session
+    // from mode. Omitting it silently selects its fallback (typically 1080p60).
     // localAudioPlayMode: 0 = mute host speakers, 1 = play on host too.
     QString query = QString("uniqueid=%1&uuid=%2&rikey=%3&rikeyid=%4"
-                            "&surroundAudioInfo=196610&localAudioPlayMode=%5&corever=1")
+                            "&surroundAudioInfo=196610&localAudioPlayMode=%5&corever=1"
+                            "&mode=%6x%7x%8&sops=1")
                         .arg(uid)
                         .arg(uuid)
                         .arg(QString::fromLatin1(rikey.toHex()))
                         .arg(rikeyid)
-                        .arg(localAudioPlayMode);
+                        .arg(localAudioPlayMode)
+                        .arg(width)
+                        .arg(height)
+                        .arg(fps);
 
     QUrl url(QString("https://%1:%2/resume?%3").arg(address.address()).arg(httpsPort).arg(query));
 

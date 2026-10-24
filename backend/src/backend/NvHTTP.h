@@ -95,8 +95,9 @@ public:
     // never touches another client's session.
     QNetworkReply* resumeAppAsync(const NvAddress& address, quint16 httpsPort,
                                   const QString& uniqueId, const QByteArray& rikey, int rikeyid,
-                                  const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
-                                  int localAudioPlayMode = 0, int timeoutMs = 0);
+                                  int width, int height, int fps, const QByteArray& clientCertPem,
+                                  const QByteArray& clientKeyPem, int localAudioPlayMode = 0,
+                                  int timeoutMs = 0);
 
     // uniqueId empty → falls back to the shared Moonlight unique ID.
     QNetworkReply* quitAppAsync(const NvAddress& address, quint16 httpsPort,

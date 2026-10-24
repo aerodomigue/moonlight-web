@@ -34,6 +34,7 @@ void run_host_persistence_tests();
 void run_rendezvous_id_tests();
 void run_rendezvous_line_tests();
 void run_backend_probe_tests();
+void run_stream_parameters_tests();
 void run_host_os_probe_tests();
 void run_send_backlog_tests();
 void run_relay_frame_log_tests();
@@ -94,6 +95,13 @@ int main(int argc, char** argv)
         return g_stats.failed ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
+    if (app.arguments().contains(QStringLiteral("--stream-parameters"))) {
+        run_stream_parameters_tests();
+        std::fprintf(stderr, "Stream parameters: %d passed, %d failed\n", g_stats.passed,
+                     g_stats.failed);
+        return g_stats.failed ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+    run_stream_parameters_tests();
     run_reverse_proxy_tests();
     if (app.arguments().contains(QStringLiteral("--reverse-proxy"))) {
         std::fprintf(stderr, "Reverse proxy: %d passed, %d failed\n", g_stats.passed,
