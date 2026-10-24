@@ -6,6 +6,8 @@
 #include "server/UserStore.h"
 #include "common/PairingCrypto.h"
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include <QTemporaryDir>
 #include <stdexcept>
 
@@ -104,6 +106,8 @@ void run_user_identity_tests()
     local = store.get(local.id);
     local.enabled = false;
     local.role = "admin";
+    local.ssoRole = "user";
+    local.roleRevision = 7;
     store.update(local);
     CHECK(!store.active(local.id));
     CHECK(!store.upsert(config.issuer, "linked-sub", "Still disabled").enabled);
@@ -118,6 +122,21 @@ void run_user_identity_tests()
     CHECK_EQ(managedReload.findIdentity(config.issuer, "linked-sub").id, local.id);
     CHECK(!managedReload.active(local.id));
     CHECK_EQ(managedReload.get(local.id).role, QString("admin"));
+    CHECK_EQ(managedReload.get(local.id).ssoRole, QString("user"));
+    CHECK_EQ(managedReload.get(local.id).roleRevision, quint64(7));
+    const auto legacyPath = temporary.filePath("legacy-users.json");
+    QFile legacyFile(legacyPath);
+    CHECK(legacyFile.open(QIODevice::WriteOnly));
+    legacyFile.write(
+        QJsonDocument(QJsonObject{{"version", 2}, {"users", QJsonArray{local.adminJson()}}})
+            .toJson());
+    legacyFile.close();
+    UserStore migrated(legacyPath);
+    CHECK_EQ(migrated.get(local.id).id, local.id);
+    CHECK_EQ(migrated.get(local.id).role, QString("admin"));
+    CHECK_EQ(migrated.get(local.id).ssoRole, QString("user"));
+    CHECK_EQ(migrated.get(local.id).roleRevision, quint64(0));
+    CHECK(!migrated.active(local.id));
     auto owner = store.get(UserStore::localId());
     owner.enabled = false;
     conflict = false;
@@ -158,6 +177,14 @@ void run_user_identity_tests()
 #endif
     CHECK_EQ(AuthConfig::edited(loaded, {{"client_secret", ""}}).clientSecret, saved.clientSecret);
     CHECK(AuthConfig::edited(loaded, {{"clear_secret", true}}).clientSecret.isEmpty());
+    CHECK_EQ(loaded.json()["scopes"].toString(), QString("openid profile email moonlight_role"));
+    const auto scoped = AuthConfig::edited(loaded, {{"scopes", "openid moonlight_role"}});
+    CHECK(scoped.signature() != loaded.signature());
+    CHECK_EQ(scoped.clientSecret, saved.clientSecret);
+    scoped.save(authPath);
+    CHECK_EQ(AuthConfig::load(authPath, bootstrap).json()["scopes"].toString(),
+             QString("openid moonlight_role"));
+    saved.save(authPath);
     auto ssoMode = saved;
     ssoMode.pin = false;
     CHECK_EQ(saved.signature(), ssoMode.signature());
