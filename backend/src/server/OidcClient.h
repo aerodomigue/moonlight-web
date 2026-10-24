@@ -8,11 +8,12 @@
 
 class AuthManager;
 class HttpServer;
+class AppSettings;
 
 class OidcClient : public QObject
 {
 public:
-    OidcClient(AuthManager& auth, HttpServer& server);
+    OidcClient(AuthManager& auth, HttpServer& server, AppSettings& settings);
 
 private:
     struct Pending
@@ -45,6 +46,7 @@ private:
     static QString digest(const QString& value);
     AuthManager& m_auth;
     HttpServer& m_server;
+    AppSettings& m_settings;
     QNetworkAccessManager m_network;
     QHash<QString, Pending> m_pending;
     QHash<QString, LinkGrant> m_links;

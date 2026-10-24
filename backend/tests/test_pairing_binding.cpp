@@ -17,6 +17,9 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <iostream>
 
 namespace {
 
@@ -46,6 +49,46 @@ QString sdpWith(const QStringList& fingerprintLines)
 }
 
 } // namespace
+
+// Test-only bridge to real WebCrypto: never loads service state or its keys.
+// Chromium supplies its real SDP; this process signs or verifies using exactly
+// the C++ primitives used by SignalingServer, with an ephemeral fixture identity.
+int run_pairing_browser_fixture()
+{
+    std::string line;
+    if (!std::getline(std::cin, line) || line.size() > 65536) return 2;
+    const auto input = QJsonDocument::fromJson(QByteArray::fromStdString(line)).object();
+    const auto browserKey = QByteArray::fromBase64(input["browser_key"].toString().toLatin1());
+    const auto fp = SdpFingerprint::extract(input["sdp"].toString());
+    if (!PairingCrypto::isValidP256Spki(browserKey) || fp.isEmpty()) return 2;
+    QJsonObject output;
+    if (input["mode"] == "offer") {
+        const auto nonceB = QByteArray::fromBase64(input["browser_nonce"].toString().toLatin1());
+        if (nonceB.size() != 32) return 2;
+        const auto key = PairingCrypto::generatePrivateKeyPem();
+        const auto pub = PairingCrypto::publicKeySpkiFromPrivatePem(key);
+        const auto id = PairingCrypto::keyId(pub);
+        const auto signedBytes =
+            PairingCrypto::hostDigestInput(id, PairingCrypto::keyId(browserKey), nonceB, fp);
+        output = {{"protocol", "MW-BIND-v1"},
+                  {"host_id", id},
+                  {"sdp", input["sdp"]},
+                  {"host_public_key", QString::fromLatin1(pub.toBase64())},
+                  {"nonce", QString::fromLatin1(PairingCrypto::generateNonce().toBase64())},
+                  {"sig", QString::fromLatin1(PairingCrypto::sign(key, signedBytes).toBase64())}};
+    } else if (input["mode"] == "answer") {
+        const auto nonceH = QByteArray::fromBase64(input["host_nonce"].toString().toLatin1());
+        const auto fpHost = SdpFingerprint::extract(input["host_sdp"].toString());
+        const auto signedBytes =
+            PairingCrypto::browserDigestInput(input["host_id"].toString(), nonceH, fpHost, fp);
+        output["valid"] = PairingCrypto::verify(
+            browserKey, signedBytes, QByteArray::fromBase64(input["sig"].toString().toLatin1()));
+    } else {
+        return 2;
+    }
+    std::cout << QJsonDocument(output).toJson(QJsonDocument::Compact).constData() << std::endl;
+    return 0;
+}
 
 void run_pairing_binding_tests()
 {

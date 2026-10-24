@@ -4,6 +4,7 @@
 #include "server/RequestGuard.h"
 #include "server/UserAccess.h"
 #include "server/UserStore.h"
+#include "common/PairingCrypto.h"
 #include <QFile>
 #include <QTemporaryDir>
 #include <stdexcept>
@@ -341,6 +342,35 @@ void run_user_identity_tests()
     CHECK(concurrent.validateSession(secondToken));
     CHECK(concurrent.sessionForToken(secondToken).streaming);
     CHECK_EQ(revokedStreams, 1);
+
+    SECTION("Identity renewal requires a fresh login and the original bound browser");
+    AuthManager renewal(nullptr, nullptr, mixed);
+    const auto hostKey =
+        PairingCrypto::publicKeySpkiFromPrivatePem(PairingCrypto::generatePrivateKeyPem());
+    const auto browserKey =
+        PairingCrypto::publicKeySpkiFromPrivatePem(PairingCrypto::generatePrivateKeyPem());
+    const auto otherKey =
+        PairingCrypto::publicKeySpkiFromPrivatePem(PairingCrypto::generatePrivateKeyPem());
+    const auto renewToken = renewal.createSession("10.2.10.90", "Renewal");
+    CHECK(!renewal.authorizeIdentityRenewal(renewToken, hostKey, 1000));
+    CHECK(renewal.bindSessionKey(renewToken, browserKey));
+    CHECK(!renewal.canRenewIdentity(renewToken, browserKey, hostKey, 1000));
+    CHECK(renewal.authorizeIdentityRenewal(renewToken, hostKey, 1000));
+    CHECK(renewal.canRenewIdentity(renewToken, browserKey, hostKey, 1000));
+    CHECK(renewal.canRenewIdentity(renewToken, browserKey, hostKey, 1299));
+    CHECK(!renewal.canRenewIdentity(renewToken, browserKey, hostKey, 1300));
+    CHECK(!renewal.canRenewIdentity(renewToken, otherKey, hostKey, 1001));
+    CHECK(!renewal.canRenewIdentity(renewToken, browserKey, otherKey, 1001));
+    CHECK(!renewal.canRenewIdentity(renewToken, browserKey, hostKey, 999));
+    CHECK(!renewal.sessionForToken(renewToken).toJson().contains("identity_renewal"));
+    renewal.applyConfig(mixed);
+    CHECK(!renewal.canRenewIdentity(renewToken, browserKey, hostKey, 1001));
+    CHECK(renewal.authorizeIdentityRenewal(renewToken, hostKey, 1002));
+    renewal.logoutSession(renewToken);
+    CHECK(!renewal.canRenewIdentity(renewToken, browserKey, hostKey, 1003));
+    const auto hostToken = renewal.createSession("10.2.10.90", "Host", true);
+    CHECK(renewal.bindSessionKey(hostToken, browserKey));
+    CHECK(!renewal.authorizeIdentityRenewal(hostToken, hostKey, 1000));
 
     SECTION("Only the OIDC callback allows a cross-site GET");
     HttpRequest req;

@@ -1,5 +1,6 @@
 #include "OidcClient.h"
 #include "AuthManager.h"
+#include "AppSettings.h"
 #include "HttpServer.h"
 #include "OidcToken.h"
 #include "RestRouter.h"
@@ -35,10 +36,11 @@ HttpResponse redirect(const QString& url)
 }
 } // namespace
 
-OidcClient::OidcClient(AuthManager& auth, HttpServer& server)
+OidcClient::OidcClient(AuthManager& auth, HttpServer& server, AppSettings& settings)
     : QObject(&server)
     , m_auth(auth)
     , m_server(server)
+    , m_settings(settings)
     , m_network(this)
 {
     server.router()->postAsync("/api/auth/oidc/prepare",
@@ -342,6 +344,7 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                             return;
                         }
                         m_auth.logoutSession(pending.previousToken);
+                        m_auth.authorizeIdentityRenewal(token, m_settings.hostSigningPublicKey());
                         auto response = redirect("/");
                         response.headers["Set-Cookie"] =
                             "__Host-mw_session=" + token +

@@ -64,4 +64,11 @@ describe('Account roles after a PIN login', () => {
         expect(app._initAsync).not.toHaveBeenCalled();
         expect(document.querySelector('.hosts-error')).not.toBeNull();
     });
+    it('requires reauthentication for a stale identity even for an administrator', async () => {
+        BackendClient.getAuthStatus.mockResolvedValue({ authenticated: true, is_localhost: true, identity_error: 'identityChanged' });
+        expect(await app._checkAuth()).toBe(false);
+        expect(app.loginView).toBeDefined();
+        expect(BackendClient.ensurePairingKey).not.toHaveBeenCalled();
+        expect(app._initAsync).not.toHaveBeenCalled();
+    });
 });

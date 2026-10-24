@@ -273,8 +273,11 @@ class OidcIsolation(unittest.TestCase):
             time.sleep(0.1)
         self.fail("Isolated server did not become healthy")
 
-    def prepare(self, browser, subject="alice-sub", claims=None, remember=True, path="/api/auth/oidc/prepare", headers=None):
-        status, body, _ = browser.request(path, {"remember": remember}, extra_headers=headers)
+    def prepare(self, browser, subject="alice-sub", claims=None, remember=True, path="/api/auth/oidc/prepare", headers=None, public_key=None):
+        payload = {"remember": remember}
+        if public_key is not None:
+            payload["public_key"] = public_key
+        status, body, _ = browser.request(path, payload, extra_headers=headers)
         self.assertEqual(status, 200, "Local HTTPS issuer discovery failed")
         params = urllib.parse.parse_qs(urllib.parse.urlparse(body["authorization_url"]).query)
         self.assertEqual(params["code_challenge_method"], ["S256"])
@@ -292,6 +295,53 @@ class OidcIsolation(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(body["authenticated"])
         return body
+
+    def test_fresh_pin_and_sso_allow_identity_renewal_only_for_the_bound_browser(self):
+        admin = self.start()
+        def browser_key():
+            private = subprocess.check_output(["openssl", "genpkey", "-algorithm", "EC",
+                                               "-pkeyopt", "ec_paramgen_curve:P-256"], stderr=subprocess.DEVNULL)
+            public = subprocess.check_output(["openssl", "pkey", "-pubout", "-outform", "DER"],
+                                              input=private, stderr=subprocess.DEVNULL)
+            return base64.b64encode(public).decode()
+        public = browser_key()
+        wrong = browser_key()
+        browser = Browser(self.base)
+        path = "/api/auth/identity/renew"
+        denied = browser.request(path, {"public_key": public})
+        self.assertEqual(denied[0], 401)
+        self.assertEqual(denied[2]["Cache-Control"], "no-store")
+        self.login(admin, "admin-subject")
+        key = admin.request("/api/admin/token")[1]["token"]
+        pin = admin.request("/api/auth/pin", {"user_id": "local-owner"},
+                            extra_headers={"X-MW-Admin-Key": key})[1]["pin"]
+        status, login, _ = browser.request("/api/auth/validate", {"pin": pin, "public_key": public})
+        self.assertEqual(status, 200)
+        self.assertTrue(browser.request("/api/auth/status")[1]["identity_renewal_available"])
+        self.assertEqual(browser.request(path, {"public_key": wrong})[0], 409)
+        self.assertEqual(browser.request(path, {"public_key": public}, cross_site=True)[0], 403)
+        for _ in range(2):
+            code, identity, headers = browser.request(path, {"public_key": public})
+            self.assertEqual(code, 200)
+            self.assertEqual(identity["host_id"], login["host_id"])
+            self.assertEqual(identity["host_public_key"], login["host_public_key"])
+            self.assertEqual(headers["Cache-Control"], "no-store")
+        # A runtime auth-config change cancels grants even when sessions stay valid.
+        self.assertEqual(admin.request("/api/admin/auth-config", {},
+                                       extra_headers={"X-MW-Admin-Key": key})[0], 200)
+        self.assertEqual(browser.request(path, {"public_key": public})[0], 403)
+        self.assertTrue(browser.request("/api/auth/status")[1]["authenticated"])
+        callback = self.prepare(browser, public_key=public)
+        self.assertEqual(browser.request(path, {"public_key": public})[0], 403)
+        self.assertEqual(browser.request(callback, cross_site=True)[2]["Location"], "/")
+        self.assertEqual(browser.request(path, {"public_key": public})[0], 200)
+        self.assertTrue(browser.request("/api/auth/status")[1]["identity_renewal_available"])
+        # A restart retains the remembered session, never its fresh-login grant.
+        self.start()
+        browser.base = self.base
+        self.assertTrue(browser.request("/api/auth/status")[1]["authenticated"])
+        self.assertFalse(browser.request("/api/auth/status")[1]["identity_renewal_available"])
+        self.assertEqual(browser.request(path, {"public_key": public})[0], 403)
 
     def test_oidc_accounts_and_independent_machine_registrations(self):
         alice = self.start()

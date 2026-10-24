@@ -89,6 +89,12 @@ describe('PIN and SSO connection modes', () => {
         expect(document.querySelector('#btn-login-sso').disabled).toBe(false);
         expect(document.querySelector('.login-error')).not.toBeNull();
     });
+    it('explains unavailable secure storage instead of showing a generic provider error', async () => {
+        BackendClient.beginSso.mockRejectedValue(Object.assign(new Error('Allow site storage'), { identityError: 'identityStorageUnavailable' }));
+        await open(status(false, true));
+        expect(document.querySelector('.login-error').textContent).toBe('Allow site storage');
+        expect(BackendClient.beginSso).toHaveBeenCalledOnce();
+    });
     it('uses the configured public origin before starting SSO from the LAN', async () => {
         await open({ ...status(false, true), sso_origin: 'https://moonlight.example' });
         expect(BackendClient.beginSso).not.toHaveBeenCalled();
@@ -103,6 +109,14 @@ describe('PIN and SSO connection modes', () => {
         await open({ ...status(false, true), authenticated: true });
         expect(BackendClient.beginSso).not.toHaveBeenCalled();
         expect(view.onAuthenticated).toHaveBeenCalledTimes(1);
+    });
+    it('offers a new login for stale identity even with a valid cookie and avoids an SSO loop', async () => {
+        await open({ ...status(false, true), authenticated: true, identity_error: 'identityChanged' });
+        expect(view.onAuthenticated).not.toHaveBeenCalled();
+        expect(BackendClient.beginSso).not.toHaveBeenCalled();
+        expect(document.querySelector('.login-error').textContent).toContain('login.identityChanged');
+        document.querySelector('#btn-login-sso').click();
+        await vi.waitFor(() => expect(BackendClient.beginSso).toHaveBeenCalledOnce());
     });
     it('does not redirect after the visitor has left the login view', async () => {
         let finish;

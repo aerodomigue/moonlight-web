@@ -79,6 +79,12 @@ struct SessionInfo
     // secret, and it never leaves the machine anyway.
     QByteArray pairingKey;
 
+    // Fresh PIN/OIDC login only. Runtime-only: restoring a cookie after a
+    // restart must never authorize replacing a browser's pinned host identity.
+    QByteArray renewalHostKey;
+    qint64 renewalIssuedAt = 0;
+    quint64 renewalRevision = 0;
+
     QJsonObject toJson() const
     {
         QJsonObject obj;
@@ -257,6 +263,10 @@ public:
     /** The SPKI public key bound to the session a raw cookie @p token belongs
      *  to, or empty when there is none (or no such session). */
     QByteArray sessionPairingKey(const QString& token) const;
+    bool authorizeIdentityRenewal(const QString& token, const QByteArray& hostSpki,
+                                  qint64 nowSecs = 0);
+    bool canRenewIdentity(const QString& token, const QByteArray& browserSpki,
+                          const QByteArray& hostSpki, qint64 nowSecs = 0) const;
     /** Revoke a session by its opaque id (the value exposed in sessions()/toJson,
      *  i.e. the token hash), NOT the raw cookie token. */
     void destroySession(const QString& token);

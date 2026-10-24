@@ -103,7 +103,30 @@ void bindKeyFromLoginBody(AuthManager& authManager, const QString& token, const 
 void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpService& geoIpService,
                         AppSettings& settings)
 {
-    new OidcClient(authManager, server);
+    new OidcClient(authManager, server, settings);
+
+    server.router()->post("/api/auth/identity/renew", [&authManager,
+                                                       &settings](const HttpRequest& req) {
+        const auto error = [](int status, const QString& message) {
+            auto response = HttpResponse::error(status, message);
+            response.headers["Cache-Control"] = "no-store";
+            return response;
+        };
+        const auto token = HttpServer::sessionTokenFromRequest(req);
+        if (!authManager.validateSession(token)) return error(401, "authentication_required");
+        const auto body = QJsonDocument::fromJson(req.body).object();
+        const auto browserKey = QByteArray::fromBase64(body["public_key"].toString().toLatin1());
+        if (browserKey.isEmpty() || browserKey != authManager.sessionPairingKey(token))
+            return error(409, "browser_key_changed");
+        const auto hostKey = settings.hostSigningPublicKey();
+        if (!authManager.canRenewIdentity(token, browserKey, hostKey))
+            return error(403, "identity_reauthentication_required");
+        auto response =
+            HttpResponse::json({{"host_public_key", QString::fromLatin1(hostKey.toBase64())},
+                                {"host_id", PairingCrypto::keyId(hostKey)}});
+        response.headers["Cache-Control"] = "no-store";
+        return response;
+    });
 
     // ── Auth routes ─────────────────────────────────────────────────────────
     // POST /api/auth/validate — validate PIN or certificate, create session, set cookie
@@ -183,6 +206,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             obj["user"] = authManager.users().get(userId).json();
             obj["remembered"] = remember;
             bindKeyFromLoginBody(authManager, token, body, obj, settings);
+            if (obj["pairing_key"] == "bound")
+                authManager.authorizeIdentityRenewal(token, settings.hostSigningPublicKey());
             HttpResponse resp = HttpResponse::json(obj);
             resp.headers["Set-Cookie"] = sessionCookie(token, remember);
             return resp;
@@ -574,6 +599,10 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             for (auto it = identity.constBegin(); it != identity.constEnd(); ++it)
                 obj[it.key()] = it.value();
         }
+        obj["identity_renewal_available"] =
+            authManager.canRenewIdentity(currentToken, authManager.sessionPairingKey(currentToken),
+                                         settings.hostSigningPublicKey());
+        obj["browser_key_id"] = PairingCrypto::keyId(authManager.sessionPairingKey(currentToken));
         obj["requires_pin"] = !hostTrusted && authManager.config().pin;
         obj["active_sessions"] = authManager.activeSessionCount();
         obj["cert_auth_enabled"] = authManager.config().pin && authManager.certAuthEnabled();
@@ -595,6 +624,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         obj["has_session"] = authManager.validateSession(HttpServer::sessionTokenFromRequest(req));
 
         HttpResponse resp = HttpResponse::json(obj);
+        resp.headers["Cache-Control"] = "no-store";
         // Slide the cookie browser-side too, so an active client keeps a fresh
         // 90-day window without ever re-entering the PIN. A session the visitor
         // asked not to remember stays session-scoped — see sessionCookie().
