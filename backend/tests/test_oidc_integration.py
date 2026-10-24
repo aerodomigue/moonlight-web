@@ -292,6 +292,7 @@ class OidcIsolation(unittest.TestCase):
         params = urllib.parse.parse_qs(urllib.parse.urlparse(body["authorization_url"]).query)
         self.assertEqual(params["code_challenge_method"], ["S256"])
         self.assertIn("openid", params["scope"][0].split())
+        self.last_scopes = params["scope"][0]
         code = secrets.token_urlsafe(24)
         self.issuer_server.codes[code] = {"nonce": params["nonce"][0], "challenge": params["code_challenge"][0],
                                          "subject": subject, "claims": claims or {}}
@@ -934,12 +935,14 @@ class OidcIsolation(unittest.TestCase):
         admin, headers = self.administrator()
         waiting = Browser(self.base)
         callback = self.prepare(waiting)
+        self.assertEqual(self.last_scopes, "openid profile email moonlight_role")
         self.assertEqual(admin.request("/api/admin/auth-config", {"scopes": "openid profile moonlight_role"}, extra_headers=headers)[0], 200)
         self.assertEqual(waiting.request(callback, cross_site=True)[2]["Location"], "/?auth_error=sso")
         # Old SSO proof cannot disable PIN with the edited scope set.
         self.assertEqual(admin.request("/api/admin/auth-config", {"pin": False}, extra_headers=headers)[0], 401)
         fresh = Browser(self.base)
         self.assertTrue(self.login(fresh, "admin-subject")["admin_access"])
+        self.assertEqual(self.last_scopes, "openid profile moonlight_role")
         fresh_headers = {"X-MW-Admin-Key": fresh.request("/api/admin/token")[1]["token"]}
         self.assertTrue(fresh.request("/api/admin/auth-config")[1]["secret_configured"])
         self.assertEqual(fresh.request("/api/admin/auth-config", {"pin": False}, extra_headers=fresh_headers)[0], 200)
