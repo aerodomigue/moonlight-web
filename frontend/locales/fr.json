@@ -93,6 +93,8 @@
         "connectionTitle": "Erreur de connexion",
         "unableToConnect": "Impossible de se connecter au serveur",
         "serverUnreadable": "Le serveur a renvoyé une réponse que MoonlightWeb ne sait pas lire. Il redémarre ou se met peut-être à jour : réessayez dans un instant.",
+        "sessionPersistenceFailed": "Le serveur n’a pas pu enregistrer cette modification de session. Réessayez lorsque le stockage sera disponible.",
+        "hostIdentityUnavailable": "L’identité du serveur est indisponible. Demandez à l’administrateur de vérifier le stockage ou de restaurer sa sauvegarde.",
         "boothTitle": "Mode borne",
         "boothBody": "Ce MoonlightWeb n'accepte que les appareils qu'il connaît déjà. Demandez à son propriétaire d'ajouter celui-ci."
     },

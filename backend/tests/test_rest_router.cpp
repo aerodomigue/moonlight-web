@@ -5,6 +5,7 @@
 #include "server/RestRouter.h"
 
 #include <QJsonObject>
+#include <stdexcept>
 
 // Synchronously dispatch and capture the response.
 static HttpResponse call(const RestRouter& r, const QString& method, const QString& path,
@@ -40,6 +41,40 @@ void run_rest_router_tests()
     router.getAsync("/api/hosts/:id/apps", [](const HttpRequest& req, const ResponseCallback& cb) {
         cb(HttpResponse::text(req.pathParams.value("id")));
     });
+
+    SECTION("Route exceptions produce one controlled response without leaking details");
+    router.get("/api/throw", [](const HttpRequest&) -> HttpResponse {
+        throw std::runtime_error("sensitive fixture detail");
+    });
+    router.postAsync("/api/throw/:id", [](const HttpRequest&, ResponseCallback) { throw 42; });
+    for (const auto& route : {QString("/api/throw"), QString("/api/throw/42")}) {
+        bool escaped = false;
+        HttpResponse failure;
+        try {
+            failure = call(router, route.endsWith("42") ? "POST" : "GET", route);
+        } catch (...) {
+            escaped = true;
+        }
+        CHECK(!escaped);
+        CHECK_EQ(failure.statusCode, 500);
+        CHECK(!failure.body.contains("sensitive fixture detail"));
+    }
+    int responses = 0;
+    router.getAsync("/api/late-throw", [](const HttpRequest&, ResponseCallback respond) {
+        respond(HttpResponse::text("already complete"));
+        throw std::runtime_error("late fixture failure");
+    });
+    HttpRequest late;
+    late.method = "GET";
+    late.path = "/api/late-throw";
+    bool escaped = false;
+    try {
+        router.dispatchAsync(late, [&](const HttpResponse&) { ++responses; });
+    } catch (...) {
+        escaped = true;
+    }
+    CHECK(!escaped);
+    CHECK_EQ(responses, 1);
 
     // Exact GET route.
     CHECK_EQ(call(router, "GET", "/api/ping").statusCode, 200);

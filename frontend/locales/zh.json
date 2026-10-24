@@ -93,6 +93,8 @@
         "connectionTitle": "连接错误",
         "unableToConnect": "无法连接到服务器",
         "serverUnreadable": "服务器返回了 MoonlightWeb 无法读取的响应。它可能正在重启或更新，请稍后重试。",
+        "sessionPersistenceFailed": "服务器无法保存此会话修改。请在存储恢复可用后重试。",
+        "hostIdentityUnavailable": "服务器身份不可用。请联系管理员检查存储或恢复备份。",
         "boothTitle": "展台模式",
         "boothBody": "此 MoonlightWeb 只允许已认识的设备连接。请联系其所有者添加此设备。"
     },

@@ -37,6 +37,18 @@ describe('BackendClient', () => {
         BackendClient._hadSession = false; // per-document, so per-test
     });
 
+    it.each([
+        ['session_persistence_failed', 'appError.sessionPersistenceFailed'],
+        ['host_identity_unavailable', 'appError.hostIdentityUnavailable'],
+    ])('explains %s without changing its status or triggering reauthentication', async (code, label) => {
+        BackendClient._hadSession = true;
+        mockFetch(jsonResponse({error:code}, {ok:false, status:503}));
+        await expect(BackendClient.get('/api/admin/users')).rejects.toMatchObject({
+            message:label, statusCode:503, responseBody:{error:code},
+        });
+        expect(sessionStorage.getItem('mw_auth_reload')).toBeNull();
+    });
+
     it('GET returns parsed JSON on success', async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ hosts: [] }));
         vi.stubGlobal('fetch', fetchMock);

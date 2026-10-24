@@ -93,6 +93,8 @@
         "connectionTitle": "Connection Error",
         "unableToConnect": "Unable to connect to server",
         "serverUnreadable": "The server sent an answer MoonlightWeb cannot read. It may be restarting or updating: try again in a moment.",
+        "sessionPersistenceFailed": "The server could not save this session change. Retry when storage is available.",
+        "hostIdentityUnavailable": "The server identity is unavailable. Ask the administrator to check storage or restore its backup.",
         "boothTitle": "Booth mode",
         "boothBody": "This MoonlightWeb only lets in the devices it already knows. Ask its owner to add this one."
     },

@@ -1134,6 +1134,28 @@ class OidcIsolation(unittest.TestCase):
         for path in ["/ws", "/ws1", "/ws/stream", "/ws/control"]: self.assertEqual(copied.request(path, extra_headers=websocket)[0], 401)
         self.assertTrue(admin.request("/api/auth/status")[1]["admin_access"])
 
+    def test_admin_revocation_reports_storage_failure_without_crashing(self):
+        self.start()
+        target = Browser(self.base)
+        user_id = self.login(target)['user']['id']
+        admin, headers = self.administrator()
+        import resource
+        resource.prlimit(self.process.pid, resource.RLIMIT_CORE, (0, 0))
+        store = next(self.state.rglob('sessions.json'))
+        directory = store.parent
+        directory.chmod(0o555)
+        store.chmod(0o444)
+        try:
+            code = admin.request('/api/admin/users/' + user_id + '/revoke-sessions', {}, extra_headers=headers)[0]
+            self.assertEqual(code, 503)
+            self.assertIsNone(self.process.poll())
+            self.assertEqual(admin.request('/api/health')[0], 200)
+            self.assertFalse(target.request('/api/auth/status')[1]['authenticated'])
+            self.assertTrue(admin.request('/api/auth/status')[1]['authenticated'])
+        finally:
+            directory.chmod(0o700)
+            store.chmod(0o600)
+
     def test_unpersisted_host_identity_blocks_status_and_launch_without_rotation(self):
         self.start()
         browser = Browser(self.base)

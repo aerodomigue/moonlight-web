@@ -188,8 +188,12 @@ export class BackendClient {
             sessionStorage.removeItem('mw_auth_reload');
         }
 
+        const friendly = {
+            session_persistence_failed: 'appError.sessionPersistenceFailed',
+            host_identity_unavailable: 'appError.hostIdentityUnavailable',
+        }[msg];
         const error = /** @type {BackendError} */ (
-            new Error(msg || `Request failed (${resp.status})`)
+            new Error(friendly ? t(friendly) : msg || `Request failed (${resp.status})`)
         );
         error.statusCode = resp.status;
         error.responseBody = body;
