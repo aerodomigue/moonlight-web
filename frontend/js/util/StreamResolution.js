@@ -34,9 +34,10 @@
  *                never below 1080 that way. On a TV the box stops at 720 lines
  *                (TV_AUTO_MAX_HEIGHT): latency first. The stream follows both
  *                screens: the host changing its mode, a computer's window
- *                moving to another monitor. On every other host, which cannot
- *                say its display's size: 1080p (720p on a TV), the width from
- *                the Auto ratio (measured from Sunshine's bars).
+ *                moving to another monitor. On a desktop GameStream client, which
+ *                cannot read the remote mode: this screen's physical size up
+ *                to 2160 lines. Unknown
+ *                screens and handhelds retain 1080p, TVs 720p.
  *   - `device` — "Match my screen": this screen's size, pixel for pixel. The
  *                native host is asked to put its display in that mode for the
  *                session; when its driver lists no such mode the request falls
@@ -57,14 +58,14 @@
  *
  * A size and a rate are chosen apart and multiply together: 2560×1440 at
  * 120 fps is 442 million pixels a second to capture, scale, encode, send,
- * decode and paint — more than a machine on either end holds for an hour of
- * play. So whenever ONE of the two was left to us (Auto resolution or Auto
- * frame rate), the pair is held under PIXEL_RATE_BUDGET, and the reduction
+ * decode and paint. This generic throughput estimate is not a measured
+ * hardware limit. When BOTH choices are automatic, the pair is held under
+ * PIXEL_RATE_BUDGET, and the reduction
  * goes to the resolution first (fitPixelBudget): a frame rate is felt on
  * every mouse move, a hundred lines of resolution are not. Neither is ever
  * brought below what the client itself does — BUDGET_MIN_HEIGHT and
- * BUDGET_MIN_FPS, or this screen's own when it is under them. Two explicit
- * choices are the viewer's business and are left alone.
+ * BUDGET_MIN_FPS, or this screen's own when it is under them. An explicit
+ * frame rate or resolution opts out of this generic estimate.
  *
  * ── "MoonlightWeb Virtual Display" ─────────────────────────────────────────
  *
@@ -368,7 +369,19 @@ export function resolveStreamSize(choice, ctx) {
     });
     switch (c.mode) {
         case 'auto': {
-            if (!nativeHost) return fixed(tv ? TV_AUTO_MAX_HEIGHT : HOST_FALLBACK_HEIGHT);
+            if (!nativeHost) {
+                if (tv || touch || !dev)
+                    return fixed(tv ? TV_AUTO_MAX_HEIGHT : HOST_FALLBACK_HEIGHT);
+                // GameStream cannot report the remote display size. Use the
+                // viewer's physical screen instead of silently forcing 1080p.
+                const box = capAutoHeight(dev, 2160);
+                return {
+                    ...plain,
+                    height: box.height,
+                    aspect: box.width + ':' + box.height,
+                    followsScreen: true,
+                };
+            }
             // The host's own size, brought down to fit the box — its shape
             // kept, never upscaled (frameForDisplay's box rule). No screen to
             // read: the host's own size, whatever it is — on a TV, still no
@@ -461,8 +474,8 @@ function aspectRatio(aspect) {
 /**
  * Hold a size and a frame rate under PIXEL_RATE_BUDGET together.
  *
- * Called only when ONE of the two was left to us — Auto resolution or Auto
- * frame rate; a viewer who named both is answered as asked. The resolution
+ * Called only when both resolution and frame rate are automatic. A viewer
+ * who names either setting opts out of this generic estimate. The resolution
  * goes down first, to whatever fits at the rate asked for, and stops at
  * BUDGET_MIN_HEIGHT (or at this screen's own height, when the screen is under
  * it: there is nothing to gain below what the picture lands on). Only then is

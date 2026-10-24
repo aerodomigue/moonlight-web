@@ -688,7 +688,7 @@ export class SettingsView {
         // launch turns into 1080p120 recommends a bitrate for pixels nobody
         // ever sends (util/StreamResolution.js).
         const bounded =
-            choice.mode === 'auto' || chosen <= 0
+            choice.mode === 'auto' && chosen <= 0
                 ? fitPixelBudget({ height: ref.height, aspect }, rate, { clientFps: measuredFps() })
                 : { size: { height: ref.height, aspect }, fps: rate };
         return this._computeAutoBitrate(

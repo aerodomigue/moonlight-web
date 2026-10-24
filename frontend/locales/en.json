@@ -416,7 +416,7 @@
         "resolutionAuto": "Auto",
         "resolutionDevice": "Match my screen",
         "resolutionCustom": "Custom",
-        "resolutionAutoDesc": "The remote display's own size, scaled down to fit this screen ({{size}}) when it is larger. Hosts that cannot report their size (Sunshine, Apollo, Wolf) stream 1080p.",
+        "resolutionAutoDesc": "The remote display's size, scaled down to fit this screen ({{size}}). On a desktop with Sunshine, Apollo or Wolf, use this screen's physical size up to 4K; use 1080p when its size is unknown or on handhelds.",
         "resolutionAutoDescTv": "720p at most on a TV, for the lowest latency: the remote display's own size when it is smaller. “Match my screen” streams this screen's full size ({{size}}).",
         "resolutionDeviceDesc": "The stream matches this screen pixel for pixel ({{size}}); the remote display switches to that size when it can.",
         "resolutionCustomDesc": "Width and height, {{min}} to {{max}} pixels each. Never larger than the remote display.",

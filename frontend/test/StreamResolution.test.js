@@ -116,11 +116,12 @@ describe('resolveStreamSize', () => {
         });
     });
 
-    it("is today's 1080p on a host that cannot say its size", () => {
+    it('uses the client screen when GameStream cannot report the remote display', () => {
         expect(resolveStreamSize({ mode: 'auto' }, { nativeHost: false, device: tablet })).toEqual({
-            height: HOST_FALLBACK_HEIGHT,
-            aspect: null,
+            height: 1600,
+            aspect: '2000:1600',
             ...noFlags,
+            followsScreen: true,
         });
     });
 

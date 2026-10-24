@@ -2925,9 +2925,8 @@ export const MoonlightApp = {
      * and tell the host what rate it may not exceed.
      *
      * A resolution and a frame rate are picked apart and multiply together;
-     * whenever one of the two was ours to pick, the product is ours to keep
-     * sane (util/StreamResolution.js, fitPixelBudget). Two explicit choices
-     * are left exactly as asked.
+     * only when both settings are automatic. A fixed frame rate or resolution
+     * opts out of this generic estimate; it is not a hardware capability test.
      *
      * `stream_fps_max` is the ceiling the native host must respect: without
      * it, a client presenting on vsync gets the nearest divisor of its own
@@ -2940,7 +2939,8 @@ export const MoonlightApp = {
      */
     _applyPixelBudget(settings, size, mode, fpsAuto) {
         delete settings.stream_fps_max;
-        if (mode !== 'auto' && !fpsAuto) return size;
+        if (fpsAuto) settings.stream_fps_max = settings.stream_fps || 60;
+        if (mode !== 'auto' || !fpsAuto) return size;
         const bounded = fitPixelBudget(size, settings.stream_fps, {
             clientFps: measuredFps(),
             aspect: settings.stream_aspect,
