@@ -61,6 +61,13 @@ describe('Administration sign-in configuration', () => {
         await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
         expect(post).toHaveBeenCalledWith('/api/admin/auth-config', expect.objectContaining({ pin: true, sso: false, client_secret: '', clear_secret: false }));
     });
+    it('saves custom scopes while retaining the configured secret', async () => {
+        await openLogin();
+        expect(document.querySelector('[name="scopes"]').value).toBe('openid profile email moonlight_role');
+        document.querySelector('[name="scopes"]').value = 'openid moonlight_role';
+        await view.submit(false);
+        expect(post).toHaveBeenCalledWith('/api/admin/auth-config', expect.objectContaining({ scopes: 'openid moonlight_role', client_secret: '', clear_secret: false }));
+    });
     it('tests discovery separately and states that the secret remains unverified', async () => {
         await openLogin();
         document.querySelector('#admin-test-oidc').click();
@@ -123,6 +130,20 @@ describe('Administration accounts and machine assignments', () => {
         expect(document.querySelector('[data-user-action="delete"]').disabled).toBe(true);
         expect(document.querySelector('#admin-edit-user [name="role"]').disabled).toBe(true);
         expect(document.querySelector('[data-host-row] strong').textContent).toBe('<PC>');
+    });
+    it('shows the Authentik role as read-only and omits it from account updates', async () => {
+        users[1] = { ...member(), sso_linked: true, role_source: 'authentik', issuer: 'https://auth.example/' };
+        await openUsers();
+        view.selected = users[1].id;
+        await view.loadHosts();
+        expect(document.querySelector('#admin-edit-user [name="role"]').disabled).toBe(true);
+        expect(document.querySelector('[data-role-source]').textContent).toContain('adminAccounts.authentikRole');
+        document.querySelector('#admin-edit-user').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await vi.waitFor(() => expect(post).toHaveBeenCalled());
+        const [path, body] = post.mock.calls[0];
+        expect(path).toBe('/api/admin/users/local-player');
+        expect(body).not.toHaveProperty('role');
+        expect(body).toMatchObject({ name: '<Alice>', enabled: true });
     });
     it('creates a local account with the selected role', async () => {
         post.mockImplementation(async (path, body) => {
@@ -202,6 +223,25 @@ describe('Administration accounts and machine assignments', () => {
     });
 });
 
+
+describe('Administration server authority', () => {
+    it('honors a server denial even on a loopback URL', async () => {
+        vi.spyOn(BackendClient, 'getAuthStatus').mockResolvedValue({ authenticated: true, is_localhost: false, admin_unlock_available: false });
+        view = new AdminView(document.querySelector('#panel'));
+        await view._loadAuthStatus();
+        expect(view._isLocalhost()).toBe(false);
+        view.render();
+        expect(document.querySelector('#admin-section-login')).toBeNull();
+    });
+    it('closes the console when the current authorization check fails', async () => {
+        vi.spyOn(BackendClient, 'getAuthStatus').mockRejectedValue(new Error('offline'));
+        view = new AdminView(document.querySelector('#panel'));
+        view._hasAdminAccess = true;
+        await view._loadAuthStatus();
+        expect(view._isLocalhost()).toBe(false);
+        expect(view._adminUnlockAvailable).toBe(false);
+    });
+});
 
 describe('Administration navigation during settings save', () => {
     it('does not replace the next view after closing during the auth-status refresh', async () => {

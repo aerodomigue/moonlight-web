@@ -27,6 +27,7 @@ AuthConfig AuthConfig::fromEnvironment()
     }
     c.issuer = qEnvironmentVariable("MW_OIDC_ISSUER").trimmed();
     c.clientId = qEnvironmentVariable("MW_OIDC_CLIENT_ID").trimmed();
+    c.scopes = qEnvironmentVariable("MW_OIDC_SCOPES", c.scopes).simplified();
     c.publicUrl = qEnvironmentVariable("MW_PUBLIC_URL").trimmed();
     while (c.publicUrl.endsWith('/'))
         c.publicUrl.chop(1);
@@ -59,6 +60,12 @@ AuthConfig AuthConfig::fromEnvironment()
 QString AuthConfig::error() const
 {
     if (!pin && !sso) return QStringLiteral("At least one authentication method must be enabled");
+    const auto scopeNames = scopes.split(' ', Qt::SkipEmptyParts);
+    if (!scopeNames.contains(QStringLiteral("openid")) || scopes.size() > 2048)
+        return QStringLiteral("OIDC scopes must include openid and fit in 2048 characters");
+    for (const QChar ch : scopes)
+        if (ch.unicode() < 0x20 || ch.unicode() > 0x7e || ch == '"' || ch == '\\')
+            return QStringLiteral("Invalid OIDC scope character");
     if (!sso) return {};
     const QUrl url(issuer), origin(publicUrl);
     if (!url.isValid() || url.scheme() != QLatin1String("https") || url.host().isEmpty() ||
@@ -82,7 +89,9 @@ QJsonObject AuthConfig::json(bool includeSecret) const
                   {"client_id", clientId},
                   {"public_url", publicUrl},
                   {"callback_url", callbackUrl()},
+                  {"backchannel_logout_url", publicUrl + "/api/auth/oidc/backchannel-logout"},
                   {"ca_file", caFile},
+                  {"scopes", scopes},
                   {"secret_configured", !clientSecret.isEmpty()}};
     if (includeSecret) o["client_secret"] = clientSecret;
     return o;
@@ -96,10 +105,11 @@ AuthConfig AuthConfig::edited(const AuthConfig& current, const QJsonObject& o)
             throw std::runtime_error("Authentication switches must be booleans");
     if (o.contains("pin")) c.pin = o["pin"].toBool();
     if (o.contains("sso")) c.sso = o["sso"].toBool();
-    for (const auto& key :
-         {QString("issuer"), QString("client_id"), QString("client_secret"), QString("ca_file")})
+    for (const auto& key : {QString("issuer"), QString("client_id"), QString("client_secret"),
+                            QString("ca_file"), QString("scopes")})
         if (o.contains(key) && !o[key].isString())
             throw std::runtime_error("Authentication fields must be strings");
+    if (o.contains("scopes")) c.scopes = o["scopes"].toString().simplified();
     if (o.contains("issuer")) c.issuer = o["issuer"].toString().trimmed();
     if (o.contains("client_id")) c.clientId = o["client_id"].toString().trimmed();
     if (o.contains("ca_file")) c.caFile = o["ca_file"].toString().trimmed();
@@ -152,7 +162,8 @@ QString AuthConfig::signature() const
                                                            {"client_id", clientId},
                                                            {"secret", clientSecret},
                                                            {"origin", publicUrl},
-                                                           {"ca", caFile}})
+                                                           {"ca", caFile},
+                                                           {"scopes", scopes}})
                                      .toJson(QJsonDocument::Compact),
                                  QCryptographicHash::Sha256)
             .toHex());

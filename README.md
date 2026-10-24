@@ -122,7 +122,14 @@ fournisseur. Authentik est pris en charge avec une configuration OIDC génériqu
 Chaque compte possède ses machines et ses appairages, même lorsqu'un PC est
 ajouté par plusieurs utilisateurs. Une duplication administrateur conserve
 explicitement l’appairage partagé. Les anciennes machines restent au propriétaire
-local. Voir [la configuration et les limites du SSO](docs/authentication.md).
+local. Authentik fournit le rôle via le claim signé `moonlight_role` :
+`internal_admin` ouvre directement la console en SSO ; `internal_user` ne donne
+aucun accès administrateur. Par PIN, un administrateur doit toujours déverrouiller
+la console par mot de passe. Les rôles synchronisés sont affichés en lecture seule.
+Chaque ouverture vérifie la session Authentik. Les sessions SSO sont protégées
+contre la copie du cookie seul et peuvent être révoquées par back-channel logout ;
+ce dernier exige le réglage indiqué dans le guide Authentik et reverse proxy.
+Voir [la configuration et les limites du SSO](docs/authentication.md).
 
 ## Wake-on-LAN des machines enregistrées
 

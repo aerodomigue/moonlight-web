@@ -72,6 +72,8 @@ function writeStorage(storage, key, value) {
     }
 }
 
+import { authenticatedFetch } from '../api/SsoSession.js';
+
 export const VersionGuard = {
     _boot: null,
     _interval: null,
@@ -165,7 +167,7 @@ export const VersionGuard = {
 
     async _fetchManifestVersion() {
         try {
-            const r = await fetch('/api/app/manifest', { cache: 'no-store' });
+            const r = await authenticatedFetch('/api/app/manifest', { cache: 'no-store' });
             if (!r.ok) return null;
             return (await r.json()).version || null;
         } catch (_) {

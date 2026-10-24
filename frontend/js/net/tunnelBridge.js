@@ -155,8 +155,8 @@ export function bootstrapAddressFor(id, { hash, pathname }) {
  * the tunnel it is a socket carried on the data channel — same events, same
  * send(), same close() — so the calling code does not branch.
  */
-export function openSignalingSocket(url) {
-    if (!keeper) return new WebSocket(url);
+export function openSignalingSocket(url, protocols) {
+    if (!keeper) return protocols ? new WebSocket(url, protocols) : new WebSocket(url);
     // Only the path matters to the host; the scheme and authority describe an
     // address that does not answer on this path.
     const parsed = new URL(url, location.origin);

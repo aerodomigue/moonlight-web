@@ -42,6 +42,8 @@
  * the host). A page reached directly that gets no answer stops as before.
  */
 
+import { SsoSession, authenticatedFetch } from '../api/SsoSession.js';
+
 const LEVELS = /** @type {const} */ (['log', 'info', 'warn', 'error', 'debug']);
 /** Bounds of what waits to be sent: the oldest lines go first. */
 const MAX_LINES = 3000;
@@ -174,7 +176,7 @@ function giveBack(batch) {
 async function checkAuth() {
     if (authed) return true;
     try {
-        const r = await fetch('/api/auth/status', { cache: 'no-store' });
+        const r = await authenticatedFetch('/api/auth/status', { cache: 'no-store' });
         const s = r.ok ? await r.json() : {};
         authed = s.authenticated === true || s.is_localhost === true;
     } catch {
@@ -192,7 +194,7 @@ export async function flushClientLog({ beacon = false } = {}) {
     if (state !== 'on' || !authed) return;
     if (beacon) {
         const batch = takeBatch(BEACON_MAX_CHARS);
-        if (!batch || !navigator.sendBeacon) return;
+        if (!batch || !navigator.sendBeacon || SsoSession.sessionId) return;
         navigator.sendBeacon(
             ENDPOINT,
             new Blob([JSON.stringify(batch)], { type: 'application/json' }),
@@ -204,7 +206,7 @@ export async function flushClientLog({ beacon = false } = {}) {
     if (!batch) return;
     sending = true;
     try {
-        const r = await fetch(ENDPOINT, {
+        const r = await authenticatedFetch(ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(batch),
@@ -257,7 +259,7 @@ export async function refreshClientLog() {
     const probe = ++probes;
     let health = null;
     try {
-        const r = await fetch('/api/health', { cache: 'no-store' });
+        const r = await authenticatedFetch('/api/health', { cache: 'no-store' });
         if (r.ok) health = await r.json();
     } catch {
         // No answer: the next call decides.

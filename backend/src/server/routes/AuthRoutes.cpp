@@ -417,8 +417,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             return HttpResponse::json(obj);
         }
 
-        if (req.userId != UserStore::localId() &&
-            !authManager.userAdministrator(authManager.users().get(req.userId)))
+        if (!authManager.passwordUnlockEligible(HttpServer::sessionTokenFromRequest(req)))
             return HttpResponse::error(403, "Account is not an administrator");
 
         // The LAN's door by default: the password is a convenience for the
@@ -464,7 +463,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QJsonObject obj;
         switch (result.result) {
         case AuthManager::Valid:
-            authManager.promoteSessionToAdmin(token);
+            if (!authManager.promoteSessionToAdmin(token))
+                return HttpResponse::error(500, "Administrator session could not be saved");
             obj["status"] = "ok";
             return HttpResponse::json(obj);
         case AuthManager::InvalidPin:
@@ -519,7 +519,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             authManager.adminPasswordSet() &&
             AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
                                         authManager.remoteAdminInternet(), req.viaProxy))
-            authManager.promoteSessionToAdmin(token);
+            if (!authManager.promoteSessionToAdmin(token))
+                return HttpResponse::error(500, "Administrator session could not be saved");
 
         QJsonObject obj;
         obj["status"] = "ok";
@@ -535,6 +536,21 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QJsonObject obj;
         QString authedToken; // set when a valid session cookie is found below
         const QString currentToken = HttpServer::sessionTokenFromRequest(req);
+        const auto candidate = authManager.sessionForToken(currentToken);
+        if (!candidate.token.isEmpty() && candidate.authMethod == "sso" && !req.ssoAuthorized) {
+            auto response = HttpResponse::json({{"authenticated", false},
+                                                {"is_localhost", false},
+                                                {"is_host_machine", false},
+                                                {"auth_method", "sso"},
+                                                {"sso_revalidation_required", true},
+                                                {"sso_session_id", candidate.token},
+                                                {"server_time", QDateTime::currentSecsSinceEpoch()},
+                                                {"pin_enabled", authManager.config().pin},
+                                                {"sso_enabled", authManager.config().sso},
+                                                {"sso_origin", authManager.config().publicUrl}});
+            response.headers["Cache-Control"] = "no-store";
+            return response;
+        }
         if (authManager.validateSession(currentToken)) {
             authedToken = currentToken;
             authManager.touchSession(currentToken);
@@ -589,6 +605,18 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             }
         }
 
+        const auto currentSession = authManager.sessionForToken(currentToken);
+        obj["auth_method"] = currentSession.token.isEmpty()
+                                 ? (req.isHostMachine ? QStringLiteral("host") : QString())
+                                 : currentSession.authMethod;
+        obj["effective_role"] =
+            (req.isHostMachine ||
+             (authManager.validateSession(currentToken) &&
+              (authManager.userAdministrator(authManager.users().get(req.userId)) ||
+               authManager.passwordUnlockEligible(currentToken))))
+                ? "admin"
+                : "user";
+        obj["admin_access"] = isLocal;
         obj["user_admin_enabled"] = true;
         obj["pin_enabled"] = authManager.config().pin;
         obj["sso_enabled"] = authManager.config().sso;
@@ -611,9 +639,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // button never appears where the unlock would be refused.
         obj["admin_unlock_available"] =
             !isLocal && !req.adminLocked && obj["authenticated"].toBool() &&
-            (req.userId == UserStore::localId() ||
-             authManager.userAdministrator(authManager.users().get(req.userId))) &&
-            authManager.remoteAdminEnabled() && authManager.adminPasswordSet() &&
+            authManager.passwordUnlockEligible(currentToken) && authManager.remoteAdminEnabled() &&
+            authManager.adminPasswordSet() &&
             AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
                                         authManager.remoteAdminInternet(), req.viaProxy);
 
@@ -629,8 +656,9 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // 90-day window without ever re-entering the PIN. A session the visitor
         // asked not to remember stays session-scoped — see sessionCookie().
         if (!authedToken.isEmpty()) {
-            resp.headers["Set-Cookie"] =
-                sessionCookie(authedToken, !authManager.isEphemeralSession(authedToken));
+            resp.headers["Set-Cookie"] = sessionCookie(
+                authedToken, authManager.sessionForToken(authedToken).authMethod != "sso" &&
+                                 !authManager.isEphemeralSession(authedToken));
         }
         return resp;
     });

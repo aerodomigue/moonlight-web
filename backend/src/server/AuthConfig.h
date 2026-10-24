@@ -14,6 +14,7 @@ struct AuthConfig
     QString clientId;
     QString clientSecret;
     QString publicUrl;
+    QString scopes = QStringLiteral("openid profile email moonlight_role");
     QString caFile; // Optional additional CA for a private OIDC deployment.
     QStringList adminSubjects;
 

@@ -4,13 +4,96 @@
 #include "server/RequestGuard.h"
 #include "server/UserAccess.h"
 #include "server/UserStore.h"
+#include "server/HttpSignature.h"
+#include "server/HttpParser.h"
 #include "common/PairingCrypto.h"
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include <QTemporaryDir>
 #include <stdexcept>
 
 void run_user_identity_tests()
 {
+    SECTION("RFC 9421 request signatures and raw target integrity");
+    const auto httpKey = PairingCrypto::generatePrivateKeyPem();
+    const auto httpPublic = PairingCrypto::publicKeySpkiFromPrivatePem(httpKey);
+    auto request = HttpParser::parse(
+        "POST /api/hosts/a%2Fb?x=a%20b&x=c HTTP/1.1\r\nHost: example.test\r\n\r\nbody");
+    CHECK_EQ(request.rawTarget, QByteArray("/api/hosts/a%2Fb?x=a%20b&x=c"));
+    request.headers["x-mw-session-id"] = "session";
+    request.headers["x-mw-page-id"] = "page";
+    request.headers["content-digest"] = HttpSignature::digest(request.body);
+    const auto params =
+        HttpSignature::parameters(1000, 1060, QString(32, 'a'), PairingCrypto::keyId(httpPublic));
+    request.headers["signature-input"] = "mw=" + params;
+    request.headers["signature"] =
+        "mw=:" +
+        QString::fromLatin1(
+            PairingCrypto::sign(httpKey, HttpSignature::base(request, params)).toBase64()) +
+        ":";
+    CHECK(HttpSignature::verify(request, httpPublic, "session", 1001).has_value());
+    CHECK(!HttpSignature::verify(request, httpPublic, "another-session", 1001));
+    CHECK(!HttpSignature::verify(request, httpPublic, "session", 1060));
+    auto tampered = request;
+    tampered.body += 'x';
+    CHECK(!HttpSignature::verify(tampered, httpPublic, "session", 1001));
+    tampered = request;
+    tampered.rawTarget += "&other=1";
+    CHECK(!HttpSignature::verify(tampered, httpPublic, "session", 1001));
+    tampered = request;
+    tampered.headers["x-mw-page-id"] = "another-page";
+    CHECK(!HttpSignature::verify(tampered, httpPublic, "session", 1001));
+    CHECK(HttpParser::parse("GET / HTTP/1.1\r\nSignature: a\r\nSignature: b\r\n\r\n").malformed);
+    const auto binaryRequest =
+        HttpParser::parse(QByteArray("POST / HTTP/1.1\r\n\r\n") + QByteArray::fromHex("ff0080"));
+    CHECK_EQ(binaryRequest.body, QByteArray::fromHex("ff0080"));
+    SECTION("SSO page activation, request replay, socket tickets and absolute expiry");
+    qint64 securityTime = 1001;
+    SsoSessionSecurity security([&] { return securityTime; });
+    security.start("session", httpPublic, 1000);
+    CHECK(security.live("session"));
+    const QString page(43, 'b');
+    request.headers["x-mw-page-id"] = page;
+    auto signedRequest = [&](const QString& nonce) {
+        const auto p = HttpSignature::parameters(securityTime, securityTime + 60, nonce,
+                                                 PairingCrypto::keyId(httpPublic));
+        request.headers["signature-input"] = "mw=" + p;
+        request.headers["signature"] =
+            "mw=:" +
+            QString::fromLatin1(
+                PairingCrypto::sign(httpKey, HttpSignature::base(request, p)).toBase64()) +
+            ":";
+        return request;
+    };
+    CHECK(!security.authorize("session", signedRequest(QString(32, 'c'))));
+    auto activation = security.activation("session", page);
+    CHECK(!activation.isEmpty());
+    CHECK(security.activate("session", activation, signedRequest(QString(32, 'd'))));
+    CHECK(!security.activate("session", activation, signedRequest(QString(32, 'e'))));
+    CHECK(security.authorize("session", signedRequest(QString(32, 'f'))));
+    CHECK(!security.authorize("session", request));
+    HttpRequest ws;
+    ws.path = "/ws/control";
+    auto ticket = security.wsTicket("session", page, ws.path);
+    ws.headers["sec-websocket-protocol"] = "moonlight-session-v1, mw-auth." + ticket;
+    CHECK(security.websocket("session", ws));
+    CHECK(!security.websocket("session", ws));
+    ticket = security.wsTicket("session", page, ws.path);
+    ws.headers["sec-websocket-protocol"] = "mw-auth." + ticket;
+    securityTime += 10;
+    CHECK(!security.websocket("session", ws));
+    activation = security.activation("session", page);
+    securityTime += 30;
+    CHECK(!security.activate("session", activation, signedRequest(QString(32, 'g'))));
+    CHECK(!security.live("session", 1000 + SsoSessionSecurity::Lifetime));
+    security.erase("session");
+    CHECK(!security.live("session"));
+    auto establish = [&](AuthManager& manager, const QString& token) {
+        const auto user = manager.users().get(manager.sessionForToken(token).userId);
+        CHECK(manager.establishSso(token, manager.config().issuer, user.subject, "fixture-sid",
+                                   httpPublic));
+    };
     SECTION("User identities and machine isolation");
     AuthConfig config;
     CHECK(config.error().isEmpty());
@@ -104,6 +187,8 @@ void run_user_identity_tests()
     local = store.get(local.id);
     local.enabled = false;
     local.role = "admin";
+    local.ssoRole = "user";
+    local.roleRevision = 7;
     store.update(local);
     CHECK(!store.active(local.id));
     CHECK(!store.upsert(config.issuer, "linked-sub", "Still disabled").enabled);
@@ -118,6 +203,21 @@ void run_user_identity_tests()
     CHECK_EQ(managedReload.findIdentity(config.issuer, "linked-sub").id, local.id);
     CHECK(!managedReload.active(local.id));
     CHECK_EQ(managedReload.get(local.id).role, QString("admin"));
+    CHECK_EQ(managedReload.get(local.id).ssoRole, QString("user"));
+    CHECK_EQ(managedReload.get(local.id).roleRevision, quint64(7));
+    const auto legacyPath = temporary.filePath("legacy-users.json");
+    QFile legacyFile(legacyPath);
+    CHECK(legacyFile.open(QIODevice::WriteOnly));
+    legacyFile.write(
+        QJsonDocument(QJsonObject{{"version", 2}, {"users", QJsonArray{local.adminJson()}}})
+            .toJson());
+    legacyFile.close();
+    UserStore migrated(legacyPath);
+    CHECK_EQ(migrated.get(local.id).id, local.id);
+    CHECK_EQ(migrated.get(local.id).role, QString("admin"));
+    CHECK_EQ(migrated.get(local.id).ssoRole, QString("user"));
+    CHECK_EQ(migrated.get(local.id).roleRevision, quint64(0));
+    CHECK(!migrated.active(local.id));
     auto owner = store.get(UserStore::localId());
     owner.enabled = false;
     conflict = false;
@@ -158,6 +258,14 @@ void run_user_identity_tests()
 #endif
     CHECK_EQ(AuthConfig::edited(loaded, {{"client_secret", ""}}).clientSecret, saved.clientSecret);
     CHECK(AuthConfig::edited(loaded, {{"clear_secret", true}}).clientSecret.isEmpty());
+    CHECK_EQ(loaded.json()["scopes"].toString(), QString("openid profile email moonlight_role"));
+    const auto scoped = AuthConfig::edited(loaded, {{"scopes", "openid moonlight_role"}});
+    CHECK(scoped.signature() != loaded.signature());
+    CHECK_EQ(scoped.clientSecret, saved.clientSecret);
+    scoped.save(authPath);
+    CHECK_EQ(AuthConfig::load(authPath, bootstrap).json()["scopes"].toString(),
+             QString("openid moonlight_role"));
+    saved.save(authPath);
     auto ssoMode = saved;
     ssoMode.pin = false;
     CHECK_EQ(saved.signature(), ssoMode.signature());
@@ -223,12 +331,13 @@ void run_user_identity_tests()
     const auto administrator = auth.users().upsert(config.issuer, "admin-subject", "Admin");
     const auto session =
         auth.createSession("10.2.10.20", "Laptop", false, false, false, alice.id, "sso");
+    establish(auth, session);
     CHECK(auth.validateSession(session));
     CHECK_EQ(auth.sessionForToken(session).userId, alice.id);
     CHECK(!auth.isSsoAdmin(session));
     const auto adminSession =
         auth.createSession("10.2.10.21", "Admin", false, false, false, administrator.id, "sso");
-    CHECK(auth.isSsoAdmin(adminSession));
+    CHECK(!auth.isSsoAdmin(adminSession)); // legacy subject lists are not role proof
     CHECK(!auth.isSsoAdmin("invented-cookie"));
     CHECK(auth.createSession("10.2.10.21", "Unknown", false, false, false, "unknown", "sso")
               .isEmpty());
@@ -291,10 +400,61 @@ void run_user_identity_tests()
           AuthManager::Valid);
     const auto playerToken =
         managed.createSession("10.2.10.45", "Local admin", false, false, false, player.id, "pin");
-    CHECK(managed.isSsoAdmin(playerToken));
+    CHECK(!managed.isSsoAdmin(playerToken)); // PIN always requires password unlock
     CHECK(!managed.isSsoAdmin(managed.createSession("10.2.10.46", "Legacy owner")));
+    CHECK(managed.passwordUnlockEligible(playerToken));
+    CHECK(!managed.isAdminSession(playerToken));
+    CHECK(managed.promoteSessionToAdmin(playerToken));
+    CHECK(managed.isAdminSession(playerToken));
+    auto linked = managed.users().upsert(mixed.issuer, "roles-subject", "Roles");
+    linked.role = "admin"; // An old manual assignment must never override the issuer.
+    managed.users().update(linked);
+    auto oldSso =
+        managed.createSession("10.2.10.47", "Old SSO", false, false, false, linked.id, "sso");
+    CHECK(!managed.isSsoAdmin(oldSso));
+    linked = managed.synchronizeSsoRole(linked, "admin", mixed);
+    CHECK(!managed.validateSession(oldSso));
+    auto freshSso =
+        managed.createSession("10.2.10.47", "Fresh SSO", false, false, false, linked.id, "sso");
+    CHECK(!managed.isSsoAdmin(freshSso)); // A session alone is not verified-role proof.
+    establish(managed, freshSso);
+    CHECK(managed.proveSsoAdministrator(freshSso));
+    CHECK(managed.isSsoAdmin(freshSso));
+    CHECK(!managed.passwordUnlockEligible(freshSso));
+    auto linkedPin =
+        managed.createSession("10.2.10.48", "Linked PIN", false, false, false, linked.id);
+    CHECK(!managed.isSsoAdmin(linkedPin));
+    CHECK(managed.passwordUnlockEligible(linkedPin));
+    CHECK(managed.promoteSessionToAdmin(linkedPin));
+    linked = managed.synchronizeSsoRole(linked, "user", mixed);
+    CHECK_EQ(linked.role, QString("admin"));
+    CHECK(!managed.userAdministrator(linked));
+    CHECK(!managed.validateSession(freshSso));
+    CHECK(!managed.isAdminSession(linkedPin));
+    auto userPin = managed.createSession("10.2.10.48", "User PIN", false, false, false, linked.id);
+    CHECK(!managed.passwordUnlockEligible(userPin));
+    CHECK(!managed.promoteSessionToAdmin(userPin));
+    auto userSso =
+        managed.createSession("10.2.10.47", "User SSO", false, false, false, linked.id, "sso");
+    establish(managed, userSso);
+    CHECK(managed.proveSsoAdministrator(userSso));
+    CHECK(!managed.isSsoAdmin(userSso));
+    auto localOwner = managed.users().get(UserStore::localId());
+    managed.users().bind(localOwner.id, mixed.issuer, "owner-sub", mixed.signature(), "user");
+    auto ownerSso =
+        managed.createSession("10.2.10.49", "Owner SSO", false, false, false, localOwner.id, "sso");
+    establish(managed, ownerSso);
+    CHECK(managed.proveSsoAdministrator(ownerSso));
+    CHECK(!managed.isSsoAdmin(ownerSso));
+    CHECK(!managed.passwordUnlockEligible(ownerSso));
+    auto ownerPin = managed.createSession("10.2.10.49", "Recovery");
+    CHECK(managed.passwordUnlockEligible(ownerPin));
+    CHECK(managed.promoteSessionToAdmin(ownerPin));
+    CHECK(managed.isAdminSession(ownerPin));
     player.enabled = false;
     managed.users().update(player);
+    CHECK_EQ(managed.effectiveRole(player), QString("admin"));
+    CHECK(!managed.userAdministrator(player));
     CHECK(!managed.validateSession(playerToken));
     CHECK(managed.generateUserPin(player.id).isEmpty());
     CHECK(
@@ -312,13 +472,33 @@ void run_user_identity_tests()
     CHECK(managed.config().pin);
     auto verifiedAdmin = managed.users().upsert(mixed.issuer, "verified-admin", "Verified");
     verifiedAdmin.role = "admin";
+    verifiedAdmin.ssoRole = "admin";
     verifiedAdmin.managedRole = true;
     verifiedAdmin.verifiedConfig = mixed.signature();
     managed.users().update(verifiedAdmin);
+    CHECK(!managed.verifiedSsoAdministrator(only)); // A persisted role is not a live OIDC proof.
+    const auto verifiedToken = managed.createSession("10.2.10.50", "Fresh verified admin", false,
+                                                     false, false, verifiedAdmin.id, "sso");
+    establish(managed, verifiedToken);
+    CHECK(managed.proveSsoAdministrator(verifiedToken));
     CHECK(managed.verifiedSsoAdministrator(only));
     managed.applyConfig(only);
     CHECK(!managed.config().pin);
     CHECK_EQ(managed.configRevision(), quint64(1));
+
+    const auto beforeProviderChange = managed.createSession("10.2.10.50", "Verified SSO", false,
+                                                            false, false, verifiedAdmin.id, "sso");
+    establish(managed, beforeProviderChange);
+    CHECK(managed.proveSsoAdministrator(beforeProviderChange));
+    CHECK(managed.isSsoAdmin(beforeProviderChange));
+    auto otherProvider = only;
+    otherProvider.pin = true;
+    otherProvider.issuer += "other/";
+    managed.applyConfig(otherProvider);
+    CHECK(!managed.validateSession(beforeProviderChange));
+    CHECK(!managed.userAdministrator(managed.users().get(verifiedAdmin.id)));
+    CHECK(!managed.verifiedSsoAdministrator(otherProvider));
+    CHECK(managed.passwordUnlockEligible(managed.createSession("10.2.10.51", "Owner recovery")));
 
     SECTION("Concurrent accounts keep independent streaming and revocation state");
     AuthManager concurrent(nullptr, nullptr, mixed);

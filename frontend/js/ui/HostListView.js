@@ -26,6 +26,7 @@
  * The online/offline badge sits next to the host name; "Remove" lives in a
  * per-host "…" menu.
  */
+import { SsoSession, authenticatedFetch } from '../api/SsoSession.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Host } from '../models/Host.js';
 import { App } from '../models/App.js';
@@ -672,6 +673,9 @@ export class HostListView {
     destroy() {
         this._active = false;
         this._destroyed = true;
+        this._ssoImageUrls?.forEach((url) => URL.revokeObjectURL(url));
+        this._ssoImageUrls?.clear();
+        this._ssoImageCache?.clear();
         this.stop();
         if (this._unsubUpdate) this._unsubUpdate();
         this._unsubUpdate = null;
@@ -1430,8 +1434,46 @@ export class HostListView {
             const card = img.closest('.app-card');
             const frame = img.parentElement;
             const appId = card ? Number(card.dataset.appId) : 0;
-            const src = img.getAttribute('src');
+            const src = img.getAttribute('data-sso-src') || img.getAttribute('src');
             let attempt = 0;
+            const load = async (url) => {
+                if (!SsoSession.sessionId || !img.hasAttribute('data-sso-src')) {
+                    img.src = url;
+                    return;
+                }
+                try {
+                    const cache = (this._ssoImageCache ||= new Map());
+                    let pending = cache.get(url);
+                    if (!pending) {
+                        pending = authenticatedFetch(url, { cache: 'no-store' }).then(
+                            async (response) => {
+                                if (!response.ok) throw new Error('Cover unavailable');
+                                const data = await response.blob();
+                                if (data.size > 1024 * 1024) cache.delete(url);
+                                return data;
+                            },
+                        );
+                        if (cache.size >= 128) cache.delete(cache.keys().next().value);
+                        cache.set(url, pending);
+                        pending.catch(() => cache.delete(url));
+                    }
+                    const blob = URL.createObjectURL(await pending);
+                    if (this._destroyed || !img.isConnected) {
+                        URL.revokeObjectURL(blob);
+                        return;
+                    }
+                    (this._ssoImageUrls ||= new Set()).add(blob);
+                    const release = () => {
+                        URL.revokeObjectURL(blob);
+                        this._ssoImageUrls?.delete(blob);
+                    };
+                    img.addEventListener('load', release, { once: true });
+                    img.addEventListener('error', release, { once: true });
+                    img.src = blob;
+                } catch {
+                    onError();
+                }
+            };
 
             // One stand-in at a time in the frame: two is a frame with a
             // second, smaller frame in it.
@@ -1462,7 +1504,7 @@ export class HostListView {
                 setTimeout(() => {
                     // A distinct URL per attempt: the failed response may itself
                     // be what the HTTP cache would hand back.
-                    if (!this._destroyed && img.isConnected) img.src = `${src}&retry=${attempt}`;
+                    if (!this._destroyed && img.isConnected) load(`${src}&retry=${attempt}`);
                 }, delay);
             };
 
@@ -1477,7 +1519,8 @@ export class HostListView {
             img.addEventListener('load', onLoad);
             img.addEventListener('error', onError);
             // Already settled before the listeners were attached (HTTP cache).
-            if (img.complete && src) (img.naturalWidth === 0 ? onError : onLoad)();
+            if (img.hasAttribute('data-sso-src')) load(src);
+            else if (img.complete && src) (img.naturalWidth === 0 ? onError : onLoad)();
         });
     }
 
@@ -1488,7 +1531,8 @@ export class HostListView {
         // A native host's display card draws the machine the host says it
         // is, on no frame. Its apps show the image the owner gave them, else
         // the stand-in every other host's app gets when it has no cover art.
-        const cover = `<img src="${this.esc(app.boxArtUrl ?? '')}"
+        const signedCover = SsoSession.sessionId && (app.boxArtUrl || '').startsWith('/api/');
+        const cover = `<img ${signedCover ? 'data-sso-src' : 'src'}="${this.esc(app.boxArtUrl ?? '')}"
                                alt="${this.esc(app.displayName)}"
                                loading="lazy">`;
         const drawsMachine = app.device && !app.isHostApp;

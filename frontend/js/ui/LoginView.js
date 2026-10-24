@@ -492,7 +492,7 @@ export class LoginView {
                     <input type="checkbox" id="login-remember" ${this._remember ? 'checked' : ''} />
                     <span>${t('login.rememberMe')}</span>
                 </label>
-                <span class="login-remember-hint">${t('login.rememberMeHint')}</span>
+                <span class="login-remember-hint">${t(this._selectedMethod === 'sso' ? 'login.rememberSsoHint' : 'login.rememberMeHint')}</span>
             </div>
         `;
     }

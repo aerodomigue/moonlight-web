@@ -68,7 +68,7 @@ AuthManager::AuthManager(AppSettings* settings, QObject* parent, AuthConfig conf
 
     // Periodically purge sessions that have been inactive past the TTL.
     m_purgeTimer = new QTimer(this);
-    m_purgeTimer->setInterval(60 * 60 * 1000); // hourly
+    m_purgeTimer->setInterval(1000); // enforce absolute SSO expiration promptly
     connect(m_purgeTimer, &QTimer::timeout, this, &AuthManager::purgeExpiredSessions);
     m_purgeTimer->start();
 }
@@ -181,6 +181,12 @@ void AuthManager::loadSessions()
             obj.value("auth_method")
                 .toString(obj["is_host"].toBool() ? QStringLiteral("host") : QStringLiteral("pin"));
         if (!m_users.active(info.userId)) continue;
+        info.ssoIssuer = obj.value("sso_issuer").toString();
+        info.ssoSubject = obj.value("sso_subject").toString();
+        info.ssoSid = obj.value("sso_sid").toString();
+        info.ssoIssuedAt = obj.value("sso_issued_at").toVariant().toLongLong();
+        info.ssoAdminConfig = obj.value("sso_admin_config").toString();
+        info.roleRevision = obj.value("role_revision").toVariant().toULongLong();
         info.token = obj["token"].toString();
         info.ip = obj["ip"].toString();
         info.machineName = obj["machine_name"].toString();
@@ -569,29 +575,146 @@ QString AuthManager::generateUserPin(const QString& userId, qint64 nowSecs)
     return pin;
 }
 
+QString AuthManager::effectiveRole(const UserAccount& user) const
+{
+    if (user.id.isEmpty()) return QStringLiteral("user");
+    if (!user.issuer.isEmpty())
+        return user.issuer == m_config.issuer && user.ssoRole == "admin" &&
+                       user.verifiedConfig == m_config.signature()
+                   ? QStringLiteral("admin")
+                   : QStringLiteral("user");
+    return user.role;
+}
+
 bool AuthManager::userAdministrator(const UserAccount& user) const
 {
-    if (!m_users.active(user.id)) return false;
-    if (user.id == UserStore::localId() || user.role == "admin") return true;
-    return !user.managedRole && user.issuer == m_config.issuer &&
-           m_config.administrator(user.subject);
+    return user.enabled && !user.deleting && effectiveRole(user) == "admin";
+}
+
+bool AuthManager::passwordUnlockEligible(const QString& token) const
+{
+    if (!validateSession(token)) return false;
+    const auto session = sessionForToken(token);
+    if (session.authMethod != "pin" && session.authMethod != "certificate") return false;
+    return session.userId == UserStore::localId() || userAdministrator(m_users.get(session.userId));
 }
 
 bool AuthManager::isSsoAdmin(const QString& token) const
 {
     if (!validateSession(token)) return false;
     const auto session = sessionForToken(token);
-    const auto user = m_users.get(session.userId);
-    // Preserve the legacy owner's PIN + remote-admin-password boundary.
-    if (user.id == UserStore::localId() && session.authMethod != "sso") return false;
-    return userAdministrator(user);
+    return session.authMethod == "sso" && session.ssoAdminConfig == m_config.signature() &&
+           userAdministrator(m_users.get(session.userId));
+}
+
+bool AuthManager::establishSso(const QString& token, const QString& issuer, const QString& subject,
+                               const QString& sid, const QByteArray& key)
+{
+    auto it = m_sessions.find(hashToken(token));
+    if (it == m_sessions.end() || it->authMethod != "sso" || issuer != m_config.issuer ||
+        m_users.get(it->userId).subject != subject || !PairingCrypto::isValidP256Spki(key) ||
+        !bindSessionKey(token, key))
+        return false;
+    // bindSessionKey emits signals; never retain a QHash iterator across that boundary.
+    it = m_sessions.find(hashToken(token));
+    if (it == m_sessions.end()) return false;
+    it->ssoIssuer = issuer;
+    it->ssoSubject = subject;
+    it->ssoSid = sid;
+    m_ssoSecurity.start(it->token, key, it->createdAt);
+    if (!it->ephemeral && !saveSessions()) {
+        m_ssoSecurity.erase(it->token);
+        return false;
+    }
+    return true;
+}
+
+bool AuthManager::authorizeSsoProof(const QString& token, const HttpRequest& req)
+{
+    const auto s = sessionForToken(token);
+    return s.authMethod == "sso" && !s.token.isEmpty() &&
+           m_ssoSecurity.proof(s.token, s.pairingKey, req);
+}
+
+bool AuthManager::authorizeSsoRequest(const QString& token, const HttpRequest& req)
+{
+    return validateSession(token) && m_ssoSecurity.authorize(sessionIdForToken(token), req);
+}
+QString AuthManager::ssoActivation(const QString& token, const QString& page)
+{
+    return validateSession(token) ? m_ssoSecurity.activation(sessionIdForToken(token), page)
+                                  : QString();
+}
+bool AuthManager::activateSso(const QString& token, const QString& ticket, const HttpRequest& req)
+{
+    return validateSession(token) && m_ssoSecurity.activate(sessionIdForToken(token), ticket, req);
+}
+QString AuthManager::ssoWsTicket(const QString& token, const QString& page, const QString& path)
+{
+    return validateSession(token) ? m_ssoSecurity.wsTicket(sessionIdForToken(token), page, path)
+                                  : QString();
+}
+bool AuthManager::authorizeSsoWebSocket(const QString& token, const HttpRequest& req)
+{
+    return validateSession(token) && m_ssoSecurity.websocket(sessionIdForToken(token), req);
+}
+void AuthManager::revokeSso(const QString& issuer, const QString& subject, const QString& sid,
+                            qint64 issued)
+{
+    const auto current = m_sessions;
+    for (const auto& s : current) {
+        const auto user = m_users.get(s.userId);
+        if (s.authMethod == "sso" && user.issuer == issuer &&
+            (!issued || s.ssoIssuedAt <= issued) &&
+            (subject.isEmpty() || user.subject == subject) && (sid.isEmpty() || s.ssoSid == sid))
+            destroySession(s.token);
+    }
+    if (!saveSessions()) throw std::runtime_error("Cannot persist SSO revocation");
+}
+
+bool AuthManager::proveSsoAdministrator(const QString& token, qint64 issued)
+{
+    if (!validateSession(token)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    if (it->authMethod != "sso") return false;
+    const auto previousTime = it->ssoIssuedAt;
+    const auto previousProof = it->ssoAdminConfig;
+    it->ssoIssuedAt = qMax(it->ssoIssuedAt, issued);
+    it->ssoAdminConfig =
+        userAdministrator(m_users.get(it->userId)) ? m_config.signature() : QString();
+    if (!it->ephemeral && !saveSessions()) {
+        it->ssoIssuedAt = previousTime;
+        it->ssoAdminConfig = previousProof;
+        return false;
+    }
+    return true;
+}
+
+UserAccount AuthManager::synchronizeSsoRole(UserAccount user, const QString& role,
+                                            const AuthConfig& config)
+{
+    if (!m_users.active(user.id) || user.issuer != config.issuer ||
+        config.signature() != m_config.signature() || (role != "user" && role != "admin"))
+        throw std::runtime_error("Unavailable account or obsolete SSO configuration");
+    const bool changed = user.ssoRole != role || user.verifiedConfig != config.signature();
+    user.ssoRole = role;
+    user.verifiedConfig = config.signature();
+    if (changed) ++user.roleRevision;
+    m_users.update(user); // Fail closed before creating a session or acknowledging any promotion.
+    // The durable revision also rejects old cookies if revocation cannot be persisted.
+    if (changed) revokeUserSessions(user.id);
+    return user;
 }
 
 bool AuthManager::verifiedSsoAdministrator(const AuthConfig& config) const
 {
-    for (const auto& user : m_users.all()) {
-        if (userAdministrator(user) && user.issuer == config.issuer && !user.subject.isEmpty() &&
-            user.verifiedConfig == config.signature())
+    if (config.signature() != m_config.signature()) return false;
+    for (const auto& session : m_sessions) {
+        const auto user = m_users.get(session.userId);
+        if (session.authMethod == "sso" && m_ssoSecurity.live(session.token) &&
+            session.roleRevision == user.roleRevision &&
+            session.ssoAdminConfig == config.signature() && userAdministrator(user) &&
+            user.issuer == config.issuer)
             return true;
     }
     return false;
@@ -611,7 +734,9 @@ void AuthManager::applyConfig(const AuthConfig& config)
                 ? !config.pin
                 : (session.authMethod == "sso" &&
                    (!config.sso || m_users.get(session.userId).issuer != config.issuer));
-        if (disabled) destroySession(session.token);
+        const bool obsoleteRoleProof = config.signature() != m_config.signature() &&
+                                       !m_users.get(session.userId).issuer.isEmpty();
+        if (disabled || obsoleteRoleProof) destroySession(session.token);
     }
     if (!saveSessions()) throw std::runtime_error("Cannot persist revoked sessions");
     if (m_settings)
@@ -797,6 +922,7 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     SessionInfo info;
     info.userId = userId;
     info.authMethod = isHost ? QStringLiteral("host") : method;
+    info.roleRevision = m_users.get(userId).roleRevision;
     info.token = id;
     info.ip = cleanIp;
     info.machineName = machineName.isEmpty() ? QStringLiteral("Unknown") : machineName;
@@ -823,10 +949,13 @@ bool AuthManager::validateSession(const QString& token) const
     auto it = m_sessions.find(hashToken(token));
     if (it == m_sessions.end()) return false;
     if (!m_users.active(it->userId)) return false;
+    if (it->roleRevision != m_users.get(it->userId).roleRevision) return false;
     if (it->authMethod == QLatin1String("pin") || it->authMethod == QLatin1String("certificate")) {
         if (!m_config.pin) return false;
     } else if (it->authMethod == QLatin1String("sso")) {
-        if (!m_config.sso || m_users.get(it->userId).issuer != m_config.issuer) return false;
+        if (!m_config.sso || m_users.get(it->userId).issuer != m_config.issuer ||
+            !m_ssoSecurity.live(it->token))
+            return false;
     } else if (it->authMethod != QLatin1String("host"))
         return false;
     // Sliding expiration: reject (but do not mutate, this is const) sessions
@@ -868,20 +997,23 @@ bool AuthManager::isTunnelHostSession(const QString& token) const
 
 bool AuthManager::isAdminSession(const QString& token) const
 {
-    if (!validateSession(token)) return false;
+    if (!passwordUnlockEligible(token)) return false;
     auto it = m_sessions.find(hashToken(token));
     return it != m_sessions.end() && it->isAdmin;
 }
 
 bool AuthManager::promoteSessionToAdmin(const QString& token)
 {
-    if (!validateSession(token)) return false;
+    if (!passwordUnlockEligible(token)) return false;
     auto it = m_sessions.find(hashToken(token));
     if (it == m_sessions.end()) return false;
     if (it->isAdmin) return true;
 
     it->isAdmin = true;
-    saveSessions();
+    if (!it->ephemeral && !saveSessions()) {
+        it->isAdmin = false;
+        return false;
+    }
     emit sessionsChanged();
     Logger::info(
         QString("[Auth] Admin access unlocked for %1 (machine='%2')").arg(it->ip, it->machineName));
@@ -1037,7 +1169,9 @@ void AuthManager::setSessionStreaming(const QString& token, bool streaming)
 
 QString AuthManager::homeScreenKey(const QString& token, qint64 nowSecs)
 {
-    if (!validateSession(token) || isEphemeralSession(token)) return {};
+    if (!validateSession(token) || isEphemeralSession(token) ||
+        sessionForToken(token).authMethod == "sso")
+        return {};
     const qint64 now = nowSecs > 0 ? nowSecs : QDateTime::currentSecsSinceEpoch();
     const QString id = hashToken(token);
 
@@ -1095,6 +1229,7 @@ void AuthManager::destroySession(const QString& token)
     m_homeScreenInstances.remove(token);
     if (m_sessions.contains(token)) {
         SessionInfo info = m_sessions.value(token);
+        m_ssoSecurity.erase(token);
         m_sessions.remove(token);
         saveSessions();
         emit sessionDestroyed(token);
@@ -1142,8 +1277,10 @@ void AuthManager::destroyAllSessions()
     const auto removedIds = m_sessions.keys();
     m_sessions.clear();
     saveSessions();
-    for (const auto& id : removedIds)
+    for (const auto& id : removedIds) {
+        m_ssoSecurity.erase(id);
         emit sessionDestroyed(id);
+    }
     if (count > 0) {
         emit sessionsChanged();
         Logger::info(QString("[Auth] All %1 sessions destroyed").arg(count));
@@ -1157,6 +1294,10 @@ void AuthManager::destroyAllSessions()
 void AuthManager::purgeExpiredSessions()
 {
     const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const auto current = m_sessions;
+    for (const auto& session : current)
+        if (session.authMethod == "sso" && session.createdAt + SsoSessionSecurity::Lifetime <= now)
+            destroySession(session.token);
     int removed = 0;
     QMutableHashIterator<QString, SessionInfo> it(m_sessions);
     while (it.hasNext()) {

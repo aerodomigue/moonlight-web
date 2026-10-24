@@ -47,6 +47,9 @@ export class AdminLoginSettings {
                     <input class="settings-input" id="admin-oidc-issuer" name="issuer" type="url" maxlength="2048" value="${esc(c.issuer || '')}" /></div>
                 <div class="settings-field"><label for="admin-oidc-client">${t('adminAccounts.clientId')}</label>
                     <input class="settings-input" id="admin-oidc-client" name="client_id" maxlength="1024" value="${esc(c.client_id || '')}" autocomplete="off" /></div>
+                <div class="settings-field"><label for="admin-oidc-scopes">${t('adminAccounts.scopes')}</label>
+                    <input class="settings-input" id="admin-oidc-scopes" name="scopes" maxlength="2048" value="${esc(c.scopes ?? 'openid profile email moonlight_role')}" />
+                    <p class="settings-hint">${t('adminAccounts.roleClaimHint')}</p></div>
                 <div class="settings-field"><label for="admin-oidc-secret">${t('adminAccounts.secret')}</label>
                     <input class="settings-input" id="admin-oidc-secret" name="client_secret" type="password" maxlength="16384" autocomplete="new-password" />
                     <p class="settings-hint">${t(c.secret_configured ? 'adminAccounts.secretKept' : 'adminAccounts.secretMissing')}</p>
@@ -56,6 +59,9 @@ export class AdminLoginSettings {
                 <div class="settings-field"><label>${t('adminAccounts.publicUrl')}</label><code>${esc(c.public_url || '—')}</code></div>
                 <div class="settings-field"><label>${t('adminAccounts.callback')}</label><code id="admin-oidc-callback">${esc(c.callback_url || '—')}</code>
                     <button type="button" class="btn btn-secondary" id="admin-copy-callback">${t('common.copy')}</button></div>
+                <div class="settings-field"><label>${t('adminAccounts.backchannelUrl')}</label>
+                    <code>${esc(c.backchannel_logout_url || '')}</code></div>
+                <p class="settings-hint">${t('adminAccounts.backchannelHint')}</p>
                 <p class="settings-hint">${t('adminAccounts.proxyHint')}</p>
                 <p class="settings-hint" id="admin-login-feedback" role="status" aria-live="polite"></p>
                 <button class="btn btn-secondary" type="button" id="admin-test-oidc">${t('adminAccounts.testProvider')}</button>
@@ -92,6 +98,7 @@ export class AdminLoginSettings {
             sso: mode.includes('sso'),
             issuer: String(fields.get('issuer')).trim(),
             client_id: String(fields.get('client_id')).trim(),
+            scopes: String(fields.get('scopes')).trim(),
             client_secret: String(fields.get('client_secret')),
             clear_secret: fields.get('clear_secret') === 'on',
             ca_file: String(fields.get('ca_file')).trim(),

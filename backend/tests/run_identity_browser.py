@@ -8,6 +8,7 @@ import importlib.util
 import os
 from pathlib import Path
 import subprocess
+import secrets
 import sys
 
 spec = importlib.util.spec_from_file_location("oidc_fixture", Path(__file__).with_name("test_oidc_integration.py"))
@@ -21,8 +22,14 @@ case.setUp()
 try:
     case.issuer_server.browser_subject = "admin-subject"
     case.start()
-    script = Path(__file__).resolve().parents[2] / "frontend/test/browser/identity-renewal.mjs"
-    subprocess.run(["node", str(script), case.base], check=True, timeout=120, env=os.environ.copy())
+    case.issuer_server.test_case = case
+    case.issuer_server.control_secret = secrets.token_urlsafe(32)
+    os.environ["MW_FIXTURE_CONTROL"] = case.issuer_server.control_secret
+    os.environ["MW_FIXTURE_CA"] = str(case.cert)
+    os.environ["MW_FIXTURE_ISSUER"] = case.issuer
+    for name in ([os.environ["MW_BROWSER_CASE"]] if os.environ.get("MW_BROWSER_CASE") else ("identity-renewal.mjs", "authentik-roles.mjs", "sso-lifecycle.mjs")):
+        script = Path(__file__).resolve().parents[2] / "frontend/test/browser" / name
+        subprocess.run(["node", str(script), case.base], check=True, timeout=120, env=os.environ.copy())
 finally:
     case.tearDown()
     case.tearDownClass()

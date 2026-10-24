@@ -393,7 +393,8 @@
         "onHostMachine": "Vous êtes sur la machine hôte ?",
         "openLocally": "Ouvrir via localhost",
         "rememberMe": "Rester connecté sur cet appareil",
-        "rememberMeHint": "Décochez sur un ordinateur partagé ou public : la session prend fin à la fermeture du navigateur, et de toute façon après quelques heures d'inactivité."
+        "rememberMeHint": "Décochez sur un ordinateur partagé ou public : la session prend fin à la fermeture du navigateur, et de toute façon après quelques heures d'inactivité.",
+        "rememberSsoHint": "Le SSO est vérifié auprès d’Authentik à chaque ouverture. La session applicative dure au maximum huit heures ; cette option ne dispense jamais du contrôle SSO."
     },
     "pairing": {
         "title": "Appairer avec {{name}}",
@@ -1138,7 +1139,7 @@
         "pinOnly": "PIN uniquement",
         "ssoOnly": "SSO uniquement",
         "both": "PIN et SSO",
-        "safeSsoOnly": "Avant de désactiver le PIN, connectez un administrateur avec le SSO configuré.",
+        "safeSsoOnly": "Connectez-vous par SSO avec le rôle internal_admin avant de désactiver le PIN. La récupération locale reste disponible.",
         "issuer": "Issuer OpenID Connect",
         "clientId": "Client ID",
         "secret": "Secret client",
@@ -1196,6 +1197,11 @@
         "confirmMachineAction": "Effectuer cette opération vers le compte sélectionné en conservant l’appairage ?",
         "linkFailed": "Le rattachement SSO a échoué ou cette identité est déjà attribuée à un autre compte.",
         "role": "Rôle",
-        "noMethod": "Aucune méthode de connexion active"
+        "noMethod": "Aucune méthode de connexion active",
+        "scopes": "Scopes",
+        "roleClaimHint": "Authentik doit inclure moonlight_role dans le jeton d’identité signé : internal_admin ou internal_user. Le rôle est actualisé à la prochaine connexion SSO.",
+        "authentikRole": "Source : Authentik. Ce rôle est synchronisé à la connexion SSO et ne peut pas être modifié ici.",
+        "backchannelUrl": "URL de déconnexion back-channel",
+        "backchannelHint": "Configurer cette URL en déconnexion Back-channel dans Authentik et autoriser ses POST signés à travers le proxy sans connexion interactive. Le SSO est vérifié à chaque ouverture ; une session révoquée coupe ses flux."
     }
 }

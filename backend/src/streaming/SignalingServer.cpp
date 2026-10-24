@@ -158,6 +158,7 @@ bool SignalingServer::start()
         QThread::msleep(50); // max ~1s; on the relay thread
     }
 
+    m_WsServer->setSupportedSubprotocols({QStringLiteral("moonlight-session-v1")});
     connect(m_WsServer, &QWebSocketServer::newConnection, this,
             &SignalingServer::onNewWsConnection);
 

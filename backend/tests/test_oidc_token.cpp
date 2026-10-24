@@ -81,9 +81,10 @@ void run_oidc_token_tests()
     config.clientId = "moonlight";
     const qint64 now = 1800000000;
     const QJsonObject header{{"alg", "RS256"}, {"kid", "test-key"}};
-    const QJsonObject good{{"iss", config.issuer},  {"sub", "alice-sub"}, {"aud", config.clientId},
-                           {"nonce", "test-nonce"}, {"iat", now - 10},    {"exp", now + 300},
-                           {"name", "Alice"}};
+    const QJsonObject good{{"iss", config.issuer},   {"sub", "alice-sub"},
+                           {"aud", config.clientId}, {"nonce", "test-nonce"},
+                           {"iat", now - 10},        {"exp", now + 300},
+                           {"name", "Alice"},        {"moonlight_role", "internal_user"}};
     const auto valid = sign(key.get(), header, good);
     CHECK(!valid.isEmpty());
     const auto verify = [&](const QByteArray& jwt, const QJsonObject& signingKeys = QJsonObject()) {
@@ -92,6 +93,12 @@ void run_oidc_token_tests()
     };
     CHECK(verify(valid).has_value());
     CHECK_EQ(verify(valid)->value("sub").toString(), QString("alice-sub"));
+    CHECK_EQ(verify(valid)->value("moonlight_role").toString(), QString("internal_user"));
+    auto forgedRole = good;
+    forgedRole["moonlight_role"] = "internal_admin";
+    const auto parts = valid.split('.');
+    CHECK(!verify(parts[0] + '.' + b64(QJsonDocument(forgedRole).toJson(QJsonDocument::Compact)) +
+                  '.' + parts[2]));
     const QList<QPair<QString, QJsonValue>> invalidClaims{
         {"iss", "https://another.example/"},
         {"sub", ""},
@@ -113,6 +120,28 @@ void run_oidc_token_tests()
         auto claims = good;
         claims[item.first] = item.second;
         CHECK(!verify(sign(key.get(), header, claims)));
+    }
+    SECTION("Back-channel logout token separation and validation");
+    auto logout = good;
+    logout.remove("nonce");
+    logout["jti"] = "one-logout";
+    logout["sid"] = "provider-session";
+    logout["events"] =
+        QJsonObject{{"http://schemas.openid.net/event/backchannel-logout", QJsonObject{}}};
+    CHECK(OidcToken::verifyLogout(sign(key.get(), header, logout), keys, config, now).has_value());
+    CHECK(!OidcToken::verifyLogout(valid, keys, config, now));
+    CHECK(!verify(sign(key.get(), header, logout)));
+    for (const auto& item : QList<QPair<QString, QJsonValue>>{{"nonce", "forbidden"},
+                                                              {"jti", ""},
+                                                              {"iat", now - 301},
+                                                              {"iat", now + 31},
+                                                              {"sid", 123},
+                                                              {"iss", "https://wrong.test/"},
+                                                              {"aud", "other-client"},
+                                                              {"events", QJsonObject{}}}) {
+        auto invalid = logout;
+        invalid[item.first] = item.second;
+        CHECK(!OidcToken::verifyLogout(sign(key.get(), header, invalid), keys, config, now));
     }
     auto multiAudience = good;
     multiAudience["aud"] = QJsonArray{config.clientId, "other-client"};
