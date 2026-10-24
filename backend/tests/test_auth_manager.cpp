@@ -4,6 +4,10 @@
 #include "test_framework.h"
 #include "server/AuthManager.h"
 #include "server/AppSettings.h"
+#include "common/PairingCrypto.h"
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
 
 #include <QDateTime>
 #include <QJsonArray>
@@ -19,6 +23,26 @@ void run_auth_manager_tests()
     settings.m_FilePath = tmp.path() + "/settings.json";
 
     AuthManager auth(&settings);
+
+    SECTION("A failed pairing-key commit leaves the session unbound");
+    {
+        const auto token = auth.createSession("198.51.100.100", "Binding fixture");
+        CHECK(!token.isEmpty());
+        const auto path =
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/sessions.json";
+        const auto backup = path + ".binding-fixture";
+        CHECK(QFile::rename(path, backup));
+        CHECK(QDir().mkdir(path));
+        const auto key =
+            PairingCrypto::publicKeySpkiFromPrivatePem(PairingCrypto::generatePrivateKeyPem());
+        CHECK(!auth.bindSessionKey(token, key));
+        CHECK(auth.sessionPairingKey(token).isEmpty());
+        CHECK(QDir().rmdir(path));
+        CHECK(QFile::rename(backup, path));
+        CHECK(auth.bindSessionKey(token, key));
+        CHECK_EQ(auth.sessionPairingKey(token), key);
+        CHECK(auth.destroySession(auth.sessionIdForToken(token)));
+    }
 
     // ── PIN lifecycle ──────────────────────────────────────────────────────
     QString pin = auth.generatePin();

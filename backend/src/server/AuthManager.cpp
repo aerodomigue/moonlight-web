@@ -27,6 +27,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QHostAddress>
 #include <QJsonArray>
@@ -64,6 +65,7 @@ AuthManager::AuthManager(AppSettings* settings, QObject* parent, AuthConfig conf
     Logger::info("[AuthManager] HMAC key initialized, no PIN set");
 
     // Reload sessions from disk if AppSettings is available
+    loadRevocations();
     loadSessions();
 
     // Periodically purge sessions that have been inactive past the TTL.
@@ -117,9 +119,67 @@ QByteArray AuthManager::generateHmac(const QString& data) const
     return QMessageAuthenticationCode::hash(data.toUtf8(), m_hmacKey, QCryptographicHash::Sha256);
 }
 
+namespace {
+QString revocationPath()
+{
+    // Independent of the sessions directory: a failed session-store rename must
+    // not turn a successful logout into a cookie that works after restart.
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
+           QStringLiteral("/security/session-revocations.json");
+}
+} // namespace
+
+void AuthManager::loadRevocations()
+{
+    if (!m_settings) return;
+    QFile file(revocationPath());
+    if (!file.exists()) return; // Existing installations start with an empty journal.
+    m_revocationsReadable = false;
+    if (!file.open(QIODevice::ReadOnly)) return;
+    const auto doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isObject() || doc.object()["version"].toInt() != 1 ||
+        !doc.object()["revoked"].isArray())
+        return;
+    for (const auto& value : doc.object()["revoked"].toArray()) {
+        const auto id = value.toString();
+        if (id.isEmpty() || id.size() > 256) return;
+        m_revokedSessions.insert(id);
+    }
+    m_revocationsReadable = true;
+}
+
+bool AuthManager::saveRevocations()
+{
+    if (!m_settings) return true;
+    if (!m_revocationsReadable) return false;
+    const auto path = revocationPath();
+    const auto dir = QFileInfo(path).absolutePath();
+    if (!QDir().mkpath(dir) ||
+        !QFile::setPermissions(dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner))
+        return false;
+    QJsonArray revoked;
+    auto ids = m_revokedSessions.values();
+    std::sort(ids.begin(), ids.end());
+    for (const auto& id : ids)
+        revoked.append(id); // Opaque hashes only, never raw cookies.
+    const auto bytes = QJsonDocument(QJsonObject{{"version", 1}, {"revoked", revoked}}).toJson();
+    QSaveFile file(path);
+    return file.open(QIODevice::WriteOnly) &&
+           file.setPermissions(QFile::ReadOwner | QFile::WriteOwner) &&
+           file.write(bytes) == bytes.size() && file.commit();
+}
+
+bool AuthManager::persistRevocations()
+{
+    // Both paths contain the same denial. Either atomic commit makes it durable.
+    const bool journal = saveRevocations();
+    return saveSessions() || journal;
+}
+
 bool AuthManager::saveSessions()
 {
     if (!m_settings) return true;
+    if (!m_revocationsReadable) return false;
 
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
@@ -140,7 +200,15 @@ bool AuthManager::saveSessions()
     if (file.open(QIODevice::WriteOnly)) {
         file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
         const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
-        if (file.write(bytes) == bytes.size() && file.commit()) return true;
+        if (file.write(bytes) == bytes.size() && file.commit()) {
+            // Clear tombstones only after the canonical snapshot excludes them.
+            if (!m_revokedSessions.isEmpty()) {
+                const auto previous = m_revokedSessions;
+                m_revokedSessions.clear();
+                if (!saveRevocations()) m_revokedSessions = previous;
+            }
+            return true;
+        }
     }
     Logger::warning("[AuthManager] Failed to commit sessions file");
     return false;
@@ -148,7 +216,7 @@ bool AuthManager::saveSessions()
 
 void AuthManager::loadSessions()
 {
-    if (!m_settings) return;
+    if (!m_settings || !m_revocationsReadable) return;
 
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QString path = dir + QStringLiteral("/sessions.json");
@@ -188,6 +256,7 @@ void AuthManager::loadSessions()
         info.ssoAdminConfig = obj.value("sso_admin_config").toString();
         info.roleRevision = obj.value("role_revision").toVariant().toULongLong();
         info.token = obj["token"].toString();
+        if (m_revokedSessions.contains(info.token)) continue;
         info.ip = obj["ip"].toString();
         info.machineName = obj["machine_name"].toString();
         info.city = obj["city"].toString();
@@ -669,7 +738,7 @@ void AuthManager::revokeSso(const QString& issuer, const QString& subject, const
             (subject.isEmpty() || user.subject == subject) && (sid.isEmpty() || s.ssoSid == sid))
             destroySession(s.token);
     }
-    if (!saveSessions()) throw std::runtime_error("Cannot persist SSO revocation");
+    if (!persistRevocations()) throw std::runtime_error("Cannot persist SSO revocation");
 }
 
 bool AuthManager::proveSsoAdministrator(const QString& token, qint64 issued)
@@ -738,7 +807,7 @@ void AuthManager::applyConfig(const AuthConfig& config)
                                        !m_users.get(session.userId).issuer.isEmpty();
         if (disabled || obsoleteRoleProof) destroySession(session.token);
     }
-    if (!saveSessions()) throw std::runtime_error("Cannot persist revoked sessions");
+    if (!persistRevocations()) throw std::runtime_error("Cannot persist revoked sessions");
     if (m_settings)
         config.save(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                     "/auth-config.json");
@@ -758,7 +827,7 @@ void AuthManager::revokeUserSessions(const QString& userId)
     const auto current = m_sessions;
     for (const auto& session : current)
         if (session.userId == userId) destroySession(session.token);
-    if (!saveSessions()) throw std::runtime_error("Cannot persist revoked sessions");
+    if (!persistRevocations()) throw std::runtime_error("Cannot persist revoked sessions");
 }
 
 // ── Remote admin password ─────────────────────────────────────────────────────
@@ -933,7 +1002,10 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     info.viaTunnel = viaTunnel;
 
     m_sessions[id] = info;
-    if (!ephemeral) saveSessions();
+    if (!ephemeral && !saveSessions()) {
+        m_sessions.remove(id);
+        return {};
+    }
     emit sessionCreated(ip, machineName);
     emit sessionsChanged();
     Logger::info(QString("[Auth] %1 session created for %2 (machine='%3', total: %4)")
@@ -976,9 +1048,9 @@ bool AuthManager::logoutSession(const QString& token)
 {
     if (token.isEmpty()) return false;
     const QString id = hashToken(token);
-    if (!m_sessions.contains(id)) return false;
-    destroySession(id);
-    return true;
+    const bool existed = m_sessions.contains(id);
+    if (!destroySession(id)) throw std::runtime_error("Cannot persist session revocation");
+    return existed;
 }
 
 bool AuthManager::isHostSession(const QString& token) const
@@ -1076,7 +1148,10 @@ bool AuthManager::bindSessionKey(const QString& token, const QByteArray& spkiDer
     }
 
     it->pairingKey = spkiDer;
-    if (!it->ephemeral) saveSessions();
+    if (!it->ephemeral && !saveSessions()) {
+        it->pairingKey.clear();
+        return false;
+    }
     Logger::info(QStringLiteral("[AuthManager] Bound pairing key %1 to session %2")
                      .arg(PairingCrypto::keyId(spkiDer).left(12), it->token.left(8)));
     return true;
@@ -1099,6 +1174,19 @@ bool AuthManager::authorizeIdentityRenewal(const QString& token, const QByteArra
         return false;
     it->renewalHostKey = hostSpki;
     it->renewalIssuedAt = nowSecs > 0 ? nowSecs : QDateTime::currentSecsSinceEpoch();
+    it->renewalRevision = m_configRevision;
+    return true;
+}
+
+bool AuthManager::authorizeLocalIdentityRenewal(const QString& token, const QByteArray& hostSpki)
+{
+    if (!validateSession(token) || !PairingCrypto::isValidP256Spki(hostSpki)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    if (it->authMethod != "host" || !it->isHost || !it->ephemeral ||
+        it->userId != UserStore::localId() || it->pairingKey.isEmpty())
+        return false;
+    it->renewalHostKey = hostSpki;
+    it->renewalIssuedAt = QDateTime::currentSecsSinceEpoch();
     it->renewalRevision = m_configRevision;
     return true;
 }
@@ -1223,15 +1311,17 @@ std::optional<AuthManager::HomeScreenHandoff> AuthManager::redeemHomeScreenKey(c
                              session->userId, session->authMethod};
 }
 
-void AuthManager::destroySession(const QString& token)
+bool AuthManager::destroySession(const QString& token)
 {
     m_homeScreenKeys.remove(token);
     m_homeScreenInstances.remove(token);
     if (m_sessions.contains(token)) {
         SessionInfo info = m_sessions.value(token);
+        if (!info.ephemeral) m_revokedSessions.insert(token);
+        const bool journal = info.ephemeral || saveRevocations();
         m_ssoSecurity.erase(token);
         m_sessions.remove(token);
-        saveSessions();
+        const bool snapshot = saveSessions();
         emit sessionDestroyed(token);
         emit sessionsChanged();
         Logger::info(QString("[Auth] Session destroyed for %1 (machine='%2', remaining: %3)")
@@ -1241,11 +1331,10 @@ void AuthManager::destroySession(const QString& token)
             Logger::info("[Auth] Revoked session was streaming — requesting stream teardown");
             emit streamingSessionRevoked();
         }
-    } else {
-        Logger::warning(QString("[Auth] destroySession: token not found — token='%1' (len=%2)")
-                            .arg(token)
-                            .arg(token.size()));
+        return snapshot || journal;
     }
+    // Retain a failed write in memory so the same request can retry safely.
+    return !m_revokedSessions.contains(token) || persistRevocations();
 }
 
 bool AuthManager::renameSession(const QString& token, const QString& machineName)
@@ -1266,29 +1355,10 @@ bool AuthManager::renameSession(const QString& token, const QString& machineName
 
 void AuthManager::destroyAllSessions()
 {
-    int count = m_sessions.size();
-    bool anyStreaming = false;
-    for (const SessionInfo& s : m_sessions) {
-        if (s.streaming) {
-            anyStreaming = true;
-            break;
-        }
-    }
-    const auto removedIds = m_sessions.keys();
-    m_sessions.clear();
-    saveSessions();
-    for (const auto& id : removedIds) {
-        m_ssoSecurity.erase(id);
-        emit sessionDestroyed(id);
-    }
-    if (count > 0) {
-        emit sessionsChanged();
-        Logger::info(QString("[Auth] All %1 sessions destroyed").arg(count));
-    }
-    if (anyStreaming) {
-        Logger::info("[Auth] A destroyed session was streaming — requesting stream teardown");
-        emit streamingSessionRevoked();
-    }
+    const auto ids = m_sessions.keys();
+    for (const auto& id : ids)
+        destroySession(id);
+    if (!persistRevocations()) throw std::runtime_error("Cannot persist revoked sessions");
 }
 
 void AuthManager::purgeExpiredSessions()

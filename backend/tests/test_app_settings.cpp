@@ -15,6 +15,40 @@
 
 void run_app_settings_tests()
 {
+    SECTION("Host identity is usable only after durable private storage");
+    QTemporaryDir identityStore;
+    CHECK(identityStore.isValid());
+    AppSettings identity;
+    identity.m_FilePath = identityStore.path() + "/identity.json";
+    identity.writeAll({{"sentinel", "keep"}});
+    const auto identityKey = identity.hostSigningKeyPem();
+    CHECK(!identityKey.isEmpty());
+    AppSettings restarted;
+    restarted.m_FilePath = identity.m_FilePath;
+    CHECK(restarted.hostSigningKeyPem() == identityKey);
+    CHECK(identity.readAll()["sentinel"].toString() == "keep");
+#ifndef Q_OS_WIN
+    CHECK(!(QFileInfo(identity.m_FilePath).permissions() &
+            (QFile::ReadGroup | QFile::WriteGroup | QFile::ReadOther | QFile::WriteOther)));
+#endif
+    identity.writeAll({{"host_signing_key", "invalid"}, {"sentinel", "keep"}});
+    const auto corrupt = identity.readAll();
+    CHECK(identity.hostSigningKeyPem().isEmpty());
+    CHECK(identity.readAll() == corrupt);
+    QFile malformed(identity.m_FilePath);
+    CHECK(malformed.open(QIODevice::WriteOnly));
+    CHECK(malformed.write("{broken") == 7);
+    malformed.close();
+    CHECK(identity.hostSigningKeyPem().isEmpty());
+    CHECK(malformed.open(QIODevice::ReadOnly));
+    CHECK(malformed.readAll() == QByteArray("{broken"));
+    malformed.close();
+    AppSettings unavailable;
+    unavailable.m_FilePath = identityStore.path() + "/missing-parent/settings.json";
+    CHECK(unavailable.hostSigningKeyPem().isEmpty());
+    CHECK(unavailable.hostSigningPublicKey().isEmpty());
+    CHECK(!QFile::exists(unavailable.m_FilePath));
+
     SECTION("AppSettings");
 
     QTemporaryDir tmp;

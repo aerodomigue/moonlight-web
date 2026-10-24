@@ -93,6 +93,8 @@
         "connectionTitle": "Connection Error",
         "unableToConnect": "Unable to connect to server",
         "serverUnreadable": "The server sent an answer MoonlightWeb cannot read. It may be restarting or updating: try again in a moment.",
+        "sessionPersistenceFailed": "The server could not save this session change. Retry when storage is available.",
+        "hostIdentityUnavailable": "The server identity is unavailable. Ask the administrator to check storage or restore its backup.",
         "boothTitle": "Booth mode",
         "boothBody": "This MoonlightWeb only lets in the devices it already knows. Ask its owner to add this one."
     },
@@ -416,7 +418,7 @@
         "resolutionAuto": "Auto",
         "resolutionDevice": "Match my screen",
         "resolutionCustom": "Custom",
-        "resolutionAutoDesc": "The remote display's own size, scaled down to fit this screen ({{size}}) when it is larger. Hosts that cannot report their size (Sunshine, Apollo, Wolf) stream 1080p.",
+        "resolutionAutoDesc": "The remote display's size, scaled down to fit this screen ({{size}}). On a desktop with Sunshine, Apollo or Wolf, use this screen's physical size up to 4K; use 1080p when its size is unknown or on handhelds.",
         "resolutionAutoDescTv": "720p at most on a TV, for the lowest latency: the remote display's own size when it is smaller. “Match my screen” streams this screen's full size ({{size}}).",
         "resolutionDeviceDesc": "The stream matches this screen pixel for pixel ({{size}}); the remote display switches to that size when it can.",
         "resolutionCustomDesc": "Width and height, {{min}} to {{max}} pixels each. Never larger than the remote display.",

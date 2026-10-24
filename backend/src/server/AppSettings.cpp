@@ -28,6 +28,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -1764,26 +1765,57 @@ QString AppSettings::rotateLocalKey()
 
 QByteArray AppSettings::hostSigningKeyPem()
 {
-    QJsonObject obj = readAll();
-    const QString stored = obj.value("host_signing_key").toString();
-    if (!stored.isEmpty()) {
-        const QByteArray pem = QByteArray::fromBase64(stored.toUtf8());
-        // A key we can no longer parse is worse than no key: every browser would
-        // fail to verify a host that looks live. Regenerate and let the pairings
-        // rebuild rather than serving signatures nobody can check.
-        if (!PairingCrypto::publicKeySpkiFromPrivatePem(pem).isEmpty()) return pem;
-        qWarning() << "[AppSettings] Stored host signing key is unusable — regenerating."
-                   << "Every paired browser will have to pair again.";
-    }
+    auto readIdentityStore = [this](QJsonObject& obj) {
+        obj = {};
+        if (!QFileInfo::exists(m_FilePath)) return true;
+        QFile file(m_FilePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            qCritical() << "[AppSettings] Host identity store is unreadable";
+            return false;
+        }
+        QJsonParseError error;
+        const auto document = QJsonDocument::fromJson(file.readAll(), &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject()) {
+            qCritical() << "[AppSettings] Host identity store is invalid; restore its backup";
+            return false;
+        }
+        obj = document.object();
+        return true;
+    };
+    auto storedIdentity = [](const QJsonObject& obj) {
+        const auto pem = QByteArray::fromBase64(obj["host_signing_key"].toString().toLatin1(),
+                                                QByteArray::AbortOnBase64DecodingErrors);
+        if (PairingCrypto::isValidP256Spki(PairingCrypto::publicKeySpkiFromPrivatePem(pem)))
+            return pem;
+        qCritical() << "[AppSettings] Stored host identity is invalid; restore its backup";
+        return QByteArray();
+    };
+    QJsonObject obj;
+    if (!readIdentityStore(obj)) return {};
+    if (obj.contains("host_signing_key")) return storedIdentity(obj);
 
-    const QByteArray pem = PairingCrypto::generatePrivateKeyPem();
-    if (pem.isEmpty()) {
-        qCritical() << "[AppSettings] Failed to generate the host signing key";
+    // Serialize first creation across the parent and worker processes. Existing
+    // identities remain readable even when their directory is no longer writable.
+    QLockFile lock(m_FilePath + ".host-identity.lock");
+    if (!lock.tryLock(1000) || !readIdentityStore(obj)) {
+        qCritical() << "[AppSettings] Host identity cannot be initialized safely";
         return {};
     }
-
+    if (obj.contains("host_signing_key")) return storedIdentity(obj);
+    const auto pem = PairingCrypto::generatePrivateKeyPem();
+    if (pem.isEmpty()) return {};
     obj["host_signing_key"] = QString::fromLatin1(pem.toBase64());
-    writeAll(obj);
+    const auto bytes = QJsonDocument(obj).toJson(QJsonDocument::Indented);
+    QSaveFile file(m_FilePath);
+    if (!file.open(QIODevice::WriteOnly) ||
+        !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner) ||
+        file.write(bytes) != bytes.size() || !file.commit()) {
+        qCritical() << "[AppSettings] Host identity could not be committed; streaming refused";
+        return {};
+    }
+    QJsonObject confirmed;
+    if (!readIdentityStore(confirmed) || confirmed["host_signing_key"] != obj["host_signing_key"])
+        return {};
     return pem;
 }
 

@@ -10,6 +10,12 @@ extern "C" {
 
 void run_stream_config_tests()
 {
+    SECTION("GameStream receives the viewer refresh rate, never a fixed 60 Hz");
+    CHECK_EQ(StreamConfig::clientRefreshRateX100(240000, 240), 24000);
+    CHECK_EQ(StreamConfig::clientRefreshRateX100(59940, 120), 5994);
+    CHECK_EQ(StreamConfig::clientRefreshRateX100(143900, 60), 14390);
+    CHECK_EQ(StreamConfig::clientRefreshRateX100(0, 240), 24000);
+    CHECK_EQ(StreamConfig::clientRefreshRateX100(0, 0), 0);
     SECTION("StreamConfig");
 
     // Defaults.

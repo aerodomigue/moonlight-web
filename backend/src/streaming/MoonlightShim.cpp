@@ -16,6 +16,7 @@
  */
 
 #include "MoonlightShim.h"
+#include "StreamConfig.h"
 #include "AnnexBFiller.h"
 #include "InputWatchdog.h"
 
@@ -122,7 +123,8 @@ void MoonlightShim::startConnection(const InitParams& params)
         streamConfig.streamingRemotely = STREAM_CFG_LOCAL;
         streamConfig.audioConfiguration = params.audioConfiguration;
         streamConfig.supportedVideoFormats = params.supportedVideoFormats;
-        streamConfig.clientRefreshRateX100 = 6000;
+        streamConfig.clientRefreshRateX100 =
+            StreamConfig::clientRefreshRateX100(params.clientRefreshMilliHz, params.fps);
         streamConfig.colorSpace = params.colorSpace;
         streamConfig.colorRange = params.colorRange;
         streamConfig.encryptionFlags = ENCFLG_AUDIO | ENCFLG_VIDEO;

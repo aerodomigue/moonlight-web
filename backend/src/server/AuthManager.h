@@ -19,6 +19,7 @@
 
 #include <QObject>
 #include <QHash>
+#include <QSet>
 #include <QMap>
 #include <optional>
 #include <QDateTime>
@@ -246,7 +247,8 @@ public:
     /** Destroy the session a raw cookie token belongs to — the visitor logging
      *  themselves out. Unlike destroySession() this takes the raw token, so a
      *  browser can only ever end its own session. Returns false when the token
-     *  matches none. */
+     *  matches none. Throws if neither persistent revocation store can commit;
+     *  the caller must keep its cookie to retry. */
     bool logoutSession(const QString& token);
     /** True when the raw cookie token belongs to a valid *host* session (created
      *  by redeeming the host key — the browser runs on the host machine). */
@@ -291,11 +293,14 @@ public:
     QByteArray sessionPairingKey(const QString& token) const;
     bool authorizeIdentityRenewal(const QString& token, const QByteArray& hostSpki,
                                   qint64 nowSecs = 0);
+    // Only after direct host-machine verification; never for a restored cookie.
+    bool authorizeLocalIdentityRenewal(const QString& token, const QByteArray& hostSpki);
     bool canRenewIdentity(const QString& token, const QByteArray& browserSpki,
                           const QByteArray& hostSpki, qint64 nowSecs = 0) const;
     /** Revoke a session by its opaque id (the value exposed in sessions()/toJson,
-     *  i.e. the token hash), NOT the raw cookie token. */
-    void destroySession(const QString& token);
+     *  i.e. the token hash), NOT the raw cookie token. Returns false when the
+     *  session is blocked in memory but neither persistent store could commit. */
+    bool destroySession(const QString& token);
     /** Rename a session by its opaque id (the token hash exposed in toJson),
      *  NOT the raw cookie token. No-op for unknown ids. Returns true on success. */
     bool renameSession(const QString& token, const QString& machineName);
@@ -473,6 +478,9 @@ public:
     bool saveSessions();
     /** Load active sessions from disk, discarding expired (>24h). */
     void loadSessions();
+    void loadRevocations();
+    bool saveRevocations();
+    bool persistRevocations();
 
     // ── Stats ──────────────────────────────────────────────────────────────
     int activeSessionCount() const { return m_sessions.size(); }
@@ -508,7 +516,9 @@ private:
     bool m_pinConsumed = false;
     QByteArray m_hmacKey;
     QHash<QString, RateLimitEntry> m_rateLimits; // rate-limit key -> entry
-    QHash<QString, SessionInfo> m_sessions;      // token hash (id) -> SessionInfo
+    QSet<QString> m_revokedSessions;
+    bool m_revocationsReadable = true;
+    QHash<QString, SessionInfo> m_sessions; // token hash (id) -> SessionInfo
 
     struct HomeScreenKey
     {

@@ -688,7 +688,7 @@ export class SettingsView {
         // launch turns into 1080p120 recommends a bitrate for pixels nobody
         // ever sends (util/StreamResolution.js).
         const bounded =
-            choice.mode === 'auto' || chosen <= 0
+            choice.mode === 'auto' && chosen <= 0
                 ? fitPixelBudget({ height: ref.height, aspect }, rate, { clientFps: measuredFps() })
                 : { size: { height: ref.height, aspect }, fps: rate };
         return this._computeAutoBitrate(
@@ -2360,9 +2360,10 @@ export class SettingsView {
         try {
             await BackendClient.logout();
         } catch (err) {
-            // The cookie may be gone anyway (expired, already revoked). Reload
-            // regardless: if it is not, the login page is what comes back.
             console.warn('[Settings] Logout request failed:', err);
+            btn.disabled = false;
+            Toast.error(err.message || t('appError.sessionPersistenceFailed'));
+            return; // Keep the document and cookie available for a safe retry.
         }
         window.location.replace(window.location.pathname);
     }

@@ -285,9 +285,10 @@ void GameStreamBackend::resume(const QString& seatId, const LaunchRequest& req,
     const ClientIdentity identity = im->identityForSeat(
         req.clientIdentitySeat.isEmpty() ? m_IdentitySeat : req.clientIdentitySeat);
 
-    QNetworkReply* reply = m_Http->resumeAppAsync(
-        host->activeAddress, host->activeHttpsPort, uniqueId, req.rikey, req.rikeyid,
-        identity.certPem, identity.keyPem, req.muteHostAudio ? 0 : 1, req.timeoutMs);
+    QNetworkReply* reply =
+        m_Http->resumeAppAsync(host->activeAddress, host->activeHttpsPort, uniqueId, req.rikey,
+                               req.rikeyid, req.width, req.height, req.fps, identity.certPem,
+                               identity.keyPem, req.muteHostAudio ? 0 : 1, req.timeoutMs);
 
     finishLaunchReply(reply, req, std::move(cb));
 }

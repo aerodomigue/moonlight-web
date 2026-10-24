@@ -188,8 +188,12 @@ export class BackendClient {
             sessionStorage.removeItem('mw_auth_reload');
         }
 
+        const friendly = {
+            session_persistence_failed: 'appError.sessionPersistenceFailed',
+            host_identity_unavailable: 'appError.hostIdentityUnavailable',
+        }[msg];
         const error = /** @type {BackendError} */ (
-            new Error(msg || `Request failed (${resp.status})`)
+            new Error(friendly ? t(friendly) : msg || `Request failed (${resp.status})`)
         );
         error.statusCode = resp.status;
         error.responseBody = body;
@@ -718,14 +722,21 @@ export class BackendClient {
             this.currentUser = status.user;
         }
         this.pinEnabled = status.pin_enabled !== false;
-        if (
-            status.authenticated &&
-            status.host_public_key &&
-            (!status.is_host_machine || status.has_session)
-        ) {
+        if (status.authenticated && status.host_public_key) {
             try {
                 const identity = await loadOrCreateIdentity();
                 if (!identity) throw this._identityError('identityStorageUnavailable');
+                if (status.is_host_machine && !status.has_session) {
+                    const local = await this.post('/api/auth/local-session', {
+                        public_key: identity.publicKeyBase64,
+                    });
+                    if (
+                        local.browser_key_id !== identity.keyId ||
+                        local.identity_renewal_available !== true
+                    )
+                        throw this._identityError('identityRenewalFailed');
+                    Object.assign(status, local, { has_session: true });
+                }
                 if (status.browser_key_id && status.browser_key_id !== identity.keyId)
                     throw this._identityError('identityBrowserKeyChanged');
                 if (status.identity_renewal_available) {
@@ -777,12 +788,13 @@ export class BackendClient {
     /** End this browser's own session and clear its cookie. Works from anywhere
      *  (no localhost gate) — it is the visitor's way out of a public machine. */
     static async logout() {
+        const result = await this.post('/api/auth/logout');
         try {
             sessionStorage.setItem('mw-sso-logged-out', '1');
         } catch {
             /* optional browser storage */
         }
-        return this.post('/api/auth/logout');
+        return result;
     }
     /** Redeem the host key (?mwk=... from the host machine's own entry points)
      *  for a localhost-equivalent session over the public domain. */

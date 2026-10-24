@@ -654,6 +654,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     params.width = m_StreamWidth;
     params.height = m_StreamHeight;
     params.fps = m_StreamFps;
+    params.clientRefreshMilliHz = m_ClientRefreshMilliHz;
     params.bitrateKbps = m_StreamBitrateKbps;
 
     // Create the engine BEFORE starting it. The relays must be connected to all

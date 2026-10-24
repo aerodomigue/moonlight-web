@@ -16,6 +16,9 @@
  */
 
 #include "RestRouter.h"
+#include <QDebug>
+#include <atomic>
+#include <memory>
 
 HttpResponse HttpResponse::json(const QJsonObject& obj, int status)
 {
@@ -143,10 +146,23 @@ bool RestRouter::matchParamRoute(const QStringList& pathSegments, const ParamRou
 
 void RestRouter::dispatchAsync(const HttpRequest& request, ResponseCallback respond) const
 {
+    const auto answered = std::make_shared<std::atomic_bool>(false);
+    ResponseCallback once = [answered, respond = std::move(respond)](const HttpResponse& response) {
+        if (!answered->exchange(true)) respond(response);
+    };
+    auto invoke = [&once](const AsyncRouteHandler& handler, const HttpRequest& req) {
+        try {
+            handler(req, once);
+        } catch (...) {
+            // Exception details may contain credentials. Never return them.
+            qWarning() << "[RestRouter] Request handler failed";
+            once(HttpResponse::error(500, "internal_server_error"));
+        }
+    };
     // Fast path: exact match
     QString key = routeKey(request.method, request.path);
     if (m_Routes.contains(key)) {
-        m_Routes[key](request, std::move(respond));
+        invoke(m_Routes[key], request);
         return;
     }
 
@@ -160,12 +176,12 @@ void RestRouter::dispatchAsync(const HttpRequest& request, ResponseCallback resp
         if (matchParamRoute(pathSegments, route, params)) {
             HttpRequest reqCopy = request;
             reqCopy.pathParams = params;
-            route.handler(reqCopy, std::move(respond));
+            invoke(route.handler, reqCopy);
             return;
         }
     }
 
-    respond(HttpResponse::error(404, "Not Found: " + request.method + " " + request.path));
+    once(HttpResponse::error(404, "Not Found: " + request.method + " " + request.path));
 }
 
 bool RestRouter::hasRoute(const QString& method, const QString& path) const

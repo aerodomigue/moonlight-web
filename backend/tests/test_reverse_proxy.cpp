@@ -5,6 +5,7 @@
 #include "server/AppSettings.h"
 #include "server/AuthManager.h"
 #include "server/ProxyHeaders.h"
+#include "server/StreamClientPolicy.h"
 #include "streaming/TransportPriorities.h"
 
 #include <QCoreApplication>
@@ -15,6 +16,27 @@
 
 void run_reverse_proxy_tests()
 {
+    SECTION("Trusted proxy client classification remains valid for ICE");
+    qputenv("MW_TRUSTED_PROXIES", "10.2.10.103/32");
+    for (const auto& peer : {QString("10.2.100.122"), QString("203.0.113.20")}) {
+        HttpRequest request;
+        request.clientAddress = "10.2.10.103";
+        request.headers["x-forwarded-for"] = peer;
+        request.headers["x-forwarded-proto"] = "https";
+        CHECK(ProxyHeaders::apply(request));
+        CHECK(request.viaProxy);
+        CHECK(StreamClientPolicy::classify(request) == NetClassify::classify(peer));
+    }
+    HttpRequest spoofed;
+    spoofed.clientAddress = "10.2.100.122";
+    spoofed.hostTrusted = true;
+    spoofed.headers["x-forwarded-for"] = "127.0.0.1";
+    CHECK(!ProxyHeaders::apply(spoofed));
+    CHECK(StreamClientPolicy::classify(spoofed) == NetClassify::Kind::Public);
+    spoofed.headers.clear();
+    CHECK(StreamClientPolicy::classify(spoofed) == NetClassify::Kind::Private);
+    qunsetenv("MW_TRUSTED_PROXIES");
+
     SECTION("Self-hosted reverse proxy defaults");
     qunsetenv("MW_REVERSE_PROXY");
     qunsetenv("MW_LAN_ONLY");

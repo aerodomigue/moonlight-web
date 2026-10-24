@@ -1134,6 +1134,190 @@ class OidcIsolation(unittest.TestCase):
         for path in ["/ws", "/ws1", "/ws/stream", "/ws/control"]: self.assertEqual(copied.request(path, extra_headers=websocket)[0], 401)
         self.assertTrue(admin.request("/api/auth/status")[1]["admin_access"])
 
+    def test_admin_revocation_reports_storage_failure_without_crashing(self):
+        self.start()
+        target = Browser(self.base)
+        user_id = self.login(target)['user']['id']
+        admin, headers = self.administrator()
+        import resource
+        resource.prlimit(self.process.pid, resource.RLIMIT_CORE, (0, 0))
+        store = next(self.state.rglob('sessions.json'))
+        directory = store.parent
+        # Block both independent atomic stores. A healthy revocation journal
+        # would correctly make this operation durable even with sessions.json locked.
+        journal = next(self.state.rglob('session-revocations.json'))
+        saved = journal.read_bytes()
+        journal.unlink()
+        journal.mkdir()
+        directory.chmod(0o555)
+        store.chmod(0o444)
+        try:
+            code = admin.request('/api/admin/users/' + user_id + '/revoke-sessions', {}, extra_headers=headers)[0]
+            self.assertEqual(code, 503)
+            self.assertIsNone(self.process.poll())
+            self.assertEqual(admin.request('/api/health')[0], 200)
+            self.assertFalse(target.request('/api/auth/status')[1]['authenticated'])
+            self.assertTrue(admin.request('/api/auth/status')[1]['authenticated'])
+        finally:
+            directory.chmod(0o700)
+            store.chmod(0o600)
+            journal.rmdir()
+            journal.write_bytes(saved)
+            journal.chmod(0o600)
+        self.assertEqual(admin.request('/api/admin/users/' + user_id + '/revoke-sessions', {}, extra_headers=headers)[0], 200)
+
+    def test_pin_logout_is_durable_when_primary_store_is_unwritable(self):
+        self.start()
+        admin, headers = self.administrator()
+        uid = admin.request('/api/admin/users', {'name':'Durable PIN fixture','role':'user'}, extra_headers=headers)[1]['user']['id']
+        pin = admin.request('/api/admin/users/' + uid + '/pin', {}, extra_headers=headers)[1]['pin']
+        original = Browser(self.base)
+        self.assertEqual(original.request('/api/auth/validate', {'pin':pin,'remember':True,'public_key':original.public_key})[0], 200)
+        import copy
+        replay = Browser(self.base)
+        for cookie in original.cookies: replay.cookies.set_cookie(copy.copy(cookie))
+        store = next(self.state.rglob('sessions.json'))
+        directory = store.parent
+        directory.chmod(0o555)
+        store.chmod(0o444)
+        try:
+            self.assertEqual(original.request('/api/auth/logout', {})[0], 200)
+            self.assertFalse(replay.request('/api/auth/status')[1]['authenticated'])
+            self.stop()
+        finally:
+            directory.chmod(0o700)
+            store.chmod(0o600)
+        self.start()
+        self.assertFalse(replay.request('/api/auth/status')[1]['authenticated'])
+        # An already revoked cookie can be logged out again without gaining authority.
+        self.assertEqual(replay.request('/api/auth/logout', {})[0], 200)
+        journal = next(self.state.rglob('session-revocations.json'))
+        self.assertEqual(journal.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(journal.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_pin_logout_retains_retry_cookie_if_both_stores_fail(self):
+        self.start()
+        admin, headers = self.administrator()
+        uid = admin.request('/api/admin/users', {'name':'Logout retry fixture','role':'user'}, extra_headers=headers)[1]['user']['id']
+        pin = admin.request('/api/admin/users/' + uid + '/pin', {}, extra_headers=headers)[1]['pin']
+        browser = Browser(self.base)
+        self.assertEqual(browser.request('/api/auth/validate', {'pin':pin,'remember':True,'public_key':browser.public_key})[0], 200)
+        import copy
+        replay = Browser(self.base)
+        for cookie in browser.cookies: replay.cookies.set_cookie(copy.copy(cookie))
+        store = next(self.state.rglob('sessions.json'))
+        journal = next(self.state.rglob('session-revocations.json'))
+        saved = journal.read_bytes()
+        journal.unlink()
+        journal.mkdir()
+        store.parent.chmod(0o555)
+        store.chmod(0o444)
+        try:
+            code, body, response = browser.request('/api/auth/logout', {})
+            self.assertEqual(code, 503)
+            self.assertEqual(body['error'], 'session_persistence_failed')
+            self.assertIsNone(response.get('Set-Cookie'))
+            self.assertFalse(replay.request('/api/auth/status')[1]['authenticated'])
+        finally:
+            store.parent.chmod(0o700)
+            store.chmod(0o600)
+            journal.rmdir()
+            journal.write_bytes(saved)
+            journal.chmod(0o600)
+        self.assertEqual(browser.request('/api/auth/logout', {})[0], 200)
+        self.start()
+        self.assertFalse(replay.request('/api/auth/status')[1]['authenticated'])
+
+    def test_corrupt_revocation_journal_does_not_restore_pin_authority(self):
+        self.start()
+        admin, headers = self.administrator()
+        uid = admin.request('/api/admin/users', {'name':'Corrupt journal fixture','role':'user'}, extra_headers=headers)[1]['user']['id']
+        pin = admin.request('/api/admin/users/' + uid + '/pin', {}, extra_headers=headers)[1]['pin']
+        browser = Browser(self.base)
+        self.assertEqual(browser.request('/api/auth/validate', {'pin':pin,'remember':True,'public_key':browser.public_key})[0], 200)
+        self.stop()
+        journal = next(self.state.rglob('session-revocations.json'))
+        original = journal.read_bytes()
+        journal.write_text('not a journal')
+        self.start()
+        self.assertFalse(browser.request('/api/auth/status')[1]['authenticated'])
+        self.assertIsNone(self.process.poll())
+        # Repairing the original empty journal preserves unaffected persisted accounts.
+        self.stop()
+        journal.write_bytes(original)
+        self.start()
+        self.assertTrue(browser.request('/api/auth/status')[1]['authenticated'])
+
+    def test_pin_login_refuses_unpersisted_remembered_session(self):
+        self.start()
+        admin, headers = self.administrator()
+        uid = admin.request('/api/admin/users', {'name':'Storage failure fixture','role':'user'}, extra_headers=headers)[1]['user']['id']
+        pin = admin.request('/api/admin/users/' + uid + '/pin', {}, extra_headers=headers)[1]['pin']
+        store = next(self.state.rglob('sessions.json'))
+        directory = store.parent
+        directory.chmod(0o555)
+        store.chmod(0o444)
+        try:
+            browser = Browser(self.base)
+            code, _, response = browser.request('/api/auth/validate', {'pin':pin,'remember':True,'public_key':browser.public_key})
+            self.assertEqual(code, 503)
+            self.assertIsNone(response.get('Set-Cookie'))
+            self.assertFalse(browser.request('/api/auth/status')[1]['authenticated'])
+            self.assertTrue(admin.request('/api/auth/status')[1]['authenticated'])
+        finally:
+            directory.chmod(0o700)
+            store.chmod(0o600)
+
+    def test_unpersisted_host_identity_blocks_status_and_launch_without_rotation(self):
+        self.start()
+        browser = Browser(self.base)
+        original_status = self.login(browser)
+        _, hosts, _ = browser.request('/api/hosts/manual', {'address':'127.0.0.1:' + str(self.pc.server_port)})
+        host_id = hosts['hosts'][0]['uuid']
+        settings = self.state / 'settings.json'
+        original = settings.read_bytes()
+        content = json.loads(original)
+        content.pop('host_signing_key')
+        settings.write_text(json.dumps(content))
+        settings.chmod(0o444)
+        self.state.chmod(0o555)
+        try:
+            code, body, _ = browser.request('/api/auth/status')
+            self.assertEqual(code, 503)
+            self.assertEqual(body['error'], 'host_identity_unavailable')
+            self.assertNotIn('host_id', body)
+            self.assertEqual(browser.request('/api/hosts/' + host_id + '/start', {'appId':42})[0], 503)
+            self.assertEqual(browser.request('/api/health')[0], 200)
+            self.assertNotIn('host_signing_key', json.loads(settings.read_bytes()))
+        finally:
+            self.state.chmod(0o700)
+            settings.chmod(0o600)
+            settings.write_bytes(original)
+        restored = browser.request('/api/auth/status')[1]
+        self.assertEqual(restored['host_id'], original_status['host_id'])
+        self.start()
+        self.assertEqual(self.login(Browser(self.base))['host_id'], original_status['host_id'])
+
+    def test_local_session_binds_a_key_without_exempting_remote_or_proxy_clients(self):
+        self.start()
+        local = Browser(self.base.replace('127.0.0.1', 'localhost'))
+        status = local.request('/api/auth/status', local=True)[1]
+        self.assertTrue(status['is_host_machine'])
+        self.assertFalse(status['has_session'])
+        path = '/api/auth/local-session'
+        code, bound, _ = local.request(path, {'public_key':local.public_key}, local=True)
+        self.assertEqual(code, 200)
+        self.assertTrue(bound['identity_renewal_available'])
+        current = local.request('/api/auth/status', local=True)[1]
+        self.assertTrue(current['has_session'])
+        self.assertEqual(current['auth_method'], 'host')
+        self.assertEqual(current['browser_key_id'], b64(hashlib.sha256(local.public_der).digest()))
+        self.assertEqual(local.request('/api/auth/identity/renew', {'public_key':local.public_key}, local=True)[0], 200)
+        remote = Browser(self.base)
+        for headers in ({}, {'X-Forwarded-For':'10.2.100.122'}, {'X-Forwarded-For':'127.0.0.1'}):
+            self.assertEqual(remote.request(path, {'public_key':remote.public_key}, extra_headers=headers)[0], 403)
+        self.assertEqual(local.request(path, {'public_key':local.public_key}, cross_site=True, local=True)[0], 403)
+
     def test_guest_routes_do_not_inherit_or_require_ambient_sso_authority(self):
         self.start()
         admin, _ = self.administrator()
@@ -1272,6 +1456,9 @@ class OidcIsolation(unittest.TestCase):
         user = Browser(self.base); self.login(user)
         path = self.state / "data/MoonlightWeb/MoonlightWeb/sessions.json"
         saved = path.with_suffix(".saved"); path.rename(saved); path.mkdir()
+        journal = next(self.state.rglob('session-revocations.json'))
+        journal_saved = journal.read_bytes()
+        journal.unlink(); journal.mkdir()
         token = self.logout_token()
         try:
             self.assertEqual(self.notify_logout(token), 503)
@@ -1279,6 +1466,7 @@ class OidcIsolation(unittest.TestCase):
             self.assertIsNone(self.process.poll())
         finally:
             path.rmdir(); saved.rename(path)
+            journal.rmdir(); journal.write_bytes(journal_saved); journal.chmod(0o600)
         self.start(); user.base = self.base
         self.assertFalse(user.request("/api/auth/status")[1]["authenticated"])
         self.assertEqual(self.notify_logout(token), 200)

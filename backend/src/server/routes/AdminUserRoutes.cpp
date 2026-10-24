@@ -169,8 +169,12 @@ void registerAdminUserRoutes(HttpServer& server, AuthManager& auth, ComputerMana
         if (!req.isLocal) return HttpResponse::error(403, "Administrator access required");
         const auto id = req.pathParams.value("id");
         if (!auth.users().contains(id)) return HttpResponse::error(404, "User not found");
-        auth.revokeUserSessions(id);
-        return HttpResponse::json({{"status", "ok"}});
+        try {
+            auth.revokeUserSessions(id);
+            return HttpResponse::json({{"status", "ok"}});
+        } catch (const std::exception&) {
+            return HttpResponse::error(503, "session_persistence_failed");
+        }
     });
     router->del("/api/admin/users/:id", [&auth, &computers, &pool](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Administrator access required");

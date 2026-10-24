@@ -331,6 +331,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                                       req.viaTunnel ? QStringLiteral("Host machine (remote link)")
                                                     : QStringLiteral("Host machine"),
                                       true, false, req.viaTunnel);
+        if (token.isEmpty()) return HttpResponse::error(503, "session_persistence_failed");
         Logger::info(QStringLiteral("[Auth] Host session created for %1 (via host key)").arg(addr));
 
         // Single-use: burn the redeemed key and rewrite the entry points that
