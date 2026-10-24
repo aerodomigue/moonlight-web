@@ -46,5 +46,24 @@ try {
     assert.equal(results[0].rawAnswerWorks, true);
     assert.equal(results[0].offerHasAudioRed, true);
     assert.deepEqual(results[0].applicationErrors, []);
+    assert.deepEqual(results[1].errors, ['identity_refused']);
+    const localPage = await browser.newPage({ignoreHTTPSErrors:true});
+    await localPage.goto(process.argv[2].replace('127.0.0.1','localhost') + '/js/util/pairingCrypto.js');
+    const boot = await localPage.evaluate(async () => {
+        const p = await import('/js/util/pairingCrypto.js');
+        const identity = await p.loadOrCreateIdentity();
+        const stale = await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'}, false, ['sign','verify']);
+        const publicKey = new Uint8Array(await crypto.subtle.exportKey('spki',stale.publicKey));
+        const oldId = p.bytesToBase64(await crypto.subtle.digest('SHA-256',publicKey)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+        await p.rememberHostIdentity(p.bytesToBase64(publicKey),oldId);
+        const {BackendClient} = await import('/js/api/BackendClient.js');
+        const status = await BackendClient.getAuthStatus();
+        const renewed = await p.loadOrCreateIdentity();
+        return {session:status.has_session, bound:status.browser_key_id===renewed.keyId,
+            keyPreserved:identity.keyId===renewed.keyId, hostMatches:renewed.hostId===status.host_id,
+            hostReplaced:oldId!==renewed.hostId, error:status.identity_error};
+    });
+    assert.deepEqual(boot,{session:true,bound:true,keyPreserved:true,hostMatches:true,hostReplaced:true,error:undefined});
+    console.log('PASS: direct local bootstrap binds a session and renews the old host pin; unsigned offers remain refused.');
     for (const result of results) console.log(JSON.stringify(result));
 } finally { await browser.close(); }

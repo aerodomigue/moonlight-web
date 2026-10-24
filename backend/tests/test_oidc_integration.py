@@ -1134,6 +1134,26 @@ class OidcIsolation(unittest.TestCase):
         for path in ["/ws", "/ws1", "/ws/stream", "/ws/control"]: self.assertEqual(copied.request(path, extra_headers=websocket)[0], 401)
         self.assertTrue(admin.request("/api/auth/status")[1]["admin_access"])
 
+    def test_local_session_binds_a_key_without_exempting_remote_or_proxy_clients(self):
+        self.start()
+        local = Browser(self.base.replace('127.0.0.1', 'localhost'))
+        status = local.request('/api/auth/status', local=True)[1]
+        self.assertTrue(status['is_host_machine'])
+        self.assertFalse(status['has_session'])
+        path = '/api/auth/local-session'
+        code, bound, _ = local.request(path, {'public_key':local.public_key}, local=True)
+        self.assertEqual(code, 200)
+        self.assertTrue(bound['identity_renewal_available'])
+        current = local.request('/api/auth/status', local=True)[1]
+        self.assertTrue(current['has_session'])
+        self.assertEqual(current['auth_method'], 'host')
+        self.assertEqual(current['browser_key_id'], b64(hashlib.sha256(local.public_der).digest()))
+        self.assertEqual(local.request('/api/auth/identity/renew', {'public_key':local.public_key}, local=True)[0], 200)
+        remote = Browser(self.base)
+        for headers in ({}, {'X-Forwarded-For':'10.2.100.122'}, {'X-Forwarded-For':'127.0.0.1'}):
+            self.assertEqual(remote.request(path, {'public_key':remote.public_key}, extra_headers=headers)[0], 403)
+        self.assertEqual(local.request(path, {'public_key':local.public_key}, cross_site=True, local=True)[0], 403)
+
     def test_guest_routes_do_not_inherit_or_require_ambient_sso_authority(self):
         self.start()
         admin, _ = self.administrator()

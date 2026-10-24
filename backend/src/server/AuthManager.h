@@ -291,6 +291,8 @@ public:
     QByteArray sessionPairingKey(const QString& token) const;
     bool authorizeIdentityRenewal(const QString& token, const QByteArray& hostSpki,
                                   qint64 nowSecs = 0);
+    // Only after direct host-machine verification; never for a restored cookie.
+    bool authorizeLocalIdentityRenewal(const QString& token, const QByteArray& hostSpki);
     bool canRenewIdentity(const QString& token, const QByteArray& browserSpki,
                           const QByteArray& hostSpki, qint64 nowSecs = 0) const;
     /** Revoke a session by its opaque id (the value exposed in sessions()/toJson,

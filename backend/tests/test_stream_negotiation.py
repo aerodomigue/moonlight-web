@@ -5,6 +5,7 @@ No video connection or real host is used. ANNOUNCE is rejected deliberately afte
 recording its numeric preferences; session keys and cookies are never printed.
 """
 import importlib.util
+import json
 from pathlib import Path
 import re
 import socketserver
@@ -70,7 +71,7 @@ class Host(fixture.Fixture):
 def run():
     fixture.OidcIsolation.setUpClass()
     try:
-        for existing, measured in [(False, 240000), (True, 239760), (True, 0)]:
+        for existing, measured, worker in [(False, 240000, True), (True, 239760, True), (True, 0, True), (False, 240000, False)]:
             rtsp = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Rtsp)
             rtsp.daemon_threads = True
             threading.Thread(target=rtsp.serve_forever, daemon=True).start()
@@ -78,6 +79,7 @@ def run():
             rtsp.methods = []
             case = fixture.OidcIsolation('test_authentication_modes')
             case.setUp()
+            (case.state / 'settings.json').write_text(json.dumps({'stream_worker_enabled':worker}))
             try:
                 for server in (case.pc, case.issuer_server):
                     server.RequestHandlerClass = Host
@@ -142,7 +144,7 @@ def run():
                                     (b'x-nv-vqos[0].bw.maximumBitrateKbps', b'80000'),
                                     (b'x-nv-video[0].clientRefreshRateX100', str((measured + 5)//10 if measured else 24000).encode())]:
                     assert a.get(name) == value, f'Incorrect RTSP {name.decode()}: {a.get(name)!r}'
-                print(f'PASS: {path}/RTSP preserve 3840x2160, 240 FPS, configured 100000 kbit/s; client refresh {measured or 240000} mHz.')
+                print(f'PASS: worker={worker} {path}/RTSP preserve 3840x2160, 240 FPS, configured 100000 kbit/s; client refresh {measured or 240000} mHz.')
             finally:
                 case.tearDown()
                 rtsp.shutdown()

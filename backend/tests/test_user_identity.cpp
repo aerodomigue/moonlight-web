@@ -551,6 +551,13 @@ void run_user_identity_tests()
     const auto hostToken = renewal.createSession("10.2.10.90", "Host", true);
     CHECK(renewal.bindSessionKey(hostToken, browserKey));
     CHECK(!renewal.authorizeIdentityRenewal(hostToken, hostKey, 1000));
+    CHECK(!renewal.authorizeLocalIdentityRenewal(hostToken, hostKey));
+    const auto localToken = renewal.createSession("127.0.0.1", "Local browser", true, true);
+    CHECK(!renewal.authorizeLocalIdentityRenewal(localToken, hostKey));
+    CHECK(renewal.bindSessionKey(localToken, browserKey));
+    CHECK(renewal.authorizeLocalIdentityRenewal(localToken, hostKey));
+    CHECK(renewal.canRenewIdentity(localToken, browserKey, hostKey));
+    CHECK(!renewal.canRenewIdentity(localToken, otherKey, hostKey));
 
     SECTION("Only the OIDC callback allows a cross-site GET");
     HttpRequest req;

@@ -3739,6 +3739,11 @@ int main(int argc, char* argv[])
             s->setFollowDisplayShape(body["follow_display_shape"].toBool(false));
             s->setFrameFit(reqFitBox, reqAllowUpscale, reqMatchDisplay, reqFallbackW, reqFallbackH);
             s->setClientKind(clientKind);
+            // The in-process path needs the same MW-BIND context as a worker.
+            const auto signingKey = appSettings.hostSigningKeyPem();
+            s->setPairingIdentity(
+                PairingCrypto::keyId(PairingCrypto::publicKeySpkiFromPrivatePem(signingKey)),
+                signingKey, authManager.sessionPairingKey(sessionToken));
             // See the worker path: the administrator-window gate.
             s->setViewerAdmin(req.isLocal);
             // The desktop portal consent this installation already holds, and

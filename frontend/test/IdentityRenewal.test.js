@@ -72,3 +72,45 @@ describe('Renew server identity after PIN or OIDC login', () => {
         expect(BackendClient.post).toHaveBeenCalledWith('/api/auth/pairing-key', { public_key: browser.publicKeyBase64 });
     });
 });
+
+describe('Direct host access establishes a bound local session', () => {
+    it('renews an old pin only after the backend creates a local key-bound session', async () => {
+        BackendClient.get.mockResolvedValue({
+            ...identity,
+            authenticated: true,
+            is_host_machine: true,
+            has_session: false,
+        });
+        BackendClient.post.mockImplementation(async (path) =>
+            path === '/api/auth/local-session'
+                ? { ...identity, browser_key_id: browser.keyId, identity_renewal_available: true }
+                : identity,
+        );
+        const result = await BackendClient.getAuthStatus();
+        expect(BackendClient.post).toHaveBeenCalledWith('/api/auth/local-session', {
+            public_key: browser.publicKeyBase64,
+        });
+        expect(rememberHostIdentity).toHaveBeenCalledWith(
+            identity.host_public_key,
+            identity.host_id,
+            expect.objectContaining({ replace: true }),
+        );
+        expect(result.has_session).toBe(true);
+        expect(result.identity_error).toBeUndefined();
+    });
+    it('does not bootstrap a remote viewer and cannot replace its cached identity', async () => {
+        BackendClient.get.mockResolvedValue({
+            ...identity,
+            authenticated: true,
+            is_host_machine: false,
+            has_session: false,
+        });
+        await BackendClient.getAuthStatus();
+        expect(BackendClient.post).not.toHaveBeenCalled();
+        expect(rememberHostIdentity).toHaveBeenCalledWith(
+            identity.host_public_key,
+            identity.host_id,
+            expect.not.objectContaining({ replace: true }),
+        );
+    });
+});

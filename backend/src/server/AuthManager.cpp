@@ -1103,6 +1103,19 @@ bool AuthManager::authorizeIdentityRenewal(const QString& token, const QByteArra
     return true;
 }
 
+bool AuthManager::authorizeLocalIdentityRenewal(const QString& token, const QByteArray& hostSpki)
+{
+    if (!validateSession(token) || !PairingCrypto::isValidP256Spki(hostSpki)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    if (it->authMethod != "host" || !it->isHost || !it->ephemeral ||
+        it->userId != UserStore::localId() || it->pairingKey.isEmpty())
+        return false;
+    it->renewalHostKey = hostSpki;
+    it->renewalIssuedAt = QDateTime::currentSecsSinceEpoch();
+    it->renewalRevision = m_configRevision;
+    return true;
+}
+
 bool AuthManager::canRenewIdentity(const QString& token, const QByteArray& browserSpki,
                                    const QByteArray& hostSpki, qint64 nowSecs) const
 {

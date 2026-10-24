@@ -718,14 +718,21 @@ export class BackendClient {
             this.currentUser = status.user;
         }
         this.pinEnabled = status.pin_enabled !== false;
-        if (
-            status.authenticated &&
-            status.host_public_key &&
-            (!status.is_host_machine || status.has_session)
-        ) {
+        if (status.authenticated && status.host_public_key) {
             try {
                 const identity = await loadOrCreateIdentity();
                 if (!identity) throw this._identityError('identityStorageUnavailable');
+                if (status.is_host_machine && !status.has_session) {
+                    const local = await this.post('/api/auth/local-session', {
+                        public_key: identity.publicKeyBase64,
+                    });
+                    if (
+                        local.browser_key_id !== identity.keyId ||
+                        local.identity_renewal_available !== true
+                    )
+                        throw this._identityError('identityRenewalFailed');
+                    Object.assign(status, local, { has_session: true });
+                }
                 if (status.browser_key_id && status.browser_key_id !== identity.keyId)
                     throw this._identityError('identityBrowserKeyChanged');
                 if (status.identity_renewal_available) {

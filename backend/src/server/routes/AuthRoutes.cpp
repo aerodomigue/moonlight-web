@@ -105,6 +105,42 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 {
     new OidcClient(authManager, server, settings);
 
+    server.router()->post(
+        "/api/auth/local-session", [&authManager, &settings](const HttpRequest& req) {
+            // Only the backend's direct host-machine decision can authorize this.
+            // A private address forwarded by a proxy or tunnel never qualifies.
+            if (!req.isHostMachine || req.viaProxy || req.viaTunnel)
+                return HttpResponse::error(403, "Direct host-machine access required");
+            const auto body = QJsonDocument::fromJson(req.body).object();
+            const auto key = QByteArray::fromBase64(body["public_key"].toString().toLatin1());
+            if (!PairingCrypto::isValidP256Spki(key))
+                return HttpResponse::error(400, "Invalid browser pairing key");
+            const auto hostKey = settings.hostSigningPublicKey();
+            if (!PairingCrypto::isValidP256Spki(hostKey))
+                return HttpResponse::error(503, "Host identity unavailable");
+            auto token = HttpServer::sessionTokenFromRequest(req);
+            const bool created = !authManager.validateSession(token);
+            if (created)
+                token = authManager.createSession(req.clientAddress, "Local browser", true, true);
+            else if (!authManager.isHostSession(token))
+                return HttpResponse::error(409, "A different authenticated session already exists");
+            if (token.isEmpty() || !authManager.bindSessionKey(token, key)) {
+                if (created) authManager.logoutSession(token);
+                return HttpResponse::error(409, "Browser key could not be bound");
+            }
+            if (!authManager.authorizeLocalIdentityRenewal(token, hostKey)) {
+                if (created) authManager.logoutSession(token);
+                return HttpResponse::error(503, "Local identity authorization unavailable");
+            }
+            auto response =
+                HttpResponse::json({{"host_public_key", QString::fromLatin1(hostKey.toBase64())},
+                                    {"host_id", PairingCrypto::keyId(hostKey)},
+                                    {"browser_key_id", PairingCrypto::keyId(key)},
+                                    {"identity_renewal_available", true}});
+            if (created) response.headers["Set-Cookie"] = sessionCookie(token, false);
+            return response;
+        });
+
     server.router()->post("/api/auth/identity/renew", [&authManager,
                                                        &settings](const HttpRequest& req) {
         const auto error = [](int status, const QString& message) {
