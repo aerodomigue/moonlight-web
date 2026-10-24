@@ -3,6 +3,93 @@
 Date : 24 octobre 2026. Référence examinée :
 `a7fbb7c7d353b902d1b947a68229bec31c130563` (PR #6 fusionnée).
 
+## Reprise de la PR après les livraisons #8 et #9
+
+La branche est remise à niveau sur `main` après le cycle SSO livré par #9.
+Les constats ci-dessous décrivent leur reproduction historique ; l’état actuel
+est suivi séparément pour ne pas confondre rapport et correctifs :
+
+| Constat | État de la reprise |
+| --- | --- |
+| A1 | Corrigé et testé en PIN mémorisé : journal de révocation indépendant, reprise après redémarrage refusée, réponse 503 et possibilité de réessayer si les deux écritures échouent. |
+| A2 | Corrigé : erreur contrôlée 503 sur révocation non persistée ; exceptions de dispatch contenues sans arrêt du processus ni double réponse. |
+| A3 | Corrigé et testé : identité vide/erreur explicite si lecture ou enregistrement impossibles, création atomique sous verrou, aucune rotation silencieuse. |
+| A4 | Corrigé dans le code et testé : l’IP LAN résolue par un proxy approuvé reste LAN pour ICE ; les en-têtes non approuvés restent conservateurs. |
+| A5 | Corrigé et validé dans Chromium : préserver RED audio, retirer les payloads vidéo de réparation avec leur RTX, leurs attributs et leur m-line. |
+| A6 | Corrigé et validé en intégration/Chromium : une session locale éphémère est liée à la clé navigateur avant le flux ; aucune exemption de signature n’est ajoutée. Le chemin sans worker reçoit aussi le contexte MW-BIND. |
+
+### Résolution, FPS et débit GameStream
+
+Reproduction utilisateur : écran 3840×2160 à 240 Hz, résolution Auto, **240 FPS
+fixes** et débit manuel de 100 Mbit/s. Les logs natifs montrent des demandes à
+1080p120, dont certaines à 100 000 kbit/s. Quatre défauts de transmission/politique
+sont corrigés dans des commits distincts :
+
+- Auto imposait 1080p aux hôtes GameStream. Sur ordinateur, il utilise désormais
+  la taille physique de l’écran jusqu’à 2160 lignes ; les replis mobile, TV et
+  écran inconnu sont conservés.
+- Le budget générique de pixels pouvait réduire le FPS manuel. Il s’applique
+  désormais seulement lorsque résolution **et** FPS sont automatiques. Les
+  limites de décodeur réellement détectées et la dégradation de congestion
+  restent des mécanismes séparés ; aucun débit manuel n’est remplacé par une
+  estimation lors de la résolution des paramètres.
+- `/resume` omettait `mode`, laissant Apollo choisir son mode de repli. Il
+  transmet maintenant la même résolution/fréquence que `/launch`, avec `sops=1`.
+- RTSP annonçait toujours une fréquence client de 60 Hz. La mesure du navigateur
+  est maintenant transmise en centihertz ; sans mesure, le FPS demandé sert de repli.
+
+`test_stream_negotiation.py` capture de vrais échanges HTTPS et `ANNOUNCE` RTSP
+sur loopback : 3840×2160, 240 FPS, débit configuré 100 000 kbit/s, mesure 240 Hz,
+mesure fractionnaire 239,76 Hz et absence de mesure. Le lancement sans worker est
+également couvert. La fixture rejette délibérément ANNOUNCE après capture : elle
+ne prouve pas la cadence effectivement encodée/décodée sur le matériel réel.
+
+Le débit demandé est un plafond, distinct du débit vidéo mesuré. La bibliothèque
+transmet bien `x-ml-video.configuredBitrateKbps=100000` et le budget historique
+vidéo de 80 000 kbit/s. Apollo ajuste ensuite FEC/audio/contrôle ; une valeur
+mesurée inférieure ne démontre donc pas, à elle seule, un réglage perdu. La
+validation réelle doit distinguer demande, mode d’affichage, cadence des images
+et trafic mesuré sous mouvement.
+
+### Persistance et revue des interactions
+
+La révocation inscrit des identifiants opaques dans un journal privé distinct du
+répertoire des sessions (`AppConfigLocation/security/session-revocations.json`,
+fichier 0600, répertoire 0700). Un redémarrage filtre ces identifiants avant de
+restaurer les sessions PIN. Les marqueurs ne sont nettoyés qu’après remplacement
+atomique du fichier canonique. Un journal illisible ou corrompu interdit la
+restauration et la création de sessions persistantes. Les sessions SSO restaurées
+restent soumises à une nouvelle validation OIDC.
+
+Une réponse de révocation réussie exige au moins une écriture durable. Si les
+deux emplacements sont indisponibles, l’accès est bloqué en mémoire, l’API répond
+503 sans effacer le cookie, et l’écran permet de réessayer après réparation. Une
+panne totale du stockage suivie d’un arrêt brutal ne permet pas de promettre une
+révocation durable : aucune réussite n’est annoncée dans ce cas. Création et
+rattachement d’une clé refusent également une persistance échouée.
+
+La revue vérifie les deux chemins worker/sans worker, les unités Hz/mHz/centihertz,
+les appels launch/resume, la distinction débit configuré/trafic mesuré, les règles
+proxy appliquées uniquement à ICE, les sections audio/vidéo SDP et les parcours
+PIN/SSO/admin existants. Aucun secret, certificat ou identifiant utilisateur
+n’est remplacé par ces changements. Les exceptions attrapées par le routeur sont
+celles de l’invocation du handler ; les callbacks asynchrones ultérieurs conservent
+leur gestion d’erreur propre.
+
+Validation locale : 40 cas d’intégration HTTPS OIDC/PIN, cinq cibles CTest dont
+quatre captures HTTPS/RTSP, parcours Chromium en français (rôles, revalidation,
+cookie copié, déconnexion et renouvellement d’identité), lint/traductions et
+analyse statique des fichiers modifiés. La suite backend atteint 17 062/17 067
+assertions ; les cinq seuls échecs Linux sont les chemins Steam Windows déjà
+présents (`test_launcher_detect.cpp:54–58`). Les 1 670 tests frontend passent (couverture de la sélection : 93,4 %),
+avec 1 121 clés de traduction cohérentes en anglais, français et chinois. Les
+contrôles GitHub seront consignés dans la PR avant fusion.
+
+Les six reproductions ont un correctif et des tests locaux. Restent la validation
+du commit final sur GitHub, son déploiement natif sauvegardé et les essais matériels
+sur Apollo : 4K/240, débit sous mouvement, accès LAN/extérieur et flux réellement
+signé. Les fixtures arrêtent volontairement la négociation avant le flux vidéo.
+
 ## Livraison préalable et méthode
 
 Le correctif PIN/SSO a été déployé **avant cet audit**, comme demandé :

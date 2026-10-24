@@ -1,9 +1,11 @@
 # Runtime audit probes
 
 Run from the repository root after building `build/MoonlightWeb`. These are
-diagnostic reproductions, not assertions that the current faulty behavior should
-be preserved. They print observations; a zero process exit code means the probe
-ran, **not** that the application passed a regression test.
+reproductions of the original findings. `storage.py` now runs regression
+assertions for durable PIN revocation and host identity persistence. `browser.py`
+asserts valid audio RED SDP and renewal of a direct local browser's identity;
+its unsigned-offer refusal is an expected security check. `revoke.py` and
+`peer_policy.py` print observations: their zero exit code alone is not a pass.
 
 ```sh
 python3 backend/tests/audit_runtime/storage.py
@@ -22,5 +24,5 @@ VM, browser profile or Apollo machine is accessed. Credentials are not printed.
 The peer-policy probe requires a C++ compiler and Qt 6 Core/Network development
 packages. It compiles the exact current function into a temporary executable.
 
-Recorded observations and required future regression tests are described in
+Historical observations and the current remediation status are described in
 `docs/design/post-identity-renewal-audit.md`.
