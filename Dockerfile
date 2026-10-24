@@ -57,6 +57,8 @@ RUN apt-get update \
         cmake \
         git \
         ninja-build \
+        python3 \
+        openssl \
         pkg-config \
         libssl-dev \
         qt6-base-dev \

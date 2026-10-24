@@ -32,6 +32,16 @@ describe('AdminView sessions sort', () => {
         view._renderSessionsTable();
     });
 
+    it('shows the account and method without interpreting identity claims as HTML', () => {
+        view._sessions[0].user_name = '<img src=x onerror=alert(1)>';
+        view._sessions[0].auth_method = 'sso';
+        view._renderSessionsTable();
+        const row = container.querySelector('tr[data-token="a"]');
+        expect(row.textContent).toContain('<img src=x onerror=alert(1)>');
+        expect(row.textContent).toContain('sso');
+        expect(row.querySelector('img')).toBeNull();
+    });
+
     it('keeps the backend order until a header is clicked', () => {
         expect(names()).toEqual(['zeta', 'Alpha', 'mid']);
     });

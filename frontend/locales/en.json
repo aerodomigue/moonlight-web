@@ -356,6 +356,10 @@
         "quitFailed": "Could not quit {{name}} on the host."
     },
     "login": {
+        "usePin": "Sign in with PIN",
+        "ssoError": "SSO sign-in failed. Please try again.",
+        "useSso": "Sign in with SSO",
+        "chooseMethod": "Choose how to sign in",
         "connecting": "Connecting to server...",
         "serverSelection": "Server selection",
         "serverCurrent": "This server",
@@ -397,6 +401,8 @@
         "paired": "Paired successfully!"
     },
     "settings": {
+        "accountPinValue": "PIN: {pin} — valid once, for 5 minutes.",
+        "accountPin": "Generate a pairing PIN for my account",
         "title": "Streaming Settings",
         "video": "Video",
         "advanced": "Advanced",

@@ -76,6 +76,7 @@ const RIDE_OUT_LOSS = true;
  */
 
 import { loadOrCreateIdentity, rememberHostIdentity } from '../util/pairingCrypto.js';
+import { acceptAccount } from '../util/authAccountState.js';
 import {
     CANVAS_TEARING_IS_REAL,
     decoderRidesOutGaps,
@@ -92,6 +93,8 @@ export class BackendClient {
        below: "the session went away" is only a story that makes sense if there
        was one to begin with. */
     static _hadSession = false;
+    static currentUser = null;
+    static pinEnabled = true;
 
     /**
      * The host's admin key, or null when this browser is not entitled to one
@@ -602,6 +605,25 @@ export class BackendClient {
     /** @param {boolean} remember Keep the session across browser restarts (the
      *  default). False asks the server for a session-scoped cookie and a short
      *  server-side lifetime — for a machine the visitor does not own. */
+    static async beginSso(machineName, remember = true) {
+        const identity = await loadOrCreateIdentity();
+        const result = await this.post('/api/auth/oidc/prepare', {
+            machine_name: machineName,
+            remember,
+            public_key: identity?.publicKeyBase64 || undefined,
+        });
+        try {
+            sessionStorage.removeItem('mw-sso-logged-out');
+        } catch {
+            /* optional storage */
+        }
+        return result.authorization_url;
+    }
+
+    static async generateAccountPin() {
+        return this.post('/api/auth/pin', {});
+    }
+
     static async validatePin(pin, machineName, remember = true) {
         const identity = await loadOrCreateIdentity();
         const resp = await this.post('/api/auth/validate', {
@@ -615,6 +637,10 @@ export class BackendClient {
         });
         if (resp?.host_public_key) {
             await rememberHostIdentity(resp.host_public_key, resp.host_id);
+        }
+        if (resp?.user) {
+            acceptAccount(resp.user);
+            this.currentUser = resp.user;
         }
         // Credentials accepted is a session held, and the application carries on
         // from here without asking /api/auth/status again.
@@ -673,6 +699,14 @@ export class BackendClient {
     }
     static async getAuthStatus() {
         const status = await this.get('/api/auth/status');
+        if (status.user) {
+            acceptAccount(status.user);
+            this.currentUser = status.user;
+        }
+        this.pinEnabled = status.pin_enabled !== false;
+        if (status.host_public_key) {
+            await rememberHostIdentity(status.host_public_key, status.host_id);
+        }
         // The one place that can say so. Everything else the application does is
         // downstream of this answer.
         if (status.authenticated || status.is_localhost) this._hadSession = true;
@@ -683,6 +717,11 @@ export class BackendClient {
     /** End this browser's own session and clear its cookie. Works from anywhere
      *  (no localhost gate) — it is the visitor's way out of a public machine. */
     static async logout() {
+        try {
+            sessionStorage.setItem('mw-sso-logged-out', '1');
+        } catch {
+            /* optional browser storage */
+        }
         return this.post('/api/auth/logout');
     }
     /** Redeem the host key (?mwk=... from the host machine's own entry points)
@@ -814,6 +853,10 @@ export class BackendClient {
         }
         // Credentials accepted is a session held, and the application carries on
         // from here without asking /api/auth/status again.
+        if (resp?.user) {
+            acceptAccount(resp.user);
+            this.currentUser = resp.user;
+        }
         this._hadSession = true;
         return resp;
     }

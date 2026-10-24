@@ -65,6 +65,30 @@ void run_host_persistence_tests()
     QTemporaryDir tmp;
     CHECK(tmp.isValid());
 
+    // Private registrations for the same physical PC retain separate ownership,
+    // keys and settings after a restart; old entries migrate to the local owner.
+    {
+        auto alice = makeHost();
+        alice.uuid = "alice-registration";
+        alice.physicalUuid = "shared-pc";
+        alice.ownerId = "alice";
+        alice.identitySeat = "alice-client-certificate";
+        alice.customName = "Alice PC";
+        NvComputer restored;
+        roundTrip(alice, restored, tmp.path());
+        CHECK_EQ(restored.uuid, alice.uuid);
+        CHECK_EQ(restored.physicalUuid, alice.physicalUuid);
+        CHECK_EQ(restored.ownerId, alice.ownerId);
+        CHECK_EQ(restored.identitySeat, alice.identitySeat);
+        CHECK_EQ(restored.customName, alice.customName);
+        QSettings legacy(tmp.filePath("legacy.ini"), QSettings::IniFormat);
+        legacy.setValue("uuid", "old-pc");
+        NvComputer old(legacy);
+        CHECK_EQ(old.ownerId, QString("local-owner"));
+        CHECK_EQ(old.physicalUuid, QString("old-pc"));
+        CHECK(old.identitySeat.isEmpty());
+    }
+
     // --- The address that answered survives, and stays the one we poll first ---
     {
         NvComputer restored;

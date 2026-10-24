@@ -116,6 +116,7 @@ void NvPairingManager::openConnection(const QString& scheme, const QString& comm
     url.setQuery(query);
 
     QNetworkRequest req(url);
+    req.setRawHeader("X-MW-Internal-Fetch", "1");
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
     // On timeout the reply finishes with OperationCanceledError — surfaced to
     // `cb` as an error string, no separate timer needed.

@@ -62,6 +62,8 @@ add_executable(run_tests
     test_host_app_image.cpp
     test_log_archive.cpp
     test_auth_manager.cpp
+    test_user_identity.cpp
+    test_oidc_token.cpp
     test_connection_guard.cpp
     test_static_files.cpp
     test_home_screen_shell.cpp
@@ -134,6 +136,9 @@ add_executable(run_tests
     ${_src}/src/server/RestRouter.cpp
     ${_src}/src/server/AppSettings.cpp
     ${_src}/src/server/AuthManager.cpp
+    ${_src}/src/server/AuthConfig.cpp
+    ${_src}/src/server/UserStore.cpp
+    ${_src}/src/server/OidcToken.cpp
     # The local self-signed cert: its key outlives a restart (clients pin it).
     ${_src}/src/server/CertManager.cpp
     ${_src}/src/server/ConnectionGuard.cpp

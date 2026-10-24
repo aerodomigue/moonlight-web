@@ -35,6 +35,7 @@ export default defineConfig({
             reportsDirectory: 'coverage',
             // In-scope, deterministic logic — the only files the gate measures.
             include: [
+                'js/util/authAccountState.js',
                 'js/util/Av1Utils.js',
                 'js/util/Mp4Muxer.js',
                 'js/util/BrowserDetect.js',

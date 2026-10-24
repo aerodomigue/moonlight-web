@@ -51,6 +51,11 @@ export class LoginView {
         this._machineName = '';
         this._certAuthAvailable = false; // Server has cert auth enabled
         this._certMode = false; // User chose cert upload mode
+        this._pinEnabled = true;
+        this._ssoEnabled = false;
+        this._selectedMethod = 'pin';
+        this._ssoOrigin = '';
+
         this._selectedFileName = '';
         this._localUrl = ''; // https://localhost[:port] — the host machine's way back in
         // The other machines this browser has already been to (see _renderServerField).
@@ -63,6 +68,7 @@ export class LoginView {
         // then dies with the browser and the server expires the session in hours
         // rather than 90 days.
         this._remember = true;
+        this._destroyed = false;
     }
 
     async start() {
@@ -95,6 +101,14 @@ export class LoginView {
             }
             this._loading = false;
             this._certAuthAvailable = status.cert_auth_enabled || false;
+            this._pinEnabled = status.pin_enabled !== false;
+            this._ssoEnabled = status.sso_enabled === true;
+            this._ssoOrigin = status.sso_origin || '';
+            this._selectedMethod = this._ssoEnabled ? (this._pinEnabled ? '' : 'sso') : 'pin';
+            const query = new URLSearchParams(window.location.search);
+            const error = query.has('auth_error');
+            if (error) this._error = t('login.ssoError');
+
             this._remaining = status.remaining !== undefined ? status.remaining : 3;
             if (status.lockout_seconds > 0) {
                 this._startLockoutTimer(status.lockout_seconds);
@@ -102,6 +116,20 @@ export class LoginView {
             this.render();
             this.bindEvents();
             this._focusInput();
+            let loggedOut = false;
+            try {
+                loggedOut = sessionStorage.getItem('mw-sso-logged-out') === '1';
+            } catch {
+                /* optional storage */
+            }
+            if (
+                this._ssoEnabled &&
+                !error &&
+                !loggedOut &&
+                (!this._pinEnabled || query.get('sso') === '1')
+            ) {
+                await this._beginSso();
+            }
         } catch (err) {
             console.warn('[Login] Failed to check auth status:', err);
             this._loading = false;
@@ -112,6 +140,7 @@ export class LoginView {
     }
 
     destroy() {
+        this._destroyed = true;
         this._releaseServerField();
         this._stopLockoutTimer();
         this._releaseSubmitInView();
@@ -223,14 +252,23 @@ export class LoginView {
                                 <p>${t('login.connecting')}</p>
                             </div>
                         `
-                                : this._certMode
-                                  ? this._renderCertForm()
-                                  : this._renderPinForm()
+                                : this._ssoEnabled && !this._selectedMethod
+                                  ? this._renderMethodChoice()
+                                  : this._selectedMethod === 'sso'
+                                    ? this._renderSsoForm()
+                                    : this._certMode
+                                      ? this._renderCertForm()
+                                      : this._renderPinForm()
                         }
                     </div>
 
                     ${
-                        !this._loading && this._certAuthAvailable
+                        !this._loading && this._ssoEnabled && this._selectedMethod === 'pin'
+                            ? `<button id="btn-login-sso" class="btn btn-link">${t('login.useSso')}</button>`
+                            : ''
+                    }
+                    ${
+                        !this._loading && this._certAuthAvailable && this._selectedMethod === 'pin'
                             ? `
                         <div id="login-method-toggle" class="u-mt-3 u-center">
                             <button id="btn-toggle-auth-method" class="btn btn-link">
@@ -246,7 +284,7 @@ export class LoginView {
                     }
 
                     ${
-                        !this._loading && !this._certMode
+                        !this._loading && !this._certMode && this._selectedMethod === 'pin'
                             ? `
                         <p class="login-hint">${t('login.pinHint')}</p>
                     `
@@ -403,6 +441,48 @@ export class LoginView {
      * unchecking is the deliberate act of someone on a machine they are about to
      * walk away from, and the hint spells out what they get for it.
      */
+    _renderMethodChoice() {
+        return `<p>${t('login.chooseMethod')}</p>
+            <button id="btn-login-pin" class="btn btn-neutral">${t('login.usePin')}</button>
+            <button id="btn-login-sso" class="btn btn-neutral">${t('login.useSso')}</button>
+            ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}`;
+    }
+
+    _renderSsoForm() {
+        return `${this._renderRememberField()}
+            ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
+            <button id="btn-login-sso" class="btn btn-neutral" ${this._submitting ? 'disabled' : ''}>${t('login.useSso')}</button>`;
+    }
+
+    _navigate(url) {
+        window.location.assign(url);
+    }
+
+    async _beginSso() {
+        if (this._submitting) return;
+        if (this._ssoOrigin && window.location.origin !== this._ssoOrigin) {
+            this._navigate(`${this._ssoOrigin}/?sso=1`);
+            return;
+        }
+        this._selectedMethod = 'sso';
+        this._submitting = true;
+        this._error = '';
+        this.render();
+        this.bindEvents();
+        try {
+            const url = await BackendClient.beginSso(this._machineName, this._remember);
+            if (this._destroyed) return;
+            if (!url || new URL(url).protocol !== 'https:') throw new Error('Invalid SSO URL');
+            this._navigate(url);
+        } catch {
+            if (this._destroyed) return;
+            this._submitting = false;
+            this._error = t('login.ssoError');
+            this.render();
+            this.bindEvents();
+        }
+    }
+
     _renderRememberField() {
         return `
             <div class="login-field login-remember">
@@ -462,6 +542,16 @@ export class LoginView {
     }
 
     bindEvents() {
+        this.container.querySelector('#btn-login-pin')?.addEventListener('click', () => {
+            this._selectedMethod = 'pin';
+            this.render();
+            this.bindEvents();
+            this._focusInput();
+        });
+        this.container
+            .querySelector('#btn-login-sso')
+            ?.addEventListener('click', () => this._beginSso());
+
         const formArea = this.container.querySelector('#login-form-area');
         if (!formArea) return;
 

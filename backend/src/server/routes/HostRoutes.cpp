@@ -28,14 +28,14 @@
 
 void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
 {
-    server.router()->get("/api/hosts", [&computerManager](const HttpRequest&) {
+    server.router()->get("/api/hosts", [&computerManager](const HttpRequest& req) {
         QJsonObject obj;
-        obj["hosts"] = computerManager.getHostsJson();
+        obj["hosts"] = computerManager.getHostsJson(req.userId);
         return HttpResponse::json(obj);
     });
 
-    server.router()->post("/api/hosts/scan", [&computerManager](const HttpRequest&) {
-        computerManager.handleScanRequest();
+    server.router()->post("/api/hosts/scan", [&computerManager](const HttpRequest& req) {
+        computerManager.handleScanRequest(req.userId);
         QJsonObject obj;
         obj["status"] = "scanning";
         return HttpResponse::json(obj);
@@ -47,7 +47,7 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         QString address = body["address"].toString();
         if (address.isEmpty()) return HttpResponse::error(400, "Missing 'address' field");
 
-        auto [status, result] = computerManager.handleAddManualHost(address);
+        auto [status, result] = computerManager.handleAddManualHost(address, req.userId);
         return HttpResponse::json(result, status);
     });
 

@@ -32,6 +32,7 @@
 #include "mw/native/HidPassthrough.h"
 #include "streambackend/StreamBackendSetup.h"
 #include "IdentityManager.h"
+#include "server/UserAccess.h"
 #include "SunshineInstaller.h"
 #include "common/Logger.h"
 #include "server/AppSettings.h"
@@ -198,6 +199,8 @@ std::unique_ptr<IStreamBackend> ComputerManager::backendForHost(const QString& u
 {
     QJsonObject config;
     config[QStringLiteral("hostUuid")] = uuid;
+    if (const auto* host = findHostByUuid(uuid))
+        config[QStringLiteral("identitySeat")] = host->identitySeat;
 
     // An unconfigured host is a plain GameStream host. Keeping that the default
     // is what guarantees a Sunshine card behaves exactly as it does today.
@@ -549,7 +552,8 @@ void ComputerManager::onPollTick()
                 m_LastPairCheck[uuid] = now;
                 const NvAddress pairAddr = pollAddressFor(host);
                 if (!pairAddr.isNull()) {
-                    IdentityManager* im = IdentityManager::get();
+                    const auto identity =
+                        IdentityManager::get()->identityForSeat(host->identitySeat);
                     quint16 httpsPort =
                         host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
                     m_PendingPairChecks.insert(uuid);
@@ -559,7 +563,7 @@ void ComputerManager::onPollTick()
                                      .arg(httpsPort)
                                      .arg(host->name));
                     QNetworkReply* reply = m_Http->getAppListAsync(
-                        pairAddr, httpsPort, im->getCertificate(), im->getPrivateKey());
+                        pairAddr, httpsPort, identity.certPem, identity.keyPem);
                     reply->setProperty("mwHostUuid", uuid);
                     connect(reply, &QNetworkReply::finished, this,
                             &ComputerManager::onPairCheckFinished);
@@ -712,7 +716,9 @@ void ComputerManager::onPollReplyFinished()
 
             NvComputer newState(xml, pollAddr);
 
-            if (newState.uuid == host->uuid) {
+            if (newState.uuid == (host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid)) {
+                newState.uuid = host->uuid;
+                if (!host->identitySeat.isEmpty()) newState.pairState = host->pairState;
                 host->consecutivePollFailures = 0;
                 // This address works: update() has just made it activeAddress, so
                 // index 0 is it. Stay there until it stops answering.
@@ -849,6 +855,7 @@ void ComputerManager::stopMdnsDiscovery()
     m_MdnsServer = nullptr;
 
     m_MdnsActive = false;
+    m_ScanOwners.clear();
     Logger::info(QString("[NETWORK] mDNS discovery window closed — UDP 5353 released "
                          "(%1 service(s) seen)")
                      .arg(m_MdnsSeenThisWindow));
@@ -907,7 +914,9 @@ void ComputerManager::onMdnsResolved(MdnsPendingComputer* computer,
     QHostAddress best = chooseBestMdnsAddress(addresses);
     if (!best.isNull()) {
         NvAddress nvAddr(best, computer->port());
-        tryAddHostFromAddress(nvAddr, true, computer->hostname());
+        const auto owners = m_ScanOwners;
+        for (const auto& owner : owners)
+            tryAddHostFromAddress(nvAddr, true, computer->hostname(), owner);
     }
 
     computer->deleteLater();
@@ -916,20 +925,20 @@ void ComputerManager::onMdnsResolved(MdnsPendingComputer* computer,
 // --- Host management --------------------------------------------------------
 
 void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns,
-                                            const QString& name)
+                                            const QString& name, const QString& ownerId)
 {
     Q_UNUSED(fromMdns)
     Q_UNUSED(name)
 
     QNetworkReply* reply = m_Http->getServerInfoAsync(addr, clientUniqueId());
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, addr]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, addr, ownerId]() {
         if (reply->error() == QNetworkReply::NoError) {
             QString xml = QString::fromUtf8(reply->readAll());
 
             try {
                 NvHTTP::verifyResponseStatus(xml);
-                addOrUpdateHost(xml, addr);
+                addOrUpdateHost(xml, addr, ownerId);
             } catch (const std::exception& e) {
                 Logger::warning(
                     QString("Failed to query host at %1: %2").arg(addr.toString(), e.what()));
@@ -945,17 +954,30 @@ void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns
     });
 }
 
-void ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress& addr)
+bool ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
+                                      const QString& ownerId)
 {
     NvComputer newHost(serverInfo, addr);
 
-    if (newHost.uuid.isEmpty()) return;
+    if (newHost.uuid.isEmpty()) return false;
+    if (ownerId.isEmpty()) return false;
+    newHost.physicalUuid = newHost.uuid;
+    newHost.ownerId = ownerId;
+    newHost.uuid = UserAccess::hostId(ownerId, newHost.physicalUuid);
+    if (ownerId != UserStore::localId()) {
+        newHost.identitySeat = newHost.uuid;
+        newHost.pairState = NvComputer::PS_NOT_PAIRED;
+    }
     if (!WakeOnLan::isValidMac(newHost.macAddress))
         newHost.macAddress = WakeOnLan::resolveMac(addr.address());
 
     NvComputer* existing = findHostByUuid(newHost.uuid);
 
     if (existing) {
+        // Legacy IDs are raw physical UUIDs. Never merge a legacy/private ID
+        // collision across owners, even when a peer deliberately reports it.
+        if (existing->ownerId != ownerId) return false;
+        if (!existing->identitySeat.isEmpty()) newHost.pairState = existing->pairState;
         // Merge new data into existing host
         if (existing->update(newHost)) {
             saveHosts();
@@ -973,11 +995,36 @@ void ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
         Logger::info(QString("Host added: %1 (%2) at %3")
                          .arg(computer->name, computer->uuid, addr.toString()));
     }
+    return true;
 }
 
 NvComputer* ComputerManager::findHostByUuid(const QString& uuid) const
 {
     return m_Hosts.value(uuid, nullptr);
+}
+
+std::shared_ptr<void> ComputerManager::acquireHostLease(const QString& uuid,
+                                                        const QString& ownerId) const
+{
+    const auto* host = getHost(uuid);
+    if (!host || host->ownerId != ownerId) return {};
+    return m_HostLeases.acquire(host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid,
+                                ownerId);
+}
+
+bool ComputerManager::hostOperationBusy(const QString& uuid) const
+{
+    const auto* host = getHost(uuid);
+    return host &&
+           m_HostLeases.busy(host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid);
+}
+
+QJsonArray ComputerManager::diagnosticHostsJson() const
+{
+    QJsonArray result;
+    for (const auto* host : m_Hosts)
+        result.append(host->toJson());
+    return result;
 }
 
 NvComputer* ComputerManager::getHost(const QString& uuid) const
@@ -1015,10 +1062,11 @@ QJsonObject ComputerManager::backendCapabilitiesJson(const QString& uuid) const
                        {"restartService", caps.restartService}};
 }
 
-QJsonArray ComputerManager::getHostsJson() const
+QJsonArray ComputerManager::getHostsJson(const QString& ownerId) const
 {
     QJsonArray arr;
     for (auto it = m_Hosts.cbegin(); it != m_Hosts.cend(); ++it) {
+        if (!UserAccess::owns(ownerId, it.value()->ownerId)) continue;
         QJsonObject obj = it.value()->toJson();
         // The frontend keys backend affordances (hiding Share on a co-op host,
         // offering seat management) off capabilities, and it reads them from the
@@ -1050,8 +1098,10 @@ QJsonArray ComputerManager::getHostsJson() const
     return arr;
 }
 
-void ComputerManager::handleScanRequest()
+void ComputerManager::handleScanRequest(const QString& ownerId)
 {
+    if (ownerId.isEmpty()) return;
+    m_ScanOwners.insert(ownerId);
     // Prevent overlapping scans (3 s cooldown)
     QDateTime now = QDateTime::currentDateTime();
     if (m_LastScanTime.isValid() && m_LastScanTime.msecsTo(now) < 3000) {
@@ -1069,7 +1119,8 @@ void ComputerManager::handleScanRequest()
     Logger::info("Scan started");
 }
 
-std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& address)
+std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& address,
+                                                                 const QString& ownerId)
 {
     // Parse address: "IP" or "IP:port"
     QString addrStr = address.trimmed();
@@ -1124,6 +1175,7 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
     QNetworkRequest req(url);
     req.setTransferTimeout(NvHTTP::REQUEST_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
+    req.setRawHeader("X-MW-Internal-Fetch", "1");
 
     QNetworkAccessManager nam;
     QNetworkReply* reply = nam.get(req);
@@ -1150,12 +1202,15 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
         return {400, {{"status", "error"}, {"message", e.what()}}};
     }
 
-    addOrUpdateHost(xml, nvAddr);
+    if (!addOrUpdateHost(xml, nvAddr, ownerId))
+        return {409,
+                {{"status", "error"},
+                 {"message", "Host registration conflicts with an existing entry"}}};
 
     // Look up the resulting host to return its JSON
     NvComputer parsedHost(xml, nvAddr);
-    NvComputer* host = findHostByUuid(parsedHost.uuid);
-    if (!host) {
+    NvComputer* host = findHostByUuid(UserAccess::hostId(ownerId, parsedHost.uuid));
+    if (!host || host->ownerId != ownerId) {
         return {500,
                 {{"status", "error"}, {"message", "Host was added but could not be retrieved"}}};
     }
@@ -1367,7 +1422,8 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
     // off by the first handleSubmitPin poll)
     auto* pm =
         new NvPairingManager(host->appVersion, addr.address(), addr.port(),
-                             host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT);
+                             host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT,
+                             IdentityManager::get()->identityForSeat(host->identitySeat));
     m_ActivePairings[uuid] = pm;
 
     // Not the PIN: it is on the page, and a log gets shared.
@@ -1508,6 +1564,11 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     NvComputer* host = findHostByUuid(uuid);
     if (!host) {
         respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+    if (host->ownerId != UserStore::localId() &&
+        (type == NativeHostBackend::typeName() || host->isNativeEngine())) {
+        respond(HttpResponse::error(403, "Native capture belongs to the local owner"));
         return;
     }
 
@@ -2112,8 +2173,9 @@ void ComputerManager::startBoxArtFetch(const QString& uuid, int appId)
     const NvAddress& addr = addrs.first();
 
     IdentityManager* im = IdentityManager::get();
-    QByteArray cert = im->getCertificate();
-    QByteArray key = im->getPrivateKey();
+    const auto clientIdentity = im->identityForSeat(host->identitySeat);
+    QByteArray cert = clientIdentity.certPem;
+    QByteArray key = clientIdentity.keyPem;
 
     QUrl artUrl(QString("https://%1:%2/appasset?appid=%3&uniqueid=%4&uuid=%5")
                     .arg(addr.address())

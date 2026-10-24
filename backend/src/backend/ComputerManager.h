@@ -31,6 +31,7 @@
 #include <memory>
 
 #include "NvComputer.h"
+#include "server/UserAccess.h"
 #include "NvHTTP.h"
 #include "streambackend/IStreamBackend.h"
 #include "../common/Types.h"
@@ -68,9 +69,11 @@ public:
     }
 
     // REST API methods
-    QJsonArray getHostsJson() const;
-    void handleScanRequest();
-    std::pair<int, QJsonObject> handleAddManualHost(const QString& address);
+    QJsonArray getHostsJson(const QString& ownerId = QStringLiteral("local-owner")) const;
+    void handleScanRequest(const QString& ownerId = QStringLiteral("local-owner"));
+    std::pair<int, QJsonObject>
+    handleAddManualHost(const QString& address,
+                        const QString& ownerId = QStringLiteral("local-owner"));
     std::pair<int, QJsonObject> handleDeleteHost(const QString& uuid);
 
     // Give a host a name of our own. Purely local: nothing is written to the
@@ -164,6 +167,9 @@ public:
 
     // Host lookup (public, for stream session creation)
     NvComputer* getHost(const QString& uuid) const;
+    std::shared_ptr<void> acquireHostLease(const QString& uuid, const QString& ownerId) const;
+    bool hostOperationBusy(const QString& uuid) const;
+    QJsonArray diagnosticHostsJson() const;
     NvHTTP* http() const { return m_Http; }
 
     // App list — HTTPS fetch from paired host, async.
@@ -224,10 +230,14 @@ private:
 
     // A provider bound to one host. Returns nullptr for an unknown uuid.
 
-    void addOrUpdateHost(const QString& serverInfo, const NvAddress& addr);
+    bool addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
+                         const QString& ownerId = QStringLiteral("local-owner"));
     void tryAddHostFromAddress(const NvAddress& addr, bool fromMdns,
-                               const QString& name = QString());
+                               const QString& name = QString(),
+                               const QString& ownerId = QStringLiteral("local-owner"));
 
+    UserAccess::HostLeases m_HostLeases;
+    QSet<QString> m_ScanOwners;
     QMap<QString, NvComputer*> m_Hosts; // uuid → host, all pointers owned here
 
     // False until loadHosts() has run once. saveHosts() uses it to tell a

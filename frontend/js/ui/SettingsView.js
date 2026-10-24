@@ -2034,6 +2034,13 @@ export class SettingsView {
                 <!-- ── Session (last action: it ends the visit) ───────────── -->
                 <div class="settings-section settings-section-logout">
                     <h3 class="settings-section-title">${t('settings.session')}</h3>
+                    ${
+                        BackendClient.currentUser?.id &&
+                        BackendClient.currentUser.id !== 'local-owner' &&
+                        BackendClient.pinEnabled
+                            ? `<button class="btn btn-neutral" id="btn-account-pin">${t('settings.accountPin')}</button><output id="account-pin" class="setting-desc"></output>`
+                            : ''
+                    }
                     <button class="btn btn-danger" id="btn-settings-logout">
                         ${t('settings.logout')}
                     </button>
@@ -2320,6 +2327,17 @@ export class SettingsView {
         const resetBtn = this.container.querySelector('#btn-settings-reset');
         if (resetBtn) resetBtn.addEventListener('click', () => this._resetDefaults());
 
+        this.container.querySelector('#btn-account-pin')?.addEventListener('click', async () => {
+            try {
+                const result = await BackendClient.generateAccountPin();
+                this.container.querySelector('#account-pin').textContent = t(
+                    'settings.accountPinValue',
+                    { pin: result.pin },
+                );
+            } catch {
+                Toast.error(t('login.ssoError'));
+            }
+        });
         const logoutBtn = this.container.querySelector('#btn-settings-logout');
         if (logoutBtn) logoutBtn.addEventListener('click', () => this._logout(logoutBtn));
 

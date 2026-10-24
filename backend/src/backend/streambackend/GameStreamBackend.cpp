@@ -255,7 +255,8 @@ void GameStreamBackend::launch(const QString& seatId, const LaunchRequest& req,
     const QString uniqueId = req.clientUniqueId.isEmpty() ? im->getUniqueId() : req.clientUniqueId;
     // Empty seat = the default identity, so a plain host is dialled exactly as
     // before and no browser has to pair again.
-    const ClientIdentity identity = im->identityForSeat(req.clientIdentitySeat);
+    const ClientIdentity identity = im->identityForSeat(
+        req.clientIdentitySeat.isEmpty() ? m_IdentitySeat : req.clientIdentitySeat);
 
     QNetworkReply* reply = m_Http->launchAppAsync(
         host->activeAddress, host->activeHttpsPort, req.appId, uniqueId, req.rikey, req.rikeyid,
@@ -281,7 +282,8 @@ void GameStreamBackend::resume(const QString& seatId, const LaunchRequest& req,
     const QString uniqueId = req.clientUniqueId.isEmpty() ? im->getUniqueId() : req.clientUniqueId;
     // Empty seat = the default identity, so a plain host is dialled exactly as
     // before and no browser has to pair again.
-    const ClientIdentity identity = im->identityForSeat(req.clientIdentitySeat);
+    const ClientIdentity identity = im->identityForSeat(
+        req.clientIdentitySeat.isEmpty() ? m_IdentitySeat : req.clientIdentitySeat);
 
     QNetworkReply* reply = m_Http->resumeAppAsync(
         host->activeAddress, host->activeHttpsPort, uniqueId, req.rikey, req.rikeyid,

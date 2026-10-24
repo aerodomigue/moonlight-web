@@ -76,6 +76,7 @@
 #include "server/ControlTunnel.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
+#include "server/UserHostAccess.h"
 #include "server/NetClassify.h"
 #include "server/ShareManager.h"
 #include "server/SessionPool.h"
@@ -2149,7 +2150,15 @@ int main(int argc, char* argv[])
                  ", stun_server=" + stunServer);
 
     // ── AuthManager (PIN-based + certificate authentication) ────────────────
-    AuthManager authManager(&appSettings);
+    std::unique_ptr<AuthManager> authOwner;
+    try {
+        authOwner = std::make_unique<AuthManager>(&appSettings);
+    } catch (const std::exception& error) {
+        Logger::error(QStringLiteral("Authentication startup failed: ") +
+                      QString::fromUtf8(error.what()));
+        return EXIT_FAILURE;
+    }
+    AuthManager& authManager = *authOwner;
 
     // Generate certificate token on first startup (persisted forever)
     if (authManager.certificateToken().isEmpty()) {
@@ -2630,8 +2639,9 @@ int main(int argc, char* argv[])
             if (host && host->takesHostCancel()) {
                 auto* identity = IdentityManager::get();
                 auto* quitReply = computerManager.http()->quitAppAsync(
-                    host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                    identity->getPrivateKey(), g_ActiveClientUniqueId);
+                    host->activeAddress, host->activeHttpsPort,
+                    identity->identityForSeat(host->identitySeat).certPem,
+                    identity->identityForSeat(host->identitySeat).keyPem, g_ActiveClientUniqueId);
                 QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                  &QNetworkReply::deleteLater);
             }
@@ -2898,6 +2908,7 @@ int main(int argc, char* argv[])
     });
 
     registerHostRoutes(server, computerManager);
+    installUserHostAccess(server, authManager, computerManager, g_Pool);
     registerHostAppRoutes(server, appSettings);
     // The game launchers installed on this PC get a card each, the first start
     // after an install or an update (as Sunshine's installer gives Steam one).
@@ -2940,7 +2951,9 @@ int main(int argc, char* argv[])
         // processes, allowing TWO concurrent sessions. A standby launch
         // (standby:true + session_slot) is the second leg of the frontend's
         // seamless quality switching: it must NOT take over the live stream.
-        const bool workerMode = appSettings.streamWorkerEnabled();
+        const bool workerMode = appSettings.streamWorkerEnabled() || authManager.config().sso ||
+                                authManager.users().hasExternalAccounts() ||
+                                req.userId != UserStore::localId();
         const bool standby = workerMode && body["standby"].toBool(false);
 
         // Slot selection.
@@ -3183,18 +3196,7 @@ int main(int argc, char* argv[])
 
         // Identify the authenticated session behind this stream. Remote clients
         // send the mw_session cookie; empty for localhost (no session row to flag).
-        QString sessionToken;
-        {
-            const QString cookie = req.headers.value("cookie");
-            const auto cookies = cookie.split(';');
-            for (const QString& c : cookies) {
-                const QString t = c.trimmed();
-                if (t.startsWith("mw_session=", Qt::CaseInsensitive)) {
-                    sessionToken = t.mid(QStringLiteral("mw_session=").length());
-                    break;
-                }
-            }
-        }
+        const QString sessionToken = HttpServer::sessionTokenFromRequest(req);
 
         // ── Per-request streaming settings ─────────────────────────────────────
         // The browser sends its per-browser preferences (from localStorage)
@@ -3552,7 +3554,8 @@ int main(int argc, char* argv[])
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     host->activeAddress, host->activeHttpsPort,
-                                    identity->getCertificate(), identity->getPrivateKey(), quitUid);
+                                    identity->identityForSeat(host->identitySeat).certPem,
+                                    identity->identityForSeat(host->identitySeat).keyPem, quitUid);
                                 QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                                  &QNetworkReply::deleteLater);
                             }
@@ -3594,7 +3597,8 @@ int main(int argc, char* argv[])
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     host->activeAddress, host->activeHttpsPort,
-                                    identity->getCertificate(), identity->getPrivateKey(), quitUid);
+                                    identity->identityForSeat(host->identitySeat).certPem,
+                                    identity->identityForSeat(host->identitySeat).keyPem, quitUid);
                                 QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                                  &QNetworkReply::deleteLater);
                             }
@@ -3639,7 +3643,8 @@ int main(int argc, char* argv[])
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     host->activeAddress, host->activeHttpsPort,
-                                    identity->getCertificate(), identity->getPrivateKey(), quitUid);
+                                    identity->identityForSeat(host->identitySeat).certPem,
+                                    identity->identityForSeat(host->identitySeat).keyPem, quitUid);
                                 QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                                  &QNetworkReply::deleteLater);
                             }
@@ -3808,6 +3813,7 @@ int main(int argc, char* argv[])
             // certificate have to travel with it.
             cfg["hostPairState"] = NvComputer::pairStateToString(host->pairState);
             cfg["hostServerCert"] = QString::fromUtf8(host->serverCertPem);
+            cfg["identitySeat"] = host->identitySeat;
             cfg["appId"] = appId;
             cfg["codec"] = static_cast<int>(effectiveCodec);
             cfg["codecOverridden"] = codecOverridden;
@@ -4211,7 +4217,8 @@ int main(int argc, char* argv[])
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     h->activeAddress, h->activeHttpsPort,
-                                    identity->getCertificate(), identity->getPrivateKey(), uid);
+                                    identity->identityForSeat(h->identitySeat).certPem,
+                                    identity->identityForSeat(h->identitySeat).keyPem, uid);
                                 // Report the outcome. This /cancel used to be
                                 // pure fire-and-forget, so a refused or failed
                                 // one left Sunshine holding the app with nothing
@@ -4643,17 +4650,7 @@ int main(int argc, char* argv[])
 
             // The authenticated device asking to quit, read the same way /start
             // records it. Empty for localhost.
-            QString quitSessionToken;
-            {
-                const QString cookie = req.headers.value("cookie");
-                for (const QString& c : cookie.split(';')) {
-                    const QString t = c.trimmed();
-                    if (t.startsWith("mw_session=", Qt::CaseInsensitive)) {
-                        quitSessionToken = t.mid(QStringLiteral("mw_session=").length());
-                        break;
-                    }
-                }
-            }
+            const QString quitSessionToken = HttpServer::sessionTokenFromRequest(req);
 
             // Anything that is not a retire ends with a Sunshine /cancel, which
             // kills the app for everyone — so the invited players go first.
@@ -4662,12 +4659,13 @@ int main(int argc, char* argv[])
             // running with nobody attached. (A retire — keep_host_session — is
             // one leg of the owner's dual stream stepping aside; the app, and
             // every player on it, carries on.)
-            if (!keepHostSession) endPlayerSessions(ShareManager::EndReason::OwnerStop);
+            if (!keepHostSession && host->ownerId == UserStore::localId())
+                endPlayerSessions(ShareManager::EndReason::OwnerStop);
 
             bool workerStopped = false;
             for (int i = 0; i < kOwnerSlots; ++i) {
                 SessionPool::Slot& sl = g_Pool.at(i);
-                if (!sl.worker) continue;
+                if (!sl.worker || sl.hostUuid != host->uuid) continue;
                 if (quitSlot >= 0 && i != quitSlot) continue;
                 const bool slotOwned = sl.clientUniqueId.isEmpty() || quitUniqueId.isEmpty() ||
                                        quitUniqueId == sl.clientUniqueId;
@@ -4837,8 +4835,9 @@ int main(int argc, char* argv[])
             g_LiveSunshineUids.remove(quitUniqueId);
             auto* identity = IdentityManager::get();
             QNetworkReply* reply = computerManager.http()->quitAppAsync(
-                host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                identity->getPrivateKey(), quitUniqueId);
+                host->activeAddress, host->activeHttpsPort,
+                identity->identityForSeat(host->identitySeat).certPem,
+                identity->identityForSeat(host->identitySeat).keyPem, quitUniqueId);
             qInfo() << "[quit] quitAppAsync reply=" << reply;
 
             // Wait for quit to complete, then respond
@@ -4951,23 +4950,24 @@ int main(int argc, char* argv[])
                 return;
             }
 
-            qInfo() << "[stop-session] Forcing the host session down";
-            endPlayerSessions(ShareManager::EndReason::OwnerStop);
-            for (int i = 0; i < kOwnerSlots; ++i)
-                detachWorkerSlot(i, false);
-
-            // Sunshine's /cancel is keyed by the uniqueid that launched the
-            // session, so every live one has to be named. The set is emptied
-            // either way: whatever is left after this is not ours any more. A
-            // trailing empty-uid /cancel sweeps a session this process never saw
-            // (a previous run, a crash) — the case the button exists for.
+            qInfo() << "[stop-session] Stopping this account's host session";
+            if (host->ownerId == UserStore::localId())
+                endPlayerSessions(ShareManager::EndReason::OwnerStop);
             QStringList cancelQueue;
-            if (host->takesHostCancel()) {
-                for (const QString& uid : g_LiveSunshineUids)
-                    cancelQueue.append(uid);
-                cancelQueue.append(QString()); // unscoped sweep, always last
+            for (int i = 0; i < g_Pool.size(); ++i) {
+                const auto& slot = g_Pool.at(i);
+                if (slot.hostUuid != host->uuid || !slot.worker) continue;
+                if (!slot.clientUniqueId.isEmpty() && !cancelQueue.contains(slot.clientUniqueId))
+                    cancelQueue.append(slot.clientUniqueId);
+                detachWorkerSlot(i, false);
             }
-            g_LiveSunshineUids.clear();
+            const QString requestedId = sanitizeClientUniqueId(
+                QJsonDocument::fromJson(req.body).object()["client_uniqueid"].toString());
+            if (!requestedId.isEmpty() && !cancelQueue.contains(requestedId))
+                cancelQueue.append(requestedId);
+            for (const auto& id : cancelQueue)
+                g_LiveSunshineUids.remove(id);
+            cancelQueue.append(QString()); // final sweep is scoped to this host and its certificate
             auto* identity = IdentityManager::get();
 
             // Send the cancels SEQUENTIALLY, and only report "stopped" once the
@@ -4980,7 +4980,8 @@ int main(int argc, char* argv[])
             // Serialising and awaiting means the host is genuinely free before the
             // caller can relaunch.
             auto sendNext = std::make_shared<std::function<void()>>();
-            *sendNext = [&computerManager, host, identity, cancelQueue, sendNext, respond,
+            std::weak_ptr<std::function<void()>> weakNext = sendNext;
+            *sendNext = [&computerManager, host, identity, cancelQueue, weakNext, respond,
                          idx = 0]() mutable {
                 if (idx >= cancelQueue.size()) {
                     // Read back what the host runs now, so the card stops
@@ -4996,12 +4997,14 @@ int main(int argc, char* argv[])
                 }
                 const QString uid = cancelQueue.at(idx++);
                 auto* reply = computerManager.http()->quitAppAsync(
-                    host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                    identity->getPrivateKey(), uid);
-                QObject::connect(reply, &QNetworkReply::finished, reply, [reply, sendNext]() {
-                    reply->deleteLater();
-                    (*sendNext)();
-                });
+                    host->activeAddress, host->activeHttpsPort,
+                    identity->identityForSeat(host->identitySeat).certPem,
+                    identity->identityForSeat(host->identitySeat).keyPem, uid);
+                QObject::connect(reply, &QNetworkReply::finished, reply,
+                                 [reply, next = weakNext.lock()]() {
+                                     reply->deleteLater();
+                                     if (next) (*next)();
+                                 });
             };
             (*sendNext)();
         });
@@ -5253,8 +5256,9 @@ int main(int argc, char* argv[])
                                  return;
                              auto* identity = IdentityManager::get();
                              auto* quitReply = computerManager.http()->quitAppAsync(
-                                 h->activeAddress, h->activeHttpsPort, identity->getCertificate(),
-                                 identity->getPrivateKey(), uid);
+                                 h->activeAddress, h->activeHttpsPort,
+                                 identity->identityForSeat(h->identitySeat).certPem,
+                                 identity->identityForSeat(h->identitySeat).keyPem, uid);
                              QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                               &QNetworkReply::deleteLater);
                          });
@@ -5321,6 +5325,24 @@ int main(int argc, char* argv[])
             // The host this invitation was bound to is gone from the list.
             respond(HttpResponse::json(QJsonObject{{"error", "session_ended"}}, 409));
             return;
+        }
+        auto lease = computerManager.acquireHostLease(host->uuid, host->ownerId);
+        if (!lease) {
+            respond(HttpResponse::error(
+                409, "This PC has an operation in progress for another account"));
+            return;
+        }
+        respond = [original = std::move(respond), lease](HttpResponse response) {
+            original(std::move(response));
+        };
+        for (const auto& occupied : g_Pool) {
+            const auto* other = computerManager.getHost(occupied.hostUuid);
+            if (occupied.worker && other && other->ownerId != host->ownerId &&
+                (other->physicalUuid.isEmpty() ? other->uuid : other->physicalUuid) ==
+                    (host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid)) {
+                respond(HttpResponse::error(409, "This PC is in use by another account"));
+                return;
+            }
         }
 
         // Nothing up on the bound host: this invitation was opened cold, and
@@ -5461,6 +5483,7 @@ int main(int argc, char* argv[])
         // certificate have to travel with it.
         cfg["hostPairState"] = NvComputer::pairStateToString(host->pairState);
         cfg["hostServerCert"] = QString::fromUtf8(host->serverCertPem);
+        cfg["identitySeat"] = host->identitySeat;
         cfg["appId"] = appId;
         cfg["codec"] = static_cast<int>(codec);
         cfg["codecOverridden"] = false;
@@ -5834,7 +5857,7 @@ int main(int argc, char* argv[])
         names.thisMachine.names << AppSettings::machineName() << QSysInfo::machineHostName();
         for (const QHostAddress& a : QNetworkInterface::allAddresses())
             names.thisMachine.addresses << a.toString();
-        for (const QJsonValue& h : computerManager.getHostsJson()) {
+        for (const QJsonValue& h : computerManager.diagnosticHostsJson()) {
             const NvComputer* c =
                 computerManager.getHost(h.toObject().value(QStringLiteral("uuid")).toString());
             if (!c) continue;

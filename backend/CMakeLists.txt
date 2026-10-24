@@ -264,6 +264,11 @@ add_executable(mw-server
     src/common/PairingCrypto.cpp
     src/streaming/SdpFingerprint.cpp
     src/server/AuthManager.cpp
+    src/server/AuthConfig.cpp
+    src/server/UserStore.cpp
+    src/server/UserHostAccess.cpp
+    src/server/OidcToken.cpp
+    src/server/OidcClient.cpp
     src/server/AppSettings.cpp
     src/server/Provisioning.cpp
     src/server/ConnectionGuard.cpp
@@ -688,6 +693,14 @@ if(MW_BUILD_TESTS)
         target_link_libraries(mw-security-tests PRIVATE Crypt32)
     endif()
     add_test(NAME security-tnr COMMAND mw-security-tests)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME oidc-user-isolation
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_oidc_integration.py"
+                    "$<TARGET_FILE:mw-server>")
+        set_tests_properties(oidc-user-isolation PROPERTIES TIMEOUT 90 LABELS integration)
+    endif()
 endif()
 
 # ── Install / packaging ────────────────────────────────────────────────────

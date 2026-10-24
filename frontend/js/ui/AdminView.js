@@ -123,6 +123,7 @@ export class AdminView {
 
         // Auth / PIN state (default "------" = no valid PIN, 6 digits)
         this._pin = '------';
+        this._pinLoginEnabled = true;
         this._pinConsumed = false; // true when PIN was used by remote client
         this._activeSessions = 0;
         this._sessions = [];
@@ -357,6 +358,7 @@ export class AdminView {
         try {
             const status = await BackendClient.getAuthStatus();
             this._hasAdminAccess = !!status.is_localhost;
+            this._pinLoginEnabled = status.pin_enabled !== false;
             this._isRealHostMachine = !!status.is_host_machine;
             this._adminUnlockAvailable = !!status.admin_unlock_available;
             if (status.remote_admin_enabled !== undefined) {
@@ -767,7 +769,7 @@ export class AdminView {
 
                 <!-- PIN (localhost only) -->
                 ${
-                    this._isLocalhost()
+                    this._isLocalhost() && this._pinLoginEnabled
                         ? `
                     <div class="settings-section">
                         <h3 class="settings-section-title">${t('admin.accessPin')}</h3>
@@ -808,7 +810,7 @@ export class AdminView {
 
                 <!-- Certificate Authentication (localhost only) -->
                 ${
-                    this._isLocalhost()
+                    this._isLocalhost() && this._pinLoginEnabled
                         ? `
                     <div class="settings-section">
                         <h3 class="settings-section-title">${t('admin.certAuth')}</h3>
@@ -1207,7 +1209,7 @@ export class AdminView {
                 <td><span class="session-name-edit" contenteditable="plaintext-only"
                           spellcheck="false"
                           data-token="${this.esc(s.token)}"
-                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${streamingBadge}</td>
+                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${s.user_name ? `<small class="setting-desc">${this.esc(s.user_name)} · ${this.esc(s.auth_method || '')}</small>` : ''}${streamingBadge}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>

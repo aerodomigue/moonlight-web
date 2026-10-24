@@ -150,6 +150,7 @@ void MultiSeatApiClient::finish(QNetworkReply* reply, RawCallback cb)
 void MultiSeatApiClient::get(const QString& path, RawCallback cb)
 {
     QNetworkRequest req{QUrl(m_BaseUrl + path)};
+    req.setRawHeader("X-MW-Internal-Fetch", "1");
     if (!m_ApiKey.isEmpty()) req.setRawHeader(kApiKeyHeader, m_ApiKey.toUtf8());
     finish(m_Nam->get(req), std::move(cb));
 }
@@ -157,6 +158,7 @@ void MultiSeatApiClient::get(const QString& path, RawCallback cb)
 void MultiSeatApiClient::post(const QString& path, const QJsonObject& body, RawCallback cb)
 {
     QNetworkRequest req{QUrl(m_BaseUrl + path)};
+    req.setRawHeader("X-MW-Internal-Fetch", "1");
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     if (!m_ApiKey.isEmpty()) req.setRawHeader(kApiKeyHeader, m_ApiKey.toUtf8());
     finish(m_Nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact)), std::move(cb));
@@ -165,6 +167,7 @@ void MultiSeatApiClient::post(const QString& path, const QJsonObject& body, RawC
 void MultiSeatApiClient::del(const QString& path, RawCallback cb)
 {
     QNetworkRequest req{QUrl(m_BaseUrl + path)};
+    req.setRawHeader("X-MW-Internal-Fetch", "1");
     if (!m_ApiKey.isEmpty()) req.setRawHeader(kApiKeyHeader, m_ApiKey.toUtf8());
     finish(m_Nam->deleteResource(req), std::move(cb));
 }

@@ -356,6 +356,10 @@
         "quitFailed": "无法在主机上退出 {{name}}。"
     },
     "login": {
+        "usePin": "使用 PIN 登录",
+        "ssoError": "SSO 登录失败，请重试。",
+        "useSso": "使用 SSO 登录",
+        "chooseMethod": "选择登录方式",
         "connecting": "正在连接服务器…",
         "serverSelection": "服务器选择",
         "serverCurrent": "当前服务器",
@@ -397,6 +401,8 @@
         "paired": "配对成功！"
     },
     "settings": {
+        "accountPinValue": "PIN：{pin}，5 分钟内可使用一次。",
+        "accountPin": "为我的账户生成配对 PIN",
         "title": "串流设置",
         "video": "视频",
         "advanced": "高级",

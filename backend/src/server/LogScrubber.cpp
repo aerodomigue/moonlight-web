@@ -331,7 +331,7 @@ QString LogScrubber::scrubLine(QString line)
     // key=value in URLs and settings: rikey and the pairing handshake ride in
     // Qt's own error strings, which quote the whole URL.
     static const QRegularExpression param = re(
-        R"((?<![A-Za-z0-9_-])(rikey|rikeyid|uniqueid|salt|clientcert|clientchallenge|serverchallengeresp|clientpairingsecret|pairingsecret|devicename|token|access_token|refresh_token|mwk|k|key|pin|password|passwd|pwd|secret|sig|signature|auth)=(?!\(hidden\))([^&\s"'#<>]+))");
+        R"((?<![A-Za-z0-9_-])(rikey|rikeyid|uniqueid|salt|clientcert|clientchallenge|serverchallengeresp|clientpairingsecret|pairingsecret|devicename|token|access_token|refresh_token|id_token|code|code_verifier|client_secret|state|nonce|mwk|k|key|pin|password|passwd|pwd|secret|sig|signature|auth)=(?!\(hidden\))([^&\s"'#<>]+))");
     line.replace(param, QStringLiteral("\\1=") + kHidden);
 
     // key="value", key= 'value', key: "value".

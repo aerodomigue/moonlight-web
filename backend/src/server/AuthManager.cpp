@@ -39,8 +39,12 @@
 
 #include <algorithm>
 
-AuthManager::AuthManager(AppSettings* settings, QObject* parent)
+AuthManager::AuthManager(AppSettings* settings, QObject* parent, AuthConfig config)
     : QObject(parent)
+    , m_config(std::move(config))
+    , m_users(settings ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                             QStringLiteral("/users.json")
+                       : QString())
     , m_settings(settings)
     , m_currentPin(QStringLiteral("------"))
 {
@@ -82,7 +86,7 @@ bool AuthManager::constantTimeEquals(const QString& a, const QString& b)
     const QByteArray ba = a.toUtf8();
     const QByteArray bb = b.toUtf8();
     const int n = qMax(ba.size(), bb.size());
-    quint8 diff = static_cast<quint8>(ba.size() ^ bb.size());
+    quint64 diff = static_cast<quint64>(ba.size()) ^ static_cast<quint64>(bb.size());
     for (int i = 0; i < n; ++i) {
         const quint8 ca = i < ba.size() ? static_cast<quint8>(ba[i]) : 0;
         const quint8 cb = i < bb.size() ? static_cast<quint8>(bb[i]) : 0;
@@ -169,6 +173,11 @@ void AuthManager::loadSessions()
     for (const auto& val : arr) {
         QJsonObject obj = val.toObject();
         SessionInfo info;
+        info.userId = obj.value("user_id").toString(UserStore::localId());
+        info.authMethod =
+            obj.value("auth_method")
+                .toString(obj["is_host"].toBool() ? QStringLiteral("host") : QStringLiteral("pin"));
+        if (!m_users.contains(info.userId)) continue;
         info.token = obj["token"].toString();
         info.ip = obj["ip"].toString();
         info.machineName = obj["machine_name"].toString();
@@ -207,7 +216,9 @@ void AuthManager::loadSessions()
 
 QString AuthManager::generatePin()
 {
-    m_currentPin = generatePinInternal();
+    do {
+        m_currentPin = generatePinInternal();
+    } while (m_userPins.values().contains(m_currentPin));
     m_pinConsumed = false; // fresh PIN, never used
     Logger::info("[Auth] New PIN generated");
     emit pinChanged(m_currentPin);
@@ -226,7 +237,9 @@ void AuthManager::autoRegeneratePin()
 {
     // Generate a new PIN immediately after a successful validation.
     // Does NOT invalidate existing sessions — they remain active.
-    m_currentPin = generatePinInternal();
+    do {
+        m_currentPin = generatePinInternal();
+    } while (m_userPins.values().contains(m_currentPin));
     m_pinConsumed = true; // mark as consumed — admin must generate fresh PIN
     Logger::info("[Auth] PIN auto-regenerated after successful validation");
     emit pinChanged(m_currentPin);
@@ -516,6 +529,49 @@ AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QS
     return recordAttempt(bucket, matched, ip, QStringLiteral("PIN"));
 }
 
+AuthManager::ValidateResult AuthManager::validateAccountPin(const QString& ip, const QString& pin,
+                                                            QString& userId, qint64 nowSecs)
+{
+    userId.clear();
+    cleanupExpired();
+    const QString bucket = rateLimitKey(ip);
+    if (const int locked = bucketLockout(bucket); locked > 0) return {RateLimited, 0, locked};
+    if (m_config.pin) {
+        if (hasValidPin() && constantTimeEquals(pin, m_currentPin)) userId = UserStore::localId();
+        const qint64 now = nowSecs > 0 ? nowSecs : QDateTime::currentSecsSinceEpoch();
+        for (auto it = m_userPins.cbegin(); it != m_userPins.cend(); ++it) {
+            if (constantTimeEquals(pin, it.value()) && m_userPinExpiry.value(it.key()) > now)
+                userId = it.key();
+        }
+    }
+    auto result = recordAttempt(bucket, !userId.isEmpty(), ip, QStringLiteral("PIN"));
+    if (result.result == Valid && userId != UserStore::localId()) {
+        m_userPins.remove(userId);
+        m_userPinExpiry.remove(userId);
+    }
+    return result;
+}
+
+QString AuthManager::generateUserPin(const QString& userId, qint64 nowSecs)
+{
+    if (!m_config.pin || !m_users.contains(userId)) return {};
+    if (userId == UserStore::localId()) return generatePin();
+    QString pin;
+    do {
+        pin = generatePinInternal();
+    } while (pin == m_currentPin || m_userPins.values().contains(pin));
+    m_userPins[userId] = pin;
+    m_userPinExpiry[userId] = (nowSecs > 0 ? nowSecs : QDateTime::currentSecsSinceEpoch()) + 300;
+    return pin;
+}
+
+bool AuthManager::isSsoAdmin(const QString& token) const
+{
+    if (!validateSession(token)) return false;
+    const auto user = m_users.get(sessionForToken(token).userId);
+    return m_config.sso && user.issuer == m_config.issuer && m_config.administrator(user.subject);
+}
+
 // ── Remote admin password ─────────────────────────────────────────────────────
 
 QString AuthManager::encodePassword(const QString& password)
@@ -654,8 +710,10 @@ AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip
 }
 
 QString AuthManager::createSession(const QString& ip, const QString& machineName, bool isHost,
-                                   bool ephemeral, bool viaTunnel)
+                                   bool ephemeral, bool viaTunnel, const QString& userId,
+                                   const QString& method)
 {
+    if (!m_users.contains(userId)) return {};
     // Clean IPv4-mapped IPv6 addresses before storing
     QString cleanIp = cleanClientAddress(ip);
 
@@ -665,13 +723,16 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     QString uuid = QUuid::createUuid().toString(QUuid::Id128);
     QString data = QString("%1|%2|%3|%4").arg(cleanIp).arg(counter).arg(now).arg(uuid);
     QByteArray hmac = generateHmac(data);
-    QString token = QString::fromLatin1(hmac.toBase64(QByteArray::OmitTrailingEquals));
+    QString token =
+        QStringLiteral("v2.") + QString::fromLatin1(hmac.toBase64(QByteArray::OmitTrailingEquals));
 
     // Persist only the hash of the token (opaque id). The raw token lives solely
     // in the client cookie, so a leaked sessions.json cannot be replayed.
     const QString id = hashToken(token);
 
     SessionInfo info;
+    info.userId = userId;
+    info.authMethod = isHost ? QStringLiteral("host") : method;
     info.token = id;
     info.ip = cleanIp;
     info.machineName = machineName.isEmpty() ? QStringLiteral("Unknown") : machineName;
@@ -697,6 +758,13 @@ bool AuthManager::validateSession(const QString& token) const
     if (token.isEmpty()) return false;
     auto it = m_sessions.find(hashToken(token));
     if (it == m_sessions.end()) return false;
+    if (!m_users.contains(it->userId)) return false;
+    if (it->authMethod == QLatin1String("pin") || it->authMethod == QLatin1String("certificate")) {
+        if (!m_config.pin) return false;
+    } else if (it->authMethod == QLatin1String("sso")) {
+        if (!m_config.sso || m_users.get(it->userId).issuer != m_config.issuer) return false;
+    } else if (it->authMethod != QLatin1String("host"))
+        return false;
     // Sliding expiration: reject (but do not mutate, this is const) sessions
     // inactive past the TTL — the periodic purge removes them.
     const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -938,7 +1006,8 @@ std::optional<AuthManager::HomeScreenHandoff> AuthManager::redeemHomeScreenKey(c
     const qint64 last = session->lastSeen > 0 ? session->lastSeen : session->createdAt;
     if (QDateTime::currentSecsSinceEpoch() - last > ttlFor(*session)) return std::nullopt;
 
-    return HomeScreenHandoff{session->machineName, m_homeScreenInstances.value(sessionId)};
+    return HomeScreenHandoff{session->machineName, m_homeScreenInstances.value(sessionId),
+                             session->userId, session->authMethod};
 }
 
 void AuthManager::destroySession(const QString& token)

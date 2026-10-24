@@ -560,6 +560,7 @@ int runStreamWorker(QCoreApplication& app)
     // Without these a backend's readiness check rejects the host as unpaired.
     host->pairState = NvComputer::pairStateFromString(cfg["hostPairState"].toString());
     host->serverCertPem = cfg["hostServerCert"].toString().toUtf8();
+    host->identitySeat = cfg["identitySeat"].toString();
 
     auto* nam = new QNetworkAccessManager(&app);
     auto* http = new NvHTTP(nam, &app);
@@ -578,6 +579,7 @@ int runStreamWorker(QCoreApplication& app)
     backendConfig[QStringLiteral("pairUser")] = cfg["backendPairUser"].toString();
     backendConfig[QStringLiteral("pairPassword")] = cfg["backendPairPassword"].toString();
 
+    backendConfig[QStringLiteral("identitySeat")] = host->identitySeat;
     QString backendType = cfg["backendType"].toString();
     if (backendType.isEmpty()) backendType = QStringLiteral("gamestream");
     std::shared_ptr<IStreamBackend> backend(

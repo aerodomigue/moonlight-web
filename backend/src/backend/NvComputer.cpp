@@ -117,6 +117,9 @@ NvComputer::NvComputer(QSettings& settings)
     name = settings.value("hostname").toString();
     customName = settings.value("customName").toString();
     uuid = settings.value("uuid").toString();
+    ownerId = settings.value("ownerId", QStringLiteral("local-owner")).toString();
+    physicalUuid = settings.value("physicalUuid", uuid).toString();
+    identitySeat = settings.value("identitySeat").toString();
     macAddress = settings.value("mac").toByteArray();
     wakeAddress = settings.value("wakeAddress").toString();
     wakeMacOverride = settings.value("wakeMacOverride").toByteArray();
@@ -157,6 +160,9 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("hostname", name);
     settings.setValue("customName", customName);
     settings.setValue("uuid", uuid);
+    settings.setValue("ownerId", ownerId);
+    settings.setValue("physicalUuid", physicalUuid.isEmpty() ? uuid : physicalUuid);
+    settings.setValue("identitySeat", identitySeat);
     settings.setValue("mac", macAddress);
     settings.setValue("wakeAddress", wakeAddress);
     settings.setValue("wakeMacOverride", wakeMacOverride);

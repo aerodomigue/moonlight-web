@@ -26,6 +26,8 @@
 #include <QString>
 #include <QJsonArray>
 #include <QJsonObject>
+#include "AuthConfig.h"
+#include "UserStore.h"
 
 class QTimer;
 
@@ -34,6 +36,8 @@ class QTimer;
  */
 struct SessionInfo
 {
+    QString userId = UserStore::localId();
+    QString authMethod = QStringLiteral("pin");
     QString token; // stored value is the SHA-256 of the cookie token (opaque id),
                    // never the raw token — a stolen sessions.json cannot be replayed
     QString ip;
@@ -78,6 +82,8 @@ struct SessionInfo
     QJsonObject toJson() const
     {
         QJsonObject obj;
+        obj["user_id"] = userId;
+        obj["auth_method"] = authMethod;
         obj["token"] = token;
         if (!pairingKey.isEmpty()) obj["pairing_key"] = QString::fromLatin1(pairingKey.toBase64());
         obj["ip"] = ip;
@@ -104,7 +110,8 @@ class AuthManager : public QObject
 public:
     /// @param settings Optional AppSettings for HMAC key persistence.
     ///                 If null, a random HMAC key is generated each time.
-    explicit AuthManager(AppSettings* settings = nullptr, QObject* parent = nullptr);
+    explicit AuthManager(AppSettings* settings = nullptr, QObject* parent = nullptr,
+                         AuthConfig config = AuthConfig::fromEnvironment());
     ~AuthManager() override = default;
 
     // ── PIN management ─────────────────────────────────────────────────────
@@ -130,6 +137,13 @@ public:
     };
 
     ValidateResult validatePin(const QString& ip, const QString& pin);
+    ValidateResult validateAccountPin(const QString& ip, const QString& pin, QString& userId,
+                                      qint64 nowSecs = 0);
+    QString generateUserPin(const QString& userId, qint64 nowSecs = 0);
+    const AuthConfig& config() const { return m_config; }
+    UserStore& users() { return m_users; }
+    const UserStore& users() const { return m_users; }
+    bool isSsoAdmin(const QString& token) const;
 
     // ── Remote admin password ──────────────────────────────────────────────
     // Second door into admin access, for a LAN machine that is not the host.
@@ -183,7 +197,9 @@ public:
     ///                  EPHEMERAL_SESSION_TTL_SECS of inactivity. Meant for a
     ///                  browser that is not the visitor's own (public machine).
     QString createSession(const QString& ip, const QString& machineName = QString(),
-                          bool isHost = false, bool ephemeral = false, bool viaTunnel = false);
+                          bool isHost = false, bool ephemeral = false, bool viaTunnel = false,
+                          const QString& userId = UserStore::localId(),
+                          const QString& method = QStringLiteral("pin"));
     bool validateSession(const QString& token) const;
     /** True when the raw cookie token belongs to a valid session created without
      *  "remember me". The caller must then keep the cookie session-scoped: a
@@ -311,6 +327,8 @@ public:
     {
         QString machineName; ///< the session the key came from
         QJsonArray instances;
+        QString userId;
+        QString authMethod;
     };
     /** Spend @p key. Single-use; refused once expired, or once the session it
      *  came from has been revoked or has expired. */
@@ -437,6 +455,10 @@ private:
         long long lockoutUntilEpoch = 0;
     };
 
+    AuthConfig m_config;
+    UserStore m_users;
+    QHash<QString, QString> m_userPins;
+    QHash<QString, qint64> m_userPinExpiry;
     AppSettings* m_settings = nullptr;
     QString m_currentPin;
     bool m_pinConsumed = false;
