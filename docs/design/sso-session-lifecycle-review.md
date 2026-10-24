@@ -41,6 +41,8 @@ credentials/tokens never reach browser code.
 
 ## OIDC and logout race review
 
+- A closed return-path allowlist preserves Admin/session screens and link outcomes
+  across silent checks; external and arbitrary redirect targets are refused.
 - Every transaction has its own state cookie; completed callbacks clear it using
   separate Set-Cookie fields. A pending transaction cannot overwrite another tab.
 - An unchanged revalidation retains the active cookie and grants a new document.
@@ -66,7 +68,7 @@ credentials/tokens never reach browser code.
 ## Validation
 
 - 293 targeted identity/token/signature/context checks passed before final review.
-- 32 real-server HTTPS OIDC integration cases include copied cookies and wrong
+- 33 real-server HTTPS OIDC integration cases include copied cookies and wrong
   keys, request replay/tampering, concurrent transactions, unchanged revalidation,
   notifications during token exchange, notification targeting and replay after
   restart, failed persistence and local-owner/PIN recovery.

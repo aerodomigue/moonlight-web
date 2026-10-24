@@ -185,6 +185,17 @@ void OidcClient::prepare(const HttpRequest& req, ResponseCallback respond)
         pending.targetUser = req.pathParams.value("id");
     }
     pending.page = body.value("page_id").toString();
+    pending.returnPath = body.value("return_path").toString("/");
+    const QStringList destinations = {"/",
+                                      "/admin",
+                                      "/sessions",
+                                      "/admin?oidc_link=ready",
+                                      "/admin?oidc_link=error",
+                                      "/admin?oidc_link=conflict"};
+    if (!destinations.contains(pending.returnPath)) {
+        respond(HttpResponse::error(400, "Invalid return destination"));
+        return;
+    }
     pending.revalidate = body.value("purpose").toString() == "revalidate";
     pending.publicKey = QByteArray::fromBase64(body["public_key"].toString().toLatin1());
     if ((!pending.targetUser.isEmpty() ? !pending.publicKey.isEmpty() : true) &&
@@ -459,7 +470,8 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                             respond(redirect("/?auth_error=sso"));
                             return;
                         }
-                        auto response = redirect("/#mw-sso=" + activation + "." + pending.page);
+                        auto response = redirect(pending.returnPath + "#mw-sso=" + activation +
+                                                 "." + pending.page);
                         response.headers["Set-Cookie"] =
                             "__Host-mw_session=" + token +
                             "; HttpOnly; Secure; SameSite=Strict; Path=/";

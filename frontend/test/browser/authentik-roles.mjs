@@ -28,6 +28,10 @@ try {
     await admin.locator('#btn-admin').click();
     await admin.locator('#admin-oidc-scopes').waitFor();
     assert.equal(await admin.locator('#admin-oidc-scopes').inputValue(), 'openid profile email moonlight_role');
+    await admin.reload({waitUntil:'domcontentloaded'});
+    await admin.locator('#admin-oidc-scopes').waitFor();
+    assert.equal(new URL(admin.url()).pathname, '/admin');
+    console.log('PASS: silent revalidation restores the administrator route after reload.');
     assert.match(await admin.locator('#admin-section-login h3').innerText(), /connexion/i);
     const adminId = await admin.evaluate(async () => (await (await import('/js/api/BackendClient.js')).BackendClient.getAuthStatus()).user.id);
     await admin.locator('#admin-user-select').selectOption(adminId);

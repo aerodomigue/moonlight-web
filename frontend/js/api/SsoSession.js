@@ -93,6 +93,7 @@ export const SsoSession = {
             body: JSON.stringify({
                 purpose: 'revalidate',
                 page_id: this.page(),
+                return_path: this.returnPath(),
                 public_key: identity.publicKeyBase64,
             }),
         });
@@ -102,6 +103,13 @@ export const SsoSession = {
         }
         location.assign((await prepared.json()).authorization_url);
         return false;
+    },
+    returnPath() {
+        const path = ['/admin', '/sessions'].includes(location.pathname) ? location.pathname : '/';
+        const outcome = new URLSearchParams(location.search).get('oidc_link');
+        return path === '/admin' && ['ready', 'error', 'conflict'].includes(outcome)
+            ? `${path}?oidc_link=${outcome}`
+            : path;
     },
     async protocols(url) {
         if (!this.sessionId) return undefined;

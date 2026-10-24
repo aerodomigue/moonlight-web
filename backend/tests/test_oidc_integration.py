@@ -347,8 +347,9 @@ class OidcIsolation(unittest.TestCase):
             time.sleep(0.1)
         self.fail("Isolated server did not become healthy")
 
-    def prepare(self, browser, subject="alice-sub", claims=None, remember=True, path="/api/auth/oidc/prepare", headers=None, public_key=None):
+    def prepare(self, browser, subject="alice-sub", claims=None, remember=True, path="/api/auth/oidc/prepare", headers=None, public_key=None, return_path="/"):
         payload = {"remember": remember, "page_id": browser.page_id}
+        payload["return_path"] = return_path
         payload["public_key"] = public_key or browser.public_key
         status, body, _ = browser.request(path, payload, extra_headers=headers)
         self.assertEqual(status, 200, "Local HTTPS issuer discovery failed")
@@ -1149,6 +1150,16 @@ class OidcIsolation(unittest.TestCase):
             self.assertEqual(actual[1].get("error"), expected[1].get("error"))
             self.assertNotEqual(actual[1].get("error"), "sso_revalidation_required")
         self.assertEqual(guest.request("/api/admin/users")[0], 401)
+
+    def test_oidc_returns_only_to_explicit_local_destinations(self):
+        browser = self.start()
+        for destination in ["https://evil.example/", "//evil.example/", "/admin?url=https://evil.example/"]:
+            result = browser.request("/api/auth/oidc/prepare", {"page_id": browser.page_id, "public_key": browser.public_key, "return_path": destination})
+            self.assertEqual(result[0], 400)
+        callback = self.prepare(browser, "admin-subject", return_path="/admin?oidc_link=ready")
+        browser.auto_activate = False
+        location = browser.request(callback, cross_site=True)[2]["Location"]
+        self.assertTrue(location.startswith("/admin?oidc_link=ready#mw-sso="))
 
     def test_request_signature_replay_wrong_body_and_page_context_are_denied(self):
         self.start()

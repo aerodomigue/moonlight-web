@@ -19,6 +19,7 @@ private:
     struct Pending
     {
         QString cookieHash, verifier, nonce, machine, ip, previousToken, page;
+        QString returnPath = QStringLiteral("/");
         bool revalidate = false;
         QByteArray publicKey;
         bool remember = true;
