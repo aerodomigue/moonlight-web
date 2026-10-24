@@ -20,6 +20,7 @@
 #include <QByteArray>
 #include <QMap>
 #include <QString>
+#include <QStringList>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <functional>
@@ -28,6 +29,8 @@
 struct HttpRequest
 {
     QString method;
+    QString rawMethod;    // Original case for RFC 9421. Routing keeps its existing normalization.
+    QByteArray rawTarget; // Encoded origin-form request target, before routing normalization.
     QString path;
     QMap<QString, QString> headers;
     QMap<QString, QString> queryParams;
@@ -62,7 +65,8 @@ struct HttpRequest
                                 // carries control characters (CR/LF smuggled in
                                 // as %0d/%0a). Answered with 400 and never routed.
 
-    QString userId; // Resolved only from a session or local-owner recovery access.
+    bool ssoAuthorized = false; // Set only by the HTTP signature gate.
+    QString userId;             // Resolved only from a session or local-owner recovery access.
     std::shared_ptr<void> authorizationLease; // Held through async response completion.
 };
 
@@ -72,6 +76,7 @@ struct HttpResponse
     QString contentType;
     QMap<QString, QString> headers;
     QByteArray body;
+    QStringList additionalCookies; // Separate Set-Cookie fields; never comma-join cookies.
 
     static HttpResponse json(const QJsonObject& obj, int status = 200);
     static HttpResponse text(const QString& text, int status = 200);

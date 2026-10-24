@@ -51,10 +51,30 @@ OidcClient::OidcClient(AuthManager& auth, HttpServer& server, AppSettings& setti
                               [this](const HttpRequest& req, ResponseCallback respond) {
                                   callback(req, std::move(respond));
                               });
+    server.router()->postAsync("/api/auth/oidc/backchannel-logout",
+                               [this](const HttpRequest& req, ResponseCallback done) {
+                                   backchannel(req, std::move(done));
+                               });
+    server.router()->post("/api/auth/oidc/activate", [this](const HttpRequest& req) {
+        const auto ticket = QJsonDocument::fromJson(req.body).object()["ticket"].toString();
+        if (!m_auth.activateSso(HttpServer::sessionTokenFromRequest(req), ticket, req))
+            return HttpResponse::error(401, "sso_revalidation_required");
+        return HttpResponse::json({{"ok", true}});
+    });
+    server.router()->post("/api/auth/ws-ticket", [this](const HttpRequest& req) {
+        const auto path = QJsonDocument::fromJson(req.body).object()["path"].toString();
+        const auto ticket = req.ssoAuthorized
+                                ? m_auth.ssoWsTicket(HttpServer::sessionTokenFromRequest(req),
+                                                     req.headers.value("x-mw-page-id"), path)
+                                : QString();
+        if (ticket.isEmpty()) return HttpResponse::error(403, "Not authorised");
+        return HttpResponse::json({{"ticket", ticket}, {"expires_in", 10}});
+    });
     registerAdminRoutes();
     connect(&auth, &AuthManager::authConfigChanged, this, [this]() {
         m_pending.clear();
         m_links.clear();
+        m_recentLogins.clear();
     });
     auto timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &OidcClient::purge);
@@ -80,6 +100,17 @@ QString OidcClient::digest(const QString& value)
 void OidcClient::purge()
 {
     const qint64 now = QDateTime::currentSecsSinceEpoch();
+    for (auto it = m_recentLogins.begin(); it != m_recentLogins.end();)
+        if (now - it->issued >= 30)
+            it = m_recentLogins.erase(it);
+        else
+            ++it;
+    for (auto* table : {&m_sidRevocations, &m_subjectRevocations})
+        for (auto it = table->begin(); it != table->end();)
+            if (it.value() < now - SsoSessionSecurity::Lifetime - 300)
+                it = table->erase(it);
+            else
+                ++it;
     for (auto it = m_links.begin(); it != m_links.end();) {
         if (now - it->issued >= 300)
             it = m_links.erase(it);
@@ -153,13 +184,45 @@ void OidcClient::prepare(const HttpRequest& req, ResponseCallback respond)
         }
         pending.targetUser = req.pathParams.value("id");
     }
+    pending.page = body.value("page_id").toString();
+    pending.returnPath = body.value("return_path").toString("/");
+    const QStringList destinations = {"/",
+                                      "/admin",
+                                      "/sessions",
+                                      "/admin?oidc_link=ready",
+                                      "/admin?oidc_link=error",
+                                      "/admin?oidc_link=conflict"};
+    if (!destinations.contains(pending.returnPath)) {
+        respond(HttpResponse::error(400, "Invalid return destination"));
+        return;
+    }
+    pending.revalidate = body.value("purpose").toString() == "revalidate";
     pending.publicKey = QByteArray::fromBase64(body["public_key"].toString().toLatin1());
-    if (!pending.publicKey.isEmpty() && !PairingCrypto::isValidP256Spki(pending.publicKey)) {
+    if ((!pending.targetUser.isEmpty() ? !pending.publicKey.isEmpty() : true) &&
+        !PairingCrypto::isValidP256Spki(pending.publicKey)) {
         respond(HttpResponse::error(400, "Invalid browser pairing key"));
         return;
     }
     pending.machine = body["machine_name"].toString().left(128);
     pending.previousToken = HttpServer::sessionTokenFromRequest(req);
+    if (pending.targetUser.isEmpty() && !SsoSessionSecurity::pageName(pending.page)) {
+        respond(HttpResponse::error(400, "Invalid page context"));
+        return;
+    }
+    const auto previous = m_auth.sessionForToken(pending.previousToken);
+    if (previous.authMethod == "sso" && !previous.token.isEmpty()) {
+        const bool proven =
+            previous.pairingKey == pending.publicKey &&
+            (req.ssoAuthorized || m_auth.authorizeSsoProof(pending.previousToken, req));
+        if (pending.revalidate && !proven) {
+            respond(HttpResponse::error(401, "Browser proof required"));
+            return;
+        }
+        if (!proven && pending.targetUser.isEmpty()) pending.previousToken.clear();
+    } else if (pending.revalidate) {
+        respond(HttpResponse::error(401, "SSO session missing"));
+        return;
+    }
     pending.remember = body["remember"].toBool(true);
     pending.ip = req.clientAddress;
     pending.issued = QDateTime::currentSecsSinceEpoch();
@@ -195,7 +258,10 @@ void OidcClient::prepare(const HttpRequest& req, ResponseCallback respond)
                     query.addQueryItem("client_id", c.clientId);
                     query.addQueryItem("redirect_uri", c.callbackUrl());
                     query.addQueryItem("scope", it->config.scopes);
-                    if (!it->targetUser.isEmpty()) query.addQueryItem("prompt", "select_account");
+                    if (!it->targetUser.isEmpty())
+                        query.addQueryItem("prompt", "select_account");
+                    else if (it->revalidate)
+                        query.addQueryItem("prompt", "none");
                     query.addQueryItem("state", state);
                     query.addQueryItem("nonce", it->nonce);
                     query.addQueryItem("code_challenge", digest(it->verifier));
@@ -204,7 +270,7 @@ void OidcClient::prepare(const HttpRequest& req, ResponseCallback respond)
                     auto response = HttpResponse::json(
                         {{"authorization_url", authorization.toString(QUrl::FullyEncoded)}});
                     response.headers["Set-Cookie"] =
-                        "__Host-mw_oidc=" + cookie +
+                        "__Host-mw_oidc_" + state + "=" + cookie +
                         "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=300";
                     respond(response);
                 });
@@ -218,7 +284,7 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
     }
     purge();
     const QString state = req.queryParams.value("state");
-    const QString cookie = HttpServer::cookieFromRequest(req, "__Host-mw_oidc");
+    const QString cookie = HttpServer::cookieFromRequest(req, "__Host-mw_oidc_" + state);
     const QByteArray expectedCookie = m_pending.value(state).cookieHash.toLatin1();
     const QByteArray actualCookie = digest(cookie).toLatin1();
     if (!m_pending.contains(state) || cookie.isEmpty() ||
@@ -231,6 +297,12 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
         return;
     }
     const Pending pending = m_pending.take(state); // one use, even after a provider error
+    const auto originalRespond = respond;
+    respond = [originalRespond, state](HttpResponse response) {
+        response.additionalCookies.append("__Host-mw_oidc_" + state +
+                                          "=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0");
+        originalRespond(std::move(response));
+    };
     const QString code = req.queryParams.value("code");
     if (code.isEmpty() || code.size() > 4096 || req.queryParams.contains("error") ||
         (req.queryParams.contains("iss") &&
@@ -288,6 +360,15 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                         return;
                     }
                     try {
+                        const auto sidClaim = (*claims)["sid"];
+                        const auto sid = sidClaim.toString();
+                        if ((claims->contains("sid") &&
+                             (!sidClaim.isString() || sid.isEmpty() || sid.size() > 1024)) ||
+                            revoked(pending.config.issuer, (*claims)["sub"].toString(), sid,
+                                    (*claims)["iat"].toVariant().toLongLong())) {
+                            respond(redirect("/?auth_error=sso"));
+                            return;
+                        }
                         const auto role = (*claims)["moonlight_role"];
                         const auto ssoRole = role.isString() && role.toString() == "internal_admin"
                                                  ? QStringLiteral("admin")
@@ -325,6 +406,16 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                             respond(response);
                             return;
                         }
+                        const auto before = m_auth.sessionForToken(pending.previousToken);
+                        const auto expectedUser = m_auth.users().get(before.userId);
+                        if (pending.revalidate &&
+                            (before.authMethod != "sso" ||
+                             expectedUser.issuer != pending.config.issuer ||
+                             expectedUser.subject != (*claims)["sub"].toString())) {
+                            m_auth.logoutSession(pending.previousToken);
+                            respond(redirect("/?auth_error=sso_account_changed"));
+                            return;
+                        }
                         auto user = m_auth.users().upsert(
                             pending.config.issuer, (*claims)["sub"].toString(),
                             (*claims)["name"].toString(
@@ -334,27 +425,56 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                             return;
                         }
                         user = m_auth.synchronizeSsoRole(user, ssoRole, pending.config);
+                        // Unchanged revalidation preserves the cookie and other tabs/streams.
+                        const bool reuse =
+                            pending.revalidate && m_auth.validateSession(pending.previousToken) &&
+                            before.userId == user.id && before.pairingKey == pending.publicKey &&
+                            before.ssoSid == sid;
+                        const auto recentKey =
+                            digest(pending.config.signature() + ':' + user.id + ':' +
+                                   PairingCrypto::keyId(pending.publicKey) + ':' + sid + ':' +
+                                   QString::number(pending.remember));
+                        const auto recent = m_recentLogins.value(recentKey);
+                        const bool concurrent =
+                            !reuse && !m_auth.validateSession(pending.previousToken) &&
+                            recent.issued >= pending.issued && m_auth.validateSession(recent.token);
                         const QString token =
-                            m_auth.createSession(req.clientAddress, pending.machine, false,
-                                                 !pending.remember, false, user.id, "sso");
-                        if (token.isEmpty() || !m_auth.proveSsoAdministrator(token)) {
+                            reuse ? pending.previousToken
+                            : concurrent
+                                ? recent.token
+                                : m_auth.createSession(req.clientAddress, pending.machine, false,
+                                                       !pending.remember, false, user.id, "sso");
+                        if (token.isEmpty() ||
+                            (!reuse && !concurrent &&
+                             !m_auth.establishSso(token, pending.config.issuer, user.subject, sid,
+                                                  pending.publicKey)) ||
+                            !m_auth.proveSsoAdministrator(
+                                token, (*claims)["iat"].toVariant().toLongLong())) {
                             m_auth.logoutSession(token);
                             respond(redirect("/?auth_error=sso"));
                             return;
                         }
+                        if (!reuse && !concurrent && m_recentLogins.size() < 1024)
+                            m_recentLogins[recentKey] = {token, QDateTime::currentSecsSinceEpoch()};
                         if (!pending.publicKey.isEmpty() &&
                             !m_auth.bindSessionKey(token, pending.publicKey)) {
                             m_auth.logoutSession(token);
                             respond(redirect("/?auth_error=sso"));
                             return;
                         }
-                        m_auth.logoutSession(pending.previousToken);
+                        if (!reuse) m_auth.logoutSession(pending.previousToken);
                         m_auth.authorizeIdentityRenewal(token, m_settings.hostSigningPublicKey());
-                        auto response = redirect("/");
+                        const auto activation = m_auth.ssoActivation(token, pending.page);
+                        if (activation.isEmpty()) {
+                            m_auth.logoutSession(token);
+                            respond(redirect("/?auth_error=sso"));
+                            return;
+                        }
+                        auto response = redirect(pending.returnPath + "#mw-sso=" + activation +
+                                                 "." + pending.page);
                         response.headers["Set-Cookie"] =
                             "__Host-mw_session=" + token +
-                            "; HttpOnly; Secure; SameSite=Strict; Path=/" +
-                            (pending.remember ? QStringLiteral("; Max-Age=7776000") : QString());
+                            "; HttpOnly; Secure; SameSite=Strict; Path=/";
                         respond(response);
                     } catch (const std::exception&) {
                         respond(redirect("/?auth_error=sso"));
@@ -523,4 +643,79 @@ void OidcClient::registerAdminRoutes()
             return HttpResponse::error(409, "OIDC identity is already assigned");
         }
     });
+}
+
+bool OidcClient::revoked(const QString& issuer, const QString& subject, const QString& sid,
+                         qint64 issued) const
+{
+    const auto prefix = issuer + QChar(0);
+    return m_subjectRevocations.value(prefix + subject, -1) >= issued ||
+           (!sid.isEmpty() && qMax(m_sidRevocations.value(prefix + sid + QChar(0) + subject, -1),
+                                   m_sidRevocations.value(prefix + sid + QChar(0), -1)) >= issued);
+}
+void OidcClient::backchannel(const HttpRequest& req, ResponseCallback done)
+{
+    const auto config = m_auth.config();
+    if (!config.sso || req.body.size() > 65536) {
+        done(HttpResponse::error(400, "Invalid logout"));
+        return;
+    }
+    const QUrlQuery form(QString::fromUtf8(req.body));
+    const auto jwt = form.queryItemValue("logout_token", QUrl::FullyDecoded).toLatin1();
+    if (form.allQueryItemValues("logout_token").size() != 1 || jwt.isEmpty()) {
+        done(HttpResponse::error(400, "Invalid logout"));
+        return;
+    }
+    const auto revision = m_auth.configRevision();
+    auto discovery = config.issuer;
+    if (!discovery.endsWith('/')) discovery += '/';
+    requestJson(
+        config, QUrl(discovery + ".well-known/openid-configuration"), {}, {}, false,
+        [this, config, revision, jwt, done](bool ok, const QJsonObject& metadata) {
+            if (!ok || revision != m_auth.configRevision() ||
+                metadata["issuer"].toString() != config.issuer ||
+                !httpsEndpoint(metadata["jwks_uri"].toString())) {
+                done(HttpResponse::error(503, "Provider unavailable"));
+                return;
+            }
+            requestJson(
+                config, QUrl(metadata["jwks_uri"].toString()), {}, {}, false,
+                [this, config, revision, jwt, done](bool keysOk, const QJsonObject& keys) {
+                    if (!keysOk || revision != m_auth.configRevision()) {
+                        done(HttpResponse::error(503, "Provider unavailable"));
+                        return;
+                    }
+                    const auto time = QDateTime::currentSecsSinceEpoch();
+                    const auto claims = keysOk && revision == m_auth.configRevision()
+                                            ? OidcToken::verifyLogout(jwt, keys, config, time)
+                                            : std::nullopt;
+                    if (!claims) {
+                        done(HttpResponse::error(400, "Invalid logout"));
+                        return;
+                    }
+                    for (auto it = m_logoutReceipts.begin(); it != m_logoutReceipts.end();)
+                        if (it.value() <= time)
+                            it = m_logoutReceipts.erase(it);
+                        else
+                            ++it;
+                    const auto receipt = config.signature() + ':' + (*claims)["jti"].toString();
+                    if (m_logoutReceipts.contains(receipt)) {
+                        done(HttpResponse::json({{"ok", true}}));
+                        return;
+                    }
+                    const auto sid = (*claims)["sid"].toString(), sub = (*claims)["sub"].toString();
+                    const auto issued = (*claims)["iat"].toVariant().toLongLong();
+                    auto& tombstones = sid.isEmpty() ? m_subjectRevocations : m_sidRevocations;
+                    const auto target =
+                        config.issuer + QChar(0) + (sid.isEmpty() ? sub : sid + QChar(0) + sub);
+                    tombstones[target] = qMax(tombstones.value(target, -1), issued);
+                    try {
+                        m_auth.revokeSso(config.issuer, sub, sid, issued);
+                        m_logoutReceipts[receipt] = time + 600;
+                        done(HttpResponse::json({{"ok", true}}));
+                    } catch (const std::exception&) {
+                        done(HttpResponse::error(503, "Revocation could not be persisted"));
+                    }
+                });
+        });
 }

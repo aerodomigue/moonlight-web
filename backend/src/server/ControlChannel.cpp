@@ -60,6 +60,7 @@ bool ControlChannel::start()
         }
     }
     m_Port = m_Server->serverPort();
+    m_Server->setSupportedSubprotocols({QStringLiteral("moonlight-session-v1")});
     connect(m_Server, &QWebSocketServer::newConnection, this, &ControlChannel::onNewConnection);
     Logger::info(QStringLiteral("[ControlChannel] Listening on 127.0.0.1:%1").arg(m_Port));
     return true;

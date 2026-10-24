@@ -19,6 +19,7 @@
  * MoonlightWeb — REST API client
  */
 
+import { SsoSession, authenticatedFetch } from './SsoSession.js';
 import { t } from '../i18n/i18n.js';
 
 /**
@@ -124,7 +125,7 @@ export class BackendClient {
                     timer = setTimeout(() => controller.abort(), 3000);
                 }
                 try {
-                    const resp = await fetch('/api/admin/token', {
+                    const resp = await authenticatedFetch('/api/admin/token', {
                         cache: 'no-store',
                         signal: controller ? controller.signal : undefined,
                     });
@@ -173,7 +174,10 @@ export class BackendClient {
         // and keep the bare-401 fallback for an answer that carries no body.
         const isAuthEndpoint =
             path.startsWith('/api/auth/') || path.startsWith('/api/share/player/');
-        const isSessionLost = msg === 'authentication_required' || (resp.status === 401 && !msg);
+        const isSessionLost =
+            msg === 'authentication_required' ||
+            msg === 'sso_revalidation_required' ||
+            (resp.status === 401 && !msg);
         if (this._hadSession && !isAuthEndpoint && isSessionLost) {
             if (!sessionStorage.getItem('mw_auth_reload')) {
                 sessionStorage.setItem('mw_auth_reload', '1');
@@ -209,7 +213,7 @@ export class BackendClient {
     }
 
     static async get(path) {
-        const resp = await fetch(path);
+        const resp = await authenticatedFetch(path);
         if (!resp.ok) return this._handleError(resp, path);
         return this._json(resp);
     }
@@ -229,7 +233,7 @@ export class BackendClient {
             const adminKey = await this._adminKey();
             if (adminKey) headers['X-MW-Admin-Key'] = adminKey;
 
-            const resp = await fetch(path, {
+            const resp = await authenticatedFetch(path, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(body),
@@ -264,7 +268,7 @@ export class BackendClient {
         const adminKey = await this._adminKey();
         if (adminKey) headers['X-MW-Admin-Key'] = adminKey;
 
-        const resp = await fetch(path, { method: 'DELETE', headers });
+        const resp = await authenticatedFetch(path, { method: 'DELETE', headers });
         if (!resp.ok) return this._handleError(resp, path);
         return this._json(resp);
     }
@@ -459,9 +463,12 @@ export class BackendClient {
         try {
             // This device's own, where each device has a seat (MultiSeat).
             const device = encodeURIComponent(this.clientUniqueId());
-            const resp = await fetch(`/api/hosts/${hostId}/running-app?client_uniqueid=${device}`, {
-                signal: controller ? controller.signal : undefined,
-            });
+            const resp = await authenticatedFetch(
+                `/api/hosts/${hostId}/running-app?client_uniqueid=${device}`,
+                {
+                    signal: controller ? controller.signal : undefined,
+                },
+            );
             if (!resp.ok) return this._handleError(resp, 'running-app');
             return this._json(resp);
         } finally {
@@ -612,6 +619,7 @@ export class BackendClient {
         const result = await this.post('/api/auth/oidc/prepare', {
             machine_name: machineName,
             remember,
+            page_id: SsoSession.page(),
             public_key: identity?.publicKeyBase64 || undefined,
         });
         try {
@@ -639,6 +647,7 @@ export class BackendClient {
             public_key: identity?.publicKeyBase64 || undefined,
         });
         if (resp?.host_public_key) {
+            SsoSession.reset();
             await this._renewHostIdentity(identity);
         } else {
             throw this._identityError('identityRenewalFailed');
@@ -885,7 +894,7 @@ export class BackendClient {
 
     /** Download the certificate token as a text file. Returns the raw text content. */
     static async downloadCertificate() {
-        const resp = await fetch('/api/admin/certificate/download');
+        const resp = await authenticatedFetch('/api/admin/certificate/download');
         if (!resp.ok) return this._handleError(resp);
         return resp.text();
     }
@@ -899,6 +908,7 @@ export class BackendClient {
             remember: remember !== false,
             public_key: identity?.publicKeyBase64 || undefined,
         });
+        if (resp?.status === 'ok') SsoSession.reset();
         if (resp?.host_public_key) {
             await rememberHostIdentity(resp.host_public_key, resp.host_id);
         }
@@ -973,7 +983,7 @@ export class BackendClient {
      *  on the 401/connection failures that are normal while the server restarts. */
     static async probeHealth() {
         try {
-            const resp = await fetch('/api/health', { cache: 'no-store' });
+            const resp = await authenticatedFetch('/api/health', { cache: 'no-store' });
             if (!resp.ok) return null;
             return await resp.json();
         } catch (_) {
@@ -1006,7 +1016,7 @@ export class BackendClient {
      */
     static async downloadLogArchive(onProgress) {
         const path = '/api/logs/archive/download';
-        const resp = await fetch(path, { cache: 'no-store' });
+        const resp = await authenticatedFetch(path, { cache: 'no-store' });
         if (!resp.ok) return this._handleError(resp, path);
         const total = Number(resp.headers.get('Content-Length')) || 0;
         // No length (a proxy that re-chunks it) or no stream: all at once.

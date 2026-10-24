@@ -28,6 +28,7 @@
 #include <QJsonObject>
 #include "AuthConfig.h"
 #include "UserStore.h"
+#include "SsoSessionSecurity.h"
 
 class QTimer;
 
@@ -38,6 +39,8 @@ struct SessionInfo
 {
     QString userId = UserStore::localId();
     QString authMethod = QStringLiteral("pin");
+    QString ssoIssuer, ssoSubject, ssoSid;
+    qint64 ssoIssuedAt = 0;
     QString ssoAdminConfig; // Verified ID-token role proof, bound to this login/configuration.
     quint64 roleRevision = 0;
     QString token; // stored value is the SHA-256 of the cookie token (opaque id),
@@ -92,6 +95,10 @@ struct SessionInfo
         QJsonObject obj;
         obj["user_id"] = userId;
         obj["auth_method"] = authMethod;
+        obj["sso_issuer"] = ssoIssuer;
+        obj["sso_subject"] = ssoSubject;
+        obj["sso_sid"] = ssoSid;
+        obj["sso_issued_at"] = ssoIssuedAt;
         obj["sso_admin_config"] = ssoAdminConfig;
         obj["role_revision"] = static_cast<qint64>(roleRevision);
         obj["token"] = token;
@@ -155,7 +162,18 @@ public:
     const UserStore& users() const { return m_users; }
     // Account authority and session proof are deliberately separate.
     bool passwordUnlockEligible(const QString& token) const;
-    bool proveSsoAdministrator(const QString& token);
+    bool proveSsoAdministrator(const QString& token, qint64 issued = 0);
+    bool establishSso(const QString& token, const QString& issuer, const QString& subject,
+                      const QString& sid, const QByteArray& key);
+    bool authorizeSsoRequest(const QString& token, const HttpRequest& req);
+    bool authorizeSsoProof(const QString& token, const HttpRequest& req);
+    QString ssoActivation(const QString& token, const QString& page);
+    bool activateSso(const QString& token, const QString& ticket, const HttpRequest& req);
+    QString ssoWsTicket(const QString& token, const QString& page, const QString& path);
+    bool authorizeSsoWebSocket(const QString& token, const HttpRequest& req);
+    void revokeSso(const QString& issuer, const QString& subject, const QString& sid,
+                   qint64 issued = 0);
+
     UserAccount synchronizeSsoRole(UserAccount user, const QString& role, const AuthConfig& config);
     bool isSsoAdmin(const QString& token) const;
     QString effectiveRole(const UserAccount& user) const;
@@ -479,6 +497,7 @@ private:
         long long lockoutUntilEpoch = 0;
     };
 
+    SsoSessionSecurity m_ssoSecurity;
     AuthConfig m_config;
     quint64 m_configRevision = 0;
     UserStore m_users;

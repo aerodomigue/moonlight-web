@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { SsoSession } from './SsoSession.js';
 import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
 import { closeHidChannel, createHidChannel, sendHidFrame } from '../hid/hidWire.js';
 import { armAudioPlayRetry } from '../util/audioAutoplay.js';
@@ -214,7 +215,27 @@ export class WebRtcMedia {
         if (this._stopping) return;
 
         console.log('[WebRtcMedia] Connecting to signaling:', this.signalingUrl);
-        this.signalingWs = openSignalingSocket(this.signalingUrl);
+        if (SsoSession.sessionId && !this._ssoSocketProtocols) {
+            if (this._ssoSocketPending) return;
+            this._ssoSocketPending = true;
+            SsoSession.protocols(this.signalingUrl)
+                .then((protocols) => {
+                    this._ssoSocketPending = false;
+                    if (this._stopping) return;
+                    this._ssoSocketProtocols = protocols;
+                    this.connect();
+                })
+                .catch(() => {
+                    this._ssoSocketPending = false;
+                    this._onError('SSO revalidation required');
+                });
+            return;
+        }
+        const protocols = this._ssoSocketProtocols;
+        this._ssoSocketProtocols = null;
+        this.signalingWs = protocols
+            ? openSignalingSocket(this.signalingUrl, protocols)
+            : openSignalingSocket(this.signalingUrl);
 
         this.signalingWs.onopen = () => {
             this._wsHadOpen = true;

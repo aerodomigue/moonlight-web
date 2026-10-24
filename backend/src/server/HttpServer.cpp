@@ -714,6 +714,11 @@ quint16 HttpServer::authorizeTunnelWebSocket(const HttpRequest& req, QString* ou
         m_ConnGuard.reportAuthFailure(req.clientAddress);
         return refuse(QStringLiteral("authentication required"));
     }
+    const auto ssoToken = sessionTokenFromRequest(req);
+    if (m_AuthManager && !ssoToken.isEmpty() &&
+        m_AuthManager->sessionForToken(ssoToken).authMethod == "sso" &&
+        !m_AuthManager->authorizeSsoWebSocket(ssoToken, req))
+        return refuse(QStringLiteral("SSO WebSocket ticket required"));
     if (m_OwnerSlotAuth && !m_OwnerSlotAuth(req, slot))
         return refuse(QStringLiteral("not authorised for this stream slot"));
     return targetPort;
@@ -1192,6 +1197,23 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     const bool peerLocal = !viaTunnel && !req.viaProxy && isLocalRequest(req.clientAddress) &&
                            !req.headers.contains("x-mw-internal-fetch");
     const QString sessionToken = sessionTokenFromRequest(req);
+    const bool ssoCookie = m_AuthManager && !sessionToken.isEmpty() &&
+                           m_AuthManager->sessionForToken(sessionToken).authMethod == "sso" &&
+                           !m_AuthManager->sessionForToken(sessionToken).token.isEmpty();
+    const bool ssoBootstrap =
+        req.path == "/api/auth/status" || req.path == "/api/auth/oidc/prepare" ||
+        req.path == "/api/auth/oidc/callback" || req.path == "/api/auth/oidc/activate" ||
+        req.path == "/api/auth/oidc/backchannel-logout" || req.path == "/api/auth/validate" ||
+        req.path == "/api/health" || req.path.startsWith("/api/share/player/");
+    if (ssoCookie && req.path.startsWith("/api/")) {
+        req.ssoAuthorized = m_AuthManager->authorizeSsoRequest(sessionToken, req);
+        if (!req.ssoAuthorized && !ssoBootstrap) {
+            auto response = HttpResponse::error(401, "sso_revalidation_required");
+            response.headers["Cache-Control"] = "no-store";
+            respond(response);
+            return;
+        }
+    }
 
     // The single exception, computed once so the two lines below cannot drift
     // apart: a host session that was itself created on this path, by redeeming
@@ -1200,11 +1222,12 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         viaTunnel && m_AuthManager && m_AuthManager->isTunnelHostSession(sessionToken);
 
     RequestGuard::Context ctx;
-    ctx.peerLocal = peerLocal;
+    ctx.peerLocal = peerLocal && !ssoCookie;
     ctx.hostSession =
         m_AuthManager && m_AuthManager->isHostSession(sessionToken) && (!viaTunnel || tunnelHost);
-    ctx.adminSession = m_AuthManager && (m_AuthManager->isAdminSession(sessionToken) ||
-                                         m_AuthManager->isSsoAdmin(sessionToken));
+    ctx.adminSession =
+        m_AuthManager && (!ssoCookie || req.ssoAuthorized) &&
+        (m_AuthManager->isAdminSession(sessionToken) || m_AuthManager->isSsoAdmin(sessionToken));
     // The admin key has to follow the two sessions that carry admin rights
     // through the tunnel, or they would be read-only: admin WRITES require it,
     // so an admin page that loads and then refuses every change is worse than
@@ -1251,7 +1274,8 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     req.isLocal = decision.adminPrivilege;
     req.isHostMachine = decision.hostMachine;
     req.hostTrusted = decision.hostTrusted;
-    if (m_AuthManager && m_AuthManager->validateSession(sessionToken))
+    if (m_AuthManager && (!ssoCookie || req.ssoAuthorized) &&
+        m_AuthManager->validateSession(sessionToken))
         req.userId = m_AuthManager->sessionForToken(sessionToken).userId;
     else if (localPrivilege || req.isHostMachine)
         req.userId = UserStore::localId();
@@ -1526,6 +1550,14 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // activation is what opens it — and nothing else, not even a local peer.
     const bool localPrivilege = !up.viaProxy && HttpServer::isLocalRequest(peerAddr) &&
                                 RequestGuard::isLocalHostName(up.headers.value("host"));
+    const auto wsToken = sessionTokenFromRequest(up);
+    if (!playerSlot && m_AuthManager && !wsToken.isEmpty() &&
+        m_AuthManager->sessionForToken(wsToken).authMethod == "sso" &&
+        !m_AuthManager->sessionForToken(wsToken).token.isEmpty() &&
+        !m_AuthManager->authorizeSsoWebSocket(wsToken, up)) {
+        sendResponse(clientSocket, HttpResponse::error(401, "SSO WebSocket ticket required"));
+        return;
+    }
     if (playerSlot) {
         if (!m_PlayerSlotAuth || !m_PlayerSlotAuth(up, wsSlot)) {
             m_ConnGuard.reportAuthFailure(peerAddr);
@@ -1557,6 +1589,15 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // const reference to the QByteArray inside m_Buffers — remove() destroys it.
     // NOLINTNEXTLINE(performance-unnecessary-copy-initialization) — copy is required.
     QByteArray upgradeRequest = requestData;
+    if (m_AuthManager && !wsToken.isEmpty() &&
+        m_AuthManager->sessionForToken(wsToken).authMethod == "sso") {
+        // The consumed credential must never reach the internal WS server/logging.
+        const int begin = upgradeRequest.toLower().indexOf("\r\nsec-websocket-protocol:");
+        const int end = upgradeRequest.indexOf("\r\n", begin + 2);
+        if (begin >= 0 && end > begin)
+            upgradeRequest.replace(begin, end - begin,
+                                   "\r\nSec-WebSocket-Protocol: moonlight-session-v1");
+    }
 
     // Remove from our tracking — HttpServer should no longer manage this socket.
     m_Buffers.remove(clientSocket);
@@ -1675,6 +1716,7 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response,
     case 431: statusText = "Request Header Fields Too Large"; break;
     case 500: statusText = "Internal Server Error"; break;
     case 501: statusText = "Not Implemented"; break;
+    case 503: statusText = "Service Unavailable"; break;
     case 504: statusText = "Gateway Timeout"; break;
     default: statusText = "Unknown"; break;
     }
@@ -1709,6 +1751,8 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response,
         respData.append(sanitizeHeaderValue(it.key()).toUtf8() + ": " +
                         sanitizeHeaderValue(it.value()).toUtf8() + "\r\n");
 
+    for (const auto& cookie : response.additionalCookies)
+        respData.append("Set-Cookie: " + sanitizeHeaderValue(cookie).toUtf8() + "\r\n");
     respData.append("\r\n");
     respData.append(response.body);
 

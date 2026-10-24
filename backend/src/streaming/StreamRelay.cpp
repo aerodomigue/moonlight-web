@@ -190,6 +190,7 @@ bool StreamRelay::start()
         return false;
     }
 
+    m_WsServer->setSupportedSubprotocols({QStringLiteral("moonlight-session-v1")});
     connect(m_WsServer, &QWebSocketServer::newConnection, this, &StreamRelay::onNewWsConnection);
 
     qInfo() << "[StreamRelay] WS server listening OK, m_StreamStarted=" << m_StreamStarted;
