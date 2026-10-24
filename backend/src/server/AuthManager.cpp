@@ -27,6 +27,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -38,6 +39,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <stdexcept>
 
 AuthManager::AuthManager(AppSettings* settings, QObject* parent, AuthConfig config)
     : QObject(parent)
@@ -115,9 +117,9 @@ QByteArray AuthManager::generateHmac(const QString& data) const
     return QMessageAuthenticationCode::hash(data.toUtf8(), m_hmacKey, QCryptographicHash::Sha256);
 }
 
-void AuthManager::saveSessions()
+bool AuthManager::saveSessions()
 {
-    if (!m_settings) return;
+    if (!m_settings) return true;
 
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
@@ -134,13 +136,14 @@ void AuthManager::saveSessions()
     QJsonObject root;
     root["sessions"] = arr;
 
-    QFile file(path);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-        file.close();
-    } else {
-        Logger::warning("[AuthManager] Failed to write sessions file: " + path);
+    QSaveFile file(path);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+        const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
+        if (file.write(bytes) == bytes.size() && file.commit()) return true;
     }
+    Logger::warning("[AuthManager] Failed to commit sessions file");
+    return false;
 }
 
 void AuthManager::loadSessions()
@@ -177,7 +180,7 @@ void AuthManager::loadSessions()
         info.authMethod =
             obj.value("auth_method")
                 .toString(obj["is_host"].toBool() ? QStringLiteral("host") : QStringLiteral("pin"));
-        if (!m_users.contains(info.userId)) continue;
+        if (!m_users.active(info.userId)) continue;
         info.token = obj["token"].toString();
         info.ip = obj["ip"].toString();
         info.machineName = obj["machine_name"].toString();
@@ -540,7 +543,8 @@ AuthManager::ValidateResult AuthManager::validateAccountPin(const QString& ip, c
         if (hasValidPin() && constantTimeEquals(pin, m_currentPin)) userId = UserStore::localId();
         const qint64 now = nowSecs > 0 ? nowSecs : QDateTime::currentSecsSinceEpoch();
         for (auto it = m_userPins.cbegin(); it != m_userPins.cend(); ++it) {
-            if (constantTimeEquals(pin, it.value()) && m_userPinExpiry.value(it.key()) > now)
+            if (constantTimeEquals(pin, it.value()) && m_userPinExpiry.value(it.key()) > now &&
+                m_users.active(it.key()))
                 userId = it.key();
         }
     }
@@ -554,7 +558,7 @@ AuthManager::ValidateResult AuthManager::validateAccountPin(const QString& ip, c
 
 QString AuthManager::generateUserPin(const QString& userId, qint64 nowSecs)
 {
-    if (!m_config.pin || !m_users.contains(userId)) return {};
+    if (!m_config.pin || !m_users.active(userId)) return {};
     if (userId == UserStore::localId()) return generatePin();
     QString pin;
     do {
@@ -565,11 +569,71 @@ QString AuthManager::generateUserPin(const QString& userId, qint64 nowSecs)
     return pin;
 }
 
+bool AuthManager::userAdministrator(const UserAccount& user) const
+{
+    if (!m_users.active(user.id)) return false;
+    if (user.id == UserStore::localId() || user.role == "admin") return true;
+    return !user.managedRole && user.issuer == m_config.issuer &&
+           m_config.administrator(user.subject);
+}
+
 bool AuthManager::isSsoAdmin(const QString& token) const
 {
     if (!validateSession(token)) return false;
-    const auto user = m_users.get(sessionForToken(token).userId);
-    return m_config.sso && user.issuer == m_config.issuer && m_config.administrator(user.subject);
+    const auto session = sessionForToken(token);
+    const auto user = m_users.get(session.userId);
+    // Preserve the legacy owner's PIN + remote-admin-password boundary.
+    if (user.id == UserStore::localId() && session.authMethod != "sso") return false;
+    return userAdministrator(user);
+}
+
+bool AuthManager::verifiedSsoAdministrator(const AuthConfig& config) const
+{
+    for (const auto& user : m_users.all()) {
+        if (userAdministrator(user) && user.issuer == config.issuer && !user.subject.isEmpty() &&
+            user.verifiedConfig == config.signature())
+            return true;
+    }
+    return false;
+}
+
+void AuthManager::applyConfig(const AuthConfig& config)
+{
+    const auto error = config.error();
+    if (!error.isEmpty()) throw std::runtime_error(error.toStdString());
+    if (!config.pin && !verifiedSsoAdministrator(config))
+        throw std::runtime_error(
+            "Sign in with SSO and assign an administrator before disabling PIN");
+    const auto sessions = m_sessions;
+    for (const auto& session : sessions) {
+        const bool disabled =
+            (session.authMethod == "pin" || session.authMethod == "certificate")
+                ? !config.pin
+                : (session.authMethod == "sso" &&
+                   (!config.sso || m_users.get(session.userId).issuer != config.issuer));
+        if (disabled) destroySession(session.token);
+    }
+    if (!saveSessions()) throw std::runtime_error("Cannot persist revoked sessions");
+    if (m_settings)
+        config.save(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                    "/auth-config.json");
+    m_config = config;
+    ++m_configRevision;
+    if (!config.pin) {
+        m_userPins.clear();
+        m_userPinExpiry.clear();
+    }
+    emit authConfigChanged();
+}
+
+void AuthManager::revokeUserSessions(const QString& userId)
+{
+    m_userPins.remove(userId);
+    m_userPinExpiry.remove(userId);
+    const auto current = m_sessions;
+    for (const auto& session : current)
+        if (session.userId == userId) destroySession(session.token);
+    if (!saveSessions()) throw std::runtime_error("Cannot persist revoked sessions");
 }
 
 // ── Remote admin password ─────────────────────────────────────────────────────
@@ -713,7 +777,7 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
                                    bool ephemeral, bool viaTunnel, const QString& userId,
                                    const QString& method)
 {
-    if (!m_users.contains(userId)) return {};
+    if (!m_users.active(userId)) return {};
     // Clean IPv4-mapped IPv6 addresses before storing
     QString cleanIp = cleanClientAddress(ip);
 
@@ -758,7 +822,7 @@ bool AuthManager::validateSession(const QString& token) const
     if (token.isEmpty()) return false;
     auto it = m_sessions.find(hashToken(token));
     if (it == m_sessions.end()) return false;
-    if (!m_users.contains(it->userId)) return false;
+    if (!m_users.active(it->userId)) return false;
     if (it->authMethod == QLatin1String("pin") || it->authMethod == QLatin1String("certificate")) {
         if (!m_config.pin) return false;
     } else if (it->authMethod == QLatin1String("sso")) {
@@ -934,16 +998,6 @@ void AuthManager::setSessionStreaming(const QString& token, bool streaming)
     const QString id = hashToken(token);
     bool changed = false;
 
-    // Enforce a single active stream: clear any other session's flag.
-    if (streaming) {
-        for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
-            if (it.key() != id && it->streaming) {
-                it->streaming = false;
-                changed = true;
-            }
-        }
-    }
-
     auto it = m_sessions.find(id);
     if (it != m_sessions.end() && it->streaming != streaming) {
         it->streaming = streaming;
@@ -1060,8 +1114,11 @@ void AuthManager::destroyAllSessions()
             break;
         }
     }
+    const auto removedIds = m_sessions.keys();
     m_sessions.clear();
     saveSessions();
+    for (const auto& id : removedIds)
+        emit sessionDestroyed(id);
     if (count > 0) {
         emit sessionsChanged();
         Logger::info(QString("[Auth] All %1 sessions destroyed").arg(count));

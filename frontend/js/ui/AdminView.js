@@ -34,6 +34,8 @@ import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { refreshClientLog } from '../util/ClientLog.js';
 import { GamepadDriverNotice } from './GamepadDriverNotice.js';
+import { AdminLoginSettings } from './AdminLoginSettings.js';
+import { AdminUsersPanel } from './AdminUsersPanel.js';
 
 export class AdminView {
     // Backend statusJson "phase" values that mean activation is still running.
@@ -124,6 +126,9 @@ export class AdminView {
         // Auth / PIN state (default "------" = no valid PIN, 6 digits)
         this._pin = '------';
         this._pinLoginEnabled = true;
+        this._disposed = false;
+        this._accountAdministration = false;
+        this._accountPanels = [];
         this._pinConsumed = false; // true when PIN was used by remote client
         this._activeSessions = 0;
         this._sessions = [];
@@ -216,6 +221,8 @@ export class AdminView {
         const anchors = {
             internet: '#admin-section-internet',
             sessions: '#admin-section-sessions',
+            users: '#admin-section-users',
+            login: '#admin-section-login',
         };
         const anchor = anchors[this._options.scrollTo];
         // Instant, and twice.
@@ -359,6 +366,7 @@ export class AdminView {
             const status = await BackendClient.getAuthStatus();
             this._hasAdminAccess = !!status.is_localhost;
             this._pinLoginEnabled = status.pin_enabled !== false;
+            this._accountAdministration = status.user_admin_enabled === true;
             this._isRealHostMachine = !!status.is_host_machine;
             this._adminUnlockAvailable = !!status.admin_unlock_available;
             if (status.remote_admin_enabled !== undefined) {
@@ -530,6 +538,9 @@ export class AdminView {
     }
 
     destroy() {
+        this._disposed = true;
+        this._accountPanels.forEach((panel) => panel.destroy());
+        this._accountPanels = [];
         this._stopSessionsPolling();
         this._stopPhasePolling();
         this._stopRendezvousPolling();
@@ -767,6 +778,7 @@ export class AdminView {
                             title="${this.esc(t('admin.closeDiscard'))}">&times;</button>
                 </div>
 
+                ${this._accountAdministration ? '<div id="admin-login-settings"></div><div id="admin-users-panel"></div>' : ''}
                 <!-- PIN (localhost only) -->
                 ${
                     this._isLocalhost() && this._pinLoginEnabled
@@ -1424,6 +1436,26 @@ export class AdminView {
     }
 
     bindEvents() {
+        this._accountPanels.forEach((panel) => panel.destroy());
+        this._accountPanels = [];
+        if (this._accountAdministration && this._isLocalhost()) {
+            const login = this.container.querySelector('#admin-login-settings');
+            const users = this.container.querySelector('#admin-users-panel');
+            if (login && users) {
+                this._accountPanels = [
+                    new AdminLoginSettings(login, async () => {
+                        if (this._disposed) return;
+                        await this._loadAuthStatus();
+                        if (this._disposed) return;
+                        this.render();
+                        this.bindEvents();
+                        Toast.success(t('adminAccounts.saved'));
+                    }),
+                    new AdminUsersPanel(users),
+                ];
+                this._accountPanels.forEach((panel) => panel.start());
+            }
+        }
         // "Your controller has no driver" — the other half of the notice the
         // hosts page shows. Here too because this is the page someone opens
         // when something on the host is not working, and it is where they will

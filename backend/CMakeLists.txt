@@ -266,6 +266,7 @@ add_executable(mw-server
     src/server/AuthManager.cpp
     src/server/AuthConfig.cpp
     src/server/UserStore.cpp
+    src/server/routes/AdminUserRoutes.cpp
     src/server/UserHostAccess.cpp
     src/server/OidcToken.cpp
     src/server/OidcClient.cpp

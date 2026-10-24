@@ -68,6 +68,10 @@ public:
         m_StreamActivePredicate = std::move(predicate);
     }
 
+    void setOwnerActivePredicate(std::function<bool(const QString&)> predicate)
+    {
+        m_OwnerActive = std::move(predicate);
+    }
     // REST API methods
     QJsonArray getHostsJson(const QString& ownerId = QStringLiteral("local-owner")) const;
     void handleScanRequest(const QString& ownerId = QStringLiteral("local-owner"));
@@ -75,6 +79,12 @@ public:
     handleAddManualHost(const QString& address,
                         const QString& ownerId = QStringLiteral("local-owner"));
     std::pair<int, QJsonObject> handleDeleteHost(const QString& uuid);
+    std::pair<int, QJsonObject> reassignHost(const QString& uuid, const QString& owner,
+                                             bool duplicate);
+    bool inProcessStreamActive() const
+    {
+        return m_StreamActivePredicate && m_StreamActivePredicate();
+    }
 
     // Give a host a name of our own. Purely local: nothing is written to the
     // host, which is what lets it work on an offline or unpaired card too. An
@@ -219,7 +229,7 @@ private:
     NvAddress pollAddressFor(const NvComputer* host) const;
     // allowEmpty guards the one destructive case: writing an empty array wipes
     // the stored list for good. Only the explicit delete route may do that.
-    void saveHosts(bool allowEmpty = false);
+    bool saveHosts(bool allowEmpty = false);
     void startPolling();
     void startMdnsDiscovery();
     void stopMdnsDiscovery();
@@ -237,6 +247,7 @@ private:
                                const QString& ownerId = QStringLiteral("local-owner"));
 
     UserAccess::HostLeases m_HostLeases;
+    std::function<bool(const QString&)> m_OwnerActive;
     QSet<QString> m_ScanOwners;
     QMap<QString, NvComputer*> m_Hosts; // uuid → host, all pointers owned here
 

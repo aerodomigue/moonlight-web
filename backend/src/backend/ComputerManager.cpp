@@ -445,7 +445,7 @@ void ComputerManager::loadHosts()
     m_HostsLoaded = true;
 }
 
-void ComputerManager::saveHosts(bool allowEmpty)
+bool ComputerManager::saveHosts(bool allowEmpty)
 {
     QSettings settings;
 
@@ -461,7 +461,7 @@ void ComputerManager::saveHosts(bool allowEmpty)
                                   "(the stored list was %2)")
                               .arg(stored)
                               .arg(m_HostsLoaded ? "read at startup" : "never read"));
-            return;
+            return false;
         }
     }
 
@@ -480,6 +480,7 @@ void ComputerManager::saveHosts(bool allowEmpty)
 
     settings.endArray();
     settings.sync();
+    return settings.status() == QSettings::NoError;
 }
 
 // --- Polling ----------------------------------------------------------------
@@ -960,7 +961,7 @@ bool ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
     NvComputer newHost(serverInfo, addr);
 
     if (newHost.uuid.isEmpty()) return false;
-    if (ownerId.isEmpty()) return false;
+    if (ownerId.isEmpty() || (m_OwnerActive && !m_OwnerActive(ownerId))) return false;
     newHost.physicalUuid = newHost.uuid;
     newHost.ownerId = ownerId;
     newHost.uuid = UserAccess::hostId(ownerId, newHost.physicalUuid);
@@ -977,7 +978,8 @@ bool ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
         // Legacy IDs are raw physical UUIDs. Never merge a legacy/private ID
         // collision across owners, even when a peer deliberately reports it.
         if (existing->ownerId != ownerId) return false;
-        if (!existing->identitySeat.isEmpty()) newHost.pairState = existing->pairState;
+        if (ownerId != UserStore::localId() || !existing->identitySeat.isEmpty())
+            newHost.pairState = existing->pairState;
         // Merge new data into existing host
         if (existing->update(newHost)) {
             saveHosts();
@@ -1015,8 +1017,15 @@ std::shared_ptr<void> ComputerManager::acquireHostLease(const QString& uuid,
 bool ComputerManager::hostOperationBusy(const QString& uuid) const
 {
     const auto* host = getHost(uuid);
-    return host &&
-           m_HostLeases.busy(host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid);
+    if (!host) return false;
+    const auto physical = host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid;
+    if (m_HostLeases.busy(physical)) return true;
+    for (const auto* other : m_Hosts) {
+        if ((other->physicalUuid.isEmpty() ? other->uuid : other->physicalUuid) == physical &&
+            m_SubmitInFlight.contains(other->uuid))
+            return true;
+    }
+    return false;
 }
 
 QJsonArray ComputerManager::diagnosticHostsJson() const
@@ -1241,8 +1250,11 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
     QString name = host->name;
     m_Hosts.remove(uuid);
     m_PollAddrIndex.remove(uuid);
+    if (!saveHosts(/*allowEmpty=*/true)) {
+        m_Hosts[uuid] = host;
+        return {500, {{"status", "error"}, {"message", "Could not persist host deletion"}}};
+    }
     delete host;
-    saveHosts(/*allowEmpty=*/true);
     emit hostsChanged();
 
     Logger::info(QString("Host removed: %1 (%2)").arg(name, uuid));
@@ -1251,6 +1263,39 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
     result["status"] = "ok";
     result["message"] = QString("Host '%1' removed").arg(name);
     return {200, result};
+}
+
+std::pair<int, QJsonObject> ComputerManager::reassignHost(const QString& uuid, const QString& owner,
+                                                          bool duplicate)
+{
+    auto* source = findHostByUuid(uuid);
+    if (!source) return {404, {{"message", "Host not found"}}};
+    if (source->isNativeEngine())
+        return {403, {{"message", "Native capture belongs to the local owner"}}};
+    if (hostOperationBusy(uuid)) return {409, {{"message", "Host operation in progress"}}};
+    const auto physical = source->physicalUuid.isEmpty() ? source->uuid : source->physicalUuid;
+    const auto destination = UserAccess::hostId(owner, physical);
+    if (owner.isEmpty() || m_Hosts.contains(destination))
+        return {409, {{"message", "Destination already has this host"}}};
+    auto* copy = new NvComputer(*source);
+    copy->ownerId = owner;
+    copy->uuid = destination;
+    copy->physicalUuid = physical;
+    // Intentionally share the existing identity, including the empty legacy seat.
+    m_Hosts[destination] = copy;
+    if (!duplicate) m_Hosts.remove(uuid);
+    if (!saveHosts()) {
+        m_Hosts.remove(destination);
+        if (!duplicate) m_Hosts[uuid] = source;
+        delete copy;
+        return {500, {{"message", "Could not persist host reassignment"}}};
+    }
+    if (!duplicate) {
+        m_PollAddrIndex.remove(uuid);
+        delete source;
+    }
+    emit hostsChanged();
+    return {200, {{"status", "ok"}, {"host", copy->toJson()}}};
 }
 
 // --- Rename ------------------------------------------------------------------

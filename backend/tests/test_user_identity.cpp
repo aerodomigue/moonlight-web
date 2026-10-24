@@ -52,6 +52,7 @@ void run_user_identity_tests()
     CHECK_EQ(store.get(alice.id).name, QString("New display name"));
     CHECK(UserStore::oidcId("ab", "c") != UserStore::oidcId("a", "bc"));
     CHECK(UserStore::oidcId("https://other.example/", "alice-sub") != alice.id);
+    CHECK_EQ(store.upsert(config.issuer, "empty-profile", "").name, QString("User"));
     UserStore restored(path);
     CHECK_EQ(restored.get(alice.id).subject, QString("alice-sub"));
     CHECK_EQ(restored.get(bob.id).name, QString("Bob"));
@@ -90,6 +91,116 @@ void run_user_identity_tests()
         refused = true;
     }
     CHECK(refused);
+    SECTION("Managed local accounts and explicit SSO binding");
+    auto local = store.createLocal("Local player");
+    CHECK(local.id.startsWith("local-"));
+    CHECK(store.active(local.id));
+    CHECK_EQ(local.role, QString("user"));
+    store.bind(local.id, config.issuer, "linked-sub", "verified");
+    CHECK_EQ(store.findIdentity(config.issuer, "linked-sub").id, local.id);
+    CHECK_EQ(store.upsert(config.issuer, "linked-sub", "Provider rename").name,
+             QString("Local player"));
+    local = store.get(local.id);
+    local.enabled = false;
+    local.role = "admin";
+    store.update(local);
+    CHECK(!store.active(local.id));
+    CHECK(!store.upsert(config.issuer, "linked-sub", "Still disabled").enabled);
+    bool conflict = false;
+    try {
+        store.bind(bob.id, config.issuer, "linked-sub", "verified");
+    } catch (const std::exception&) {
+        conflict = true;
+    }
+    CHECK(conflict);
+    UserStore managedReload(path);
+    CHECK_EQ(managedReload.findIdentity(config.issuer, "linked-sub").id, local.id);
+    CHECK(!managedReload.active(local.id));
+    CHECK_EQ(managedReload.get(local.id).role, QString("admin"));
+    auto owner = store.get(UserStore::localId());
+    owner.enabled = false;
+    conflict = false;
+    try {
+        store.update(owner);
+    } catch (const std::exception&) {
+        conflict = true;
+    }
+    CHECK(conflict);
+    conflict = false;
+    try {
+        store.remove(UserStore::localId());
+    } catch (const std::exception&) {
+        conflict = true;
+    }
+    CHECK(conflict);
+    store.remove(local.id);
+    CHECK(!store.contains(local.id));
+    CHECK(store.findIdentity(config.issuer, "linked-sub").id.isEmpty());
+
+    SECTION("Private authentication configuration and precedence");
+    auto saved = config;
+    saved.pin = true;
+    saved.clientSecret = "test-only-private-value";
+    const auto authPath = temporary.filePath("auth-config.json");
+    saved.save(authPath);
+    CHECK(!saved.json().contains("client_secret"));
+    CHECK(saved.json()["secret_configured"].toBool());
+    auto bootstrap = saved;
+    bootstrap.pin = false;
+    bootstrap.clientSecret = "wrong-bootstrap-secret";
+    auto loaded = AuthConfig::load(authPath, bootstrap);
+    CHECK(loaded.pin);
+    CHECK_EQ(loaded.clientSecret, saved.clientSecret);
+#ifdef Q_OS_UNIX
+    // POSIX mode bits are not NTFS ACLs. Windows still exercises the full save/load path.
+    CHECK(!(QFile::permissions(authPath) & (QFile::ReadGroup | QFile::ReadOther)));
+#endif
+    CHECK_EQ(AuthConfig::edited(loaded, {{"client_secret", ""}}).clientSecret, saved.clientSecret);
+    CHECK(AuthConfig::edited(loaded, {{"clear_secret", true}}).clientSecret.isEmpty());
+    auto ssoMode = saved;
+    ssoMode.pin = false;
+    CHECK_EQ(saved.signature(), ssoMode.signature());
+    ssoMode.clientId = "changed-client";
+    CHECK(saved.signature() != ssoMode.signature());
+    conflict = false;
+    try {
+        AuthConfig::edited(saved, {{"pin", false}, {"sso", false}});
+    } catch (const std::exception&) {
+        conflict = true;
+    }
+    CHECK(conflict);
+    conflict = false;
+    try {
+        AuthConfig::edited(saved, {{"pin", "false"}});
+    } catch (const std::exception&) {
+        conflict = true;
+    }
+    CHECK(conflict);
+
+    SECTION("Storage failures leave the previous in-memory accounts intact");
+    const auto blockedPath = temporary.filePath("not-a-directory");
+    QFile blocker(blockedPath);
+    CHECK(blocker.open(QIODevice::WriteOnly));
+    blocker.write("block");
+    blocker.close();
+    UserStore failing(blockedPath + "/users.json");
+    bool failedSave = false;
+    try {
+        failing.createLocal("Must not appear");
+    } catch (const std::exception&) {
+        failedSave = true;
+    }
+    CHECK(failedSave);
+    CHECK_EQ(failing.all().size(), 1);
+    failedSave = false;
+    try {
+        saved.save(blockedPath + "/auth-config.json");
+    } catch (const std::exception&) {
+        failedSave = true;
+    }
+    CHECK(failedSave);
+    CHECK_EQ(AuthConfig::load(authPath, bootstrap).clientSecret, saved.clientSecret);
+
     QFile corrupt(path);
     CHECK(corrupt.open(QIODevice::WriteOnly));
     corrupt.write("not-json");
@@ -170,6 +281,66 @@ void run_user_identity_tests()
     CHECK(auth.validateAccountPin("10.2.10.31", expired, matched, 1300).result ==
           AuthManager::InvalidPin);
     CHECK(matched.isEmpty());
+
+    SECTION("Local roles, disabled accounts and safe runtime configuration");
+    AuthManager managed(nullptr, nullptr, mixed);
+    auto player = managed.users().createLocal("PIN administrator", "admin");
+    const auto playerPin = managed.generateUserPin(player.id);
+    CHECK(managed.validateAccountPin("10.2.10.45", playerPin, matched).result ==
+          AuthManager::Valid);
+    const auto playerToken =
+        managed.createSession("10.2.10.45", "Local admin", false, false, false, player.id, "pin");
+    CHECK(managed.isSsoAdmin(playerToken));
+    CHECK(!managed.isSsoAdmin(managed.createSession("10.2.10.46", "Legacy owner")));
+    player.enabled = false;
+    managed.users().update(player);
+    CHECK(!managed.validateSession(playerToken));
+    CHECK(managed.generateUserPin(player.id).isEmpty());
+    CHECK(
+        managed.createSession("10.2.10.45", "Disabled", false, false, false, player.id).isEmpty());
+    managed.revokeUserSessions(player.id);
+    auto only = mixed;
+    only.pin = false;
+    bool unsafe = false;
+    try {
+        managed.applyConfig(only);
+    } catch (const std::exception&) {
+        unsafe = true;
+    }
+    CHECK(unsafe);
+    CHECK(managed.config().pin);
+    auto verifiedAdmin = managed.users().upsert(mixed.issuer, "verified-admin", "Verified");
+    verifiedAdmin.role = "admin";
+    verifiedAdmin.managedRole = true;
+    verifiedAdmin.verifiedConfig = mixed.signature();
+    managed.users().update(verifiedAdmin);
+    CHECK(managed.verifiedSsoAdministrator(only));
+    managed.applyConfig(only);
+    CHECK(!managed.config().pin);
+    CHECK_EQ(managed.configRevision(), quint64(1));
+
+    SECTION("Concurrent accounts keep independent streaming and revocation state");
+    AuthManager concurrent(nullptr, nullptr, mixed);
+    const auto firstUser = concurrent.users().createLocal("First");
+    const auto secondUser = concurrent.users().createLocal("Second");
+    const auto firstToken =
+        concurrent.createSession("10.2.10.60", "First", false, false, false, firstUser.id);
+    const auto secondToken =
+        concurrent.createSession("10.2.10.61", "Second", false, false, false, secondUser.id);
+    concurrent.setSessionStreaming(firstToken, true);
+    concurrent.setSessionStreaming(secondToken, true);
+    int streams = 0;
+    for (const auto& entry : concurrent.sessions())
+        if (entry.streaming) ++streams;
+    CHECK_EQ(streams, 2);
+    int revokedStreams = 0;
+    QObject::connect(&concurrent, &AuthManager::streamingSessionRevoked,
+                     [&revokedStreams]() { ++revokedStreams; });
+    concurrent.revokeUserSessions(firstUser.id);
+    CHECK(!concurrent.validateSession(firstToken));
+    CHECK(concurrent.validateSession(secondToken));
+    CHECK(concurrent.sessionForToken(secondToken).streaming);
+    CHECK_EQ(revokedStreams, 1);
 
     SECTION("Only the OIDC callback allows a cross-site GET");
     HttpRequest req;

@@ -22,6 +22,8 @@ QString physical(const NvComputer* host)
 void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManager& computers,
                            SessionPool& pool)
 {
+    computers.setOwnerActivePredicate(
+        [&auth](const QString& id) { return auth.users().active(id); });
     server.setRequestAuthorizer([&computers,
                                  &pool](HttpRequest& req) -> std::optional<HttpResponse> {
         if (req.path.startsWith("/api/share/") && !req.path.startsWith("/api/share/player/")) {
@@ -52,6 +54,20 @@ void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManage
             if (req.method == QLatin1String("DELETE") && computers.hostOperationBusy(host->uuid))
                 return HttpResponse::error(
                     409, "Stop the active host operation before deleting this registration");
+            if (req.method == QLatin1String("DELETE")) {
+                bool anyWorker = false;
+                for (const auto& slot : pool) {
+                    if (!slot.worker) continue;
+                    anyWorker = true;
+                    const auto* other = computers.getHost(slot.hostUuid);
+                    if (other && physical(other) == physical(host))
+                        return HttpResponse::error(
+                            409, "Stop the active stream before deleting this registration");
+                }
+                if (!anyWorker && computers.inProcessStreamActive())
+                    return HttpResponse::error(
+                        409, "Stop the active stream before deleting this registration");
+            }
             // A single-user Sunshine/Apollo cannot isolate simultaneous desktops.
             // Refuse a takeover of somebody else's independently registered PC.
             const bool changesStream =

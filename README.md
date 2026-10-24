@@ -112,11 +112,16 @@ Voir [le guide reverse proxy](docs/reverse-proxy.md) et
 
 ## Authentification SSO et espaces utilisateurs
 
-Le mode `MW_AUTH_METHODS=pin,sso` propose le choix PIN ou OpenID Connect.
+La section **Administration → Connexion** configure le PIN, OpenID Connect ou
+les deux, avec test du fournisseur et application sans redémarrage.
+**Administration → Utilisateurs** gère les comptes locaux/SSO, les rôles, les PIN
+temporaires et les transferts, copies ou suppressions de machines.
+`MW_AUTH_METHODS=pin,sso` reste disponible pour initialiser une installation.
 `pin` conserve la connexion actuelle ; `sso` redirige automatiquement vers le
 fournisseur. Authentik est pris en charge avec une configuration OIDC générique.
 Chaque compte possède ses machines et ses appairages, même lorsqu'un PC est
-ajouté par plusieurs utilisateurs. Les anciennes machines restent au propriétaire
+ajouté par plusieurs utilisateurs. Une duplication administrateur conserve
+explicitement l’appairage partagé. Les anciennes machines restent au propriétaire
 local. Voir [la configuration et les limites du SSO](docs/authentication.md).
 
 ## Wake-on-LAN des machines enregistrées
