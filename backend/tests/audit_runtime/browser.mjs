@@ -1,0 +1,46 @@
+const { chromium } = await import(process.env.MW_PLAYWRIGHT_MODULE || 'playwright');
+const browser = await chromium.launch();
+try {
+    const page = await browser.newPage({ ignoreHTTPSErrors: true });
+    await page.goto(process.argv[2] + '/js/util/pairingCrypto.js');
+    const results = await page.evaluate(async () => {
+        const { WebRtcMedia } = await import('/js/api/WebRtcMedia.js');
+        const p = await import('/js/util/pairingCrypto.js');
+        const host = new RTCPeerConnection({ iceServers: [] });
+        host.createDataChannel('input', { negotiated: true, id: 2 });
+        host.addTransceiver('audio', { direction: 'sendonly' });
+        const video = host.addTransceiver('video', { direction: 'sendonly' });
+        video.setCodecPreferences(RTCRtpSender.getCapabilities('video').codecs.filter(codec => codec.mimeType.toLowerCase() === 'video/vp8'));
+        await host.setLocalDescription(await host.createOffer());
+        const offer = host.localDescription.sdp;
+        const control = new RTCPeerConnection({ iceServers: [] });
+        await control.setRemoteDescription({ type: 'offer', sdp: offer });
+        await control.setLocalDescription(await control.createAnswer());
+        const rawAnswerWorks = !!control.localDescription;
+        control.close();
+        const errors = [];
+        const transport = new WebRtcMedia('wss://test.invalid');
+        const connection = transport.pc = new RTCPeerConnection({ iceServers: [] });
+        transport.onError = error => errors.push(error.message);
+        transport._startIceTimer = () => {};
+        transport._sendSignaling = () => {};
+        try { await transport._handleSdpOffer({ sdp: offer }); }
+        finally { connection.close(); }
+        const fec = { probe: 'media-red-sdp', rawAnswerWorks, offerHasAudioRed: /a=rtpmap:\d+ red\/48000/i.test(offer), applicationErrors: errors };
+
+        const key = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
+        const spki = new Uint8Array(await crypto.subtle.exportKey('spki', key.publicKey));
+        const id = p.bytesToBase64(await crypto.subtle.digest('SHA-256', spki)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        await p.loadOrCreateIdentity();
+        await p.rememberHostIdentity(p.bytesToBase64(spki), id);
+        const local = new WebRtcMedia('wss://test.invalid');
+        local._mwBind = await p.beginHandshake();
+        const localConnection = local.pc = new RTCPeerConnection({ iceServers: [] });
+        const localErrors = [];
+        local.onError = error => localErrors.push(error.message);
+        try { await local._handleSdpOffer({ sdp: offer }); }
+        finally { localConnection.close(); host.close(); }
+        return [fec, { probe: 'local-sessionless-cached-identity', errors: localErrors, cachedHostIdentity: !!local._mwBind?.hostPublicKey }];
+    });
+    for (const result of results) console.log(JSON.stringify(result));
+} finally { await browser.close(); }
