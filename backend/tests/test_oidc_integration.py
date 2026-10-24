@@ -236,6 +236,7 @@ class OidcIsolation(unittest.TestCase):
             "MW_OIDC_ADMIN_SUBJECTS": "admin-subject", "MW_PUBLIC_URL": self.base,
             "MW_REVERSE_PROXY": "1", "MW_TRUSTED_PROXIES": "127.0.0.1/32",
             "MW_NO_TELEMETRY": "1", "MW_CERT_PEM": str(self.cert), "MW_CERT_KEY": str(self.key),
+            "MW_SERVICE": "1",  # The fixture must never rewrite desktop launchers.
             "SSL_CERT_FILE": str(self.cert),
             "MW_OIDC_CA_FILE": str(self.cert) if trust_issuer else "",
         })
