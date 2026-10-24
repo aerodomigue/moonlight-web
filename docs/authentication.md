@@ -133,11 +133,13 @@ d'identité envoyés par un proxy ne connectent aucun utilisateur.
   utilisables. Les anciennes sessions PIN sont refusées si le PIN est désactivé.
 - Les sessions de navigateur restent révocables depuis l'administration. Une
   déconnexion termine la session Moonlight-Web du navigateur ; elle ne termine
-  pas la session globale Authentik. La déconnexion globale/back-channel OIDC
-  n'est pas implémentée.
+  pas la session globale Authentik. Les notifications back-channel Authentik
+  vérifiées terminent les sessions SSO ciblées et ferment leurs flux ; les sessions
+  PIN restent indépendantes.
 - Les cookies nouvellement émis sont `Secure`, `HttpOnly` et limités à l'hôte
-  avec le préfixe `__Host-`. Les anciennes sessions sont acceptées et migrées
-  lorsqu'elles sont utilisées. Les jetons OIDC ne sont pas stockés dans le navigateur.
+  avec le préfixe `__Host-`. Les sessions PIN conservent leur fonctionnement.
+  Une session SSO restaurée exige une nouvelle validation OIDC. Les jetons OIDC
+  ne sont pas stockés dans le navigateur.
 - Un changement de compte efface les historiques et préférences Moonlight-Web
   stockés localement dans le navigateur, pour ne pas afficher ceux du compte précédent.
 
@@ -155,6 +157,64 @@ profil reverse proxy.
 Le modèle enrichi est enregistré dans `users.json` version 3. Un retour à un
 ancien binaire doit restaurer aussi la sauvegarde de l'état réalisée avant mise
 à jour ; l'ancien lecteur ne comprend pas les comptes locaux enrichis.
+
+## Cycle de vie des sessions SSO et back-channel logout
+
+Chaque chargement, rechargement et retour par l’historique vérifie la session
+Authentik avec Authorization Code + PKCE et `prompt=none`. Les données utilisateur
+ne sont chargées qu’après validation du nouvel ID token et activation signée du
+document. Si Authentik demande une connexion, refuse la requête ou est indisponible,
+l’application affiche une connexion explicite sans boucle ni bascule automatique
+vers le PIN. Le PIN reste disponible comme méthode distincte.
+
+La session SSO a une limite absolue de huit heures et son cookie n’a pas de
+validité glissante de 90 jours. « Se souvenir de moi » ne contourne pas le contrôle
+SSO. Après redémarrage du backend, les enregistrements conservés ne confèrent
+aucune autorisation SSO avant un nouvel échange OIDC. Une vérification inchangée
+conserve la session des autres onglets et leurs flux ; un changement de compte,
+de rôle ou une révocation retire les droits correspondants.
+
+Pour recevoir les révocations Authentik :
+
+1. Copier **Administration → Connexion → URL de déconnexion back-channel**.
+   Pour cette installation : `https://moonlight.navet.dev/api/auth/oidc/backchannel-logout`.
+   Le domaine est calculé depuis l’URL publique configurée, jamais fixé dans le code.
+2. Dans le fournisseur OAuth2/OpenID Connect Authentik, renseigner cette URL comme
+   champ **Logout URI** et choisir **Back-channel** dans **Logout Method**. Activer l’identifiant de session
+   `sid` lorsqu’un réglage correspondant est proposé.
+3. Dans le reverse proxy, exempter uniquement les `POST` sur ce chemin exact de
+   l’authentification interactive préalable. Ils doivent atteindre l’application,
+   qui valide le JWT signé de déconnexion. Conserver les autres protections.
+4. Tester une révocation de session depuis Authentik pendant un flux, puis vérifier
+   la fermeture de ce flux et le maintien d’un autre compte. Un POST sans JWT valide
+   doit être refusé par l’application, sans redirection vers un formulaire de connexion.
+
+L’application vérifie signature, issuer, audience, dates, événement, identifiant
+unique et `sid`/`sub`. Un ID token ne peut pas servir de jeton de déconnexion.
+Une notification par `sid` ne touche que les sessions associées ; une notification
+par `sub` cible les sessions SSO de ce compte pour le fournisseur. Une notification
+répétée n’invalide pas une authentification réellement établie après son émission.
+Une erreur de persistance produit une réponse d’échec et les droits sont bloqués
+immédiatement en mémoire ; un redémarrage ne restaure pas cette autorité SSO.
+
+Les appels SSO utilisent un profil de **HTTP Message Signatures (RFC 9421)** avec
+`Content-Digest` (RFC 9530), signé par la clé P-256 non exportable du navigateur
+existant. Il couvre méthode, chemin, requête, corps, identifiants de session/page,
+expiration et nonce anti-rejeu. Le proxy doit préserver l’URI et les en-têtes
+`Signature`, `Signature-Input`, `Content-Digest`, `X-MW-Session-Id`, `X-MW-Page-Id`.
+Les WebSockets utilisent des tickets signés à l’obtention, valables dix secondes
+et une fois, transmis par sous-protocole ; aucune capacité n’est placée dans leur URL.
+Les images et téléchargements privés passent par les mêmes contrôles.
+
+Un cookie applicatif copié seul dans un autre navigateur ne suffit donc pas à
+lire les données, agir ou ouvrir un WebSocket. Cette protection ne couvre pas un
+navigateur déjà compromis ou le vol simultané des identifiants Authentik. La clé
+navigateur reste dédiée aux preuves de possession ; les secrets OAuth et clés
+privées du serveur restent exclusivement dans le backend.
+
+API supplémentaires : `POST /api/auth/oidc/activate`, `POST /api/auth/ws-ticket`
+et `POST /api/auth/oidc/backchannel-logout`. Avant activation, `/api/auth/status`
+renvoie seulement les paramètres nécessaires à la connexion et à la revalidation.
 
 ## Gestion des comptes et des machines
 
