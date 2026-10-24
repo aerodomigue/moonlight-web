@@ -19,7 +19,7 @@ import { SsoSession } from './SsoSession.js';
 import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
 import { closeHidChannel, createHidChannel, sendHidFrame } from '../hid/hidWire.js';
 import { armAudioPlayRetry } from '../util/audioAutoplay.js';
-import { forceOpusStereo } from '../util/SdpUtils.js';
+import { forceOpusStereo, stripVideoFec } from '../util/SdpUtils.js';
 import { openSignalingSocket } from '../net/tunnelBridge.js';
 import {
     beginHandshake,
@@ -818,20 +818,8 @@ export class WebRtcMedia {
             let answerSdp = answer.sdp;
             // Direction: receive only (client is viewer, never sends media)
             answerSdp = answerSdp.replace(/a=sendrecv/g, 'a=recvonly');
-            // Strip ULPFEC/RED (redundant FEC adds bandwidth & latency). Only the
-            // FEC payload types' lines are removed — the video codec's fmtp
-            // (packetization-mode/profile-level-id) is kept intact.
-            const fecPts = new Set();
-            const fecRe = /^a=rtpmap:(\d+)\s+(?:ulpfec|red)\b.*$/gim;
-            let fecMatch;
-            while ((fecMatch = fecRe.exec(answerSdp)) !== null) {
-                fecPts.add(fecMatch[1]);
-            }
-            for (const pt of fecPts) {
-                const lineRe = new RegExp('^a=(?:rtpmap|fmtp|rtcp-fb):' + pt + '\\b.*$', 'gim');
-                answerSdp = answerSdp.replace(lineRe, '');
-            }
-            answerSdp = answerSdp.replace(/\n{2,}/g, '\n');
+            // Keep audio RED and remove complete video FEC payloads/RTX only.
+            answerSdp = stripVideoFec(answerSdp);
             // NACK retransmission is kept enabled: on an RTP track it is a good
             // quality/latency tradeoff under light loss (paired with the
             // backend RtcpNackResponder).

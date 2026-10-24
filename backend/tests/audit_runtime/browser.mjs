@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 const { chromium } = await import(process.env.MW_PLAYWRIGHT_MODULE || 'playwright');
 const browser = await chromium.launch();
 try {
@@ -42,5 +43,8 @@ try {
         finally { localConnection.close(); host.close(); }
         return [fec, { probe: 'local-sessionless-cached-identity', errors: localErrors, cachedHostIdentity: !!local._mwBind?.hostPublicKey }];
     });
+    assert.equal(results[0].rawAnswerWorks, true);
+    assert.equal(results[0].offerHasAudioRed, true);
+    assert.deepEqual(results[0].applicationErrors, []);
     for (const result of results) console.log(JSON.stringify(result));
 } finally { await browser.close(); }

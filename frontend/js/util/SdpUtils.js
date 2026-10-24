@@ -49,3 +49,39 @@ export function forceOpusStereo(sdp) {
     const rtpmapRe = new RegExp('^a=rtpmap:' + pt + ' [^\\r\\n]*', 'm');
     return sdp.replace(rtpmapRe, (line) => line + '\r\na=fmtp:' + pt + ' stereo=1;sprop-stereo=1');
 }
+
+/** Remove video repair codecs together with their payload references, per media section.
+ * Audio RED remains negotiated; payload numbers are scoped to their own m-line. */
+export function stripVideoFec(sdp) {
+    if (typeof sdp !== 'string') return sdp;
+    const separator = sdp.includes('\r\n') ? '\r\n' : '\n';
+    const sections = sdp.split(/(?=^m=)/m);
+    return sections
+        .map((section) => {
+            if (!section.startsWith('m=video ')) return section;
+            const lines = section.split(/\r?\n/);
+            const removed = new Set();
+            for (const line of lines) {
+                const match = line.match(/^a=rtpmap:(\d+)\s+(?:red|ulpfec)\//i);
+                if (match) removed.add(match[1]);
+            }
+            // RTX referring to a removed repair codec must disappear with it.
+            for (const line of lines) {
+                const fmtp = line.match(/^a=fmtp:(\d+)\s+(.*)$/);
+                const apt = fmtp?.[2].match(/(?:^|[;\s])apt=(\d+)(?:[;\s]|$)/);
+                if (apt && removed.has(apt[1])) removed.add(fmtp[1]);
+            }
+            if (!removed.size) return section;
+            const fields = lines[0].trim().split(/\s+/);
+            const payloads = fields.slice(3).filter((pt) => !removed.has(pt));
+            if (!payloads.length) return section; // Keep even a rejected m-line valid.
+            lines[0] = [...fields.slice(0, 3), ...payloads].join(' ');
+            return lines
+                .filter((line) => {
+                    const match = line.match(/^a=(?:rtpmap|fmtp|rtcp-fb):(\d+)\b/);
+                    return !match || !removed.has(match[1]);
+                })
+                .join(separator);
+        })
+        .join('');
+}
