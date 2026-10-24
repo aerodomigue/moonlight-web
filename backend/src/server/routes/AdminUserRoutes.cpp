@@ -30,7 +30,7 @@ bool busy(const QString& id, const ComputerManager& computers, const SessionPool
 QJsonObject row(const UserAccount& user, AuthManager& auth, ComputerManager& computers)
 {
     auto o = user.adminJson();
-    o["role"] = auth.userAdministrator(user) ? "admin" : "user";
+    o["role"] = auth.effectiveRole(user);
     o["machine_count"] = computers.getHostsJson(user.id).size();
     int count = 0;
     for (const auto& session : auth.sessions())

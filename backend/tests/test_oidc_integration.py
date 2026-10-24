@@ -88,7 +88,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             code = secrets.token_urlsafe(24)
             self.server.codes[code] = {
-                "subject": getattr(self.server, "browser_subject", "browser-subject"), "nonce": query["nonce"][0],
+                "subject": query.get("fixture_subject", [getattr(self.server, "browser_subject", "browser-subject")])[0], "nonce": query["nonce"][0],
                 "challenge": query["code_challenge"][0],
             }
             self.send_response(303)
@@ -157,6 +157,8 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 "internal_admin" if grant["subject"] == "admin-subject" else "internal_user"),
         }
         claims.update(grant.get("claims", {}))
+        if claims.pop("_fixture_omit_role", False):
+            claims.pop("moonlight_role", None)
         header = {"alg": "RS256", "kid": "fixture-key"}
         payload = (b64(json.dumps(header).encode()) + "." + b64(json.dumps(claims).encode())).encode()
         signature = subprocess.run(
@@ -537,6 +539,18 @@ class OidcIsolation(unittest.TestCase):
         local_admin.base = self.base
         self.assertTrue(local_admin.request("/api/auth/status")[1]["is_localhost"])
 
+    def test_disabled_local_admin_keeps_its_assigned_role(self):
+        self.start()
+        admin, headers = self.administrator()
+        user = admin.request("/api/admin/users", {"name": "Disabled administrator", "role": "admin"}, extra_headers=headers)[1]["user"]
+        path = "/api/admin/users/" + user["id"]
+        self.assertEqual(admin.request(path, {"enabled": False}, extra_headers=headers)[0], 200)
+        row = next(u for u in admin.request("/api/admin/users")[1]["users"] if u["id"] == user["id"])
+        self.assertFalse(row["enabled"])
+        self.assertEqual(row["role"], "admin")
+        self.assertEqual(admin.request(path, {"name": "Still administrator", "enabled": True}, extra_headers=headers)[0], 200)
+        self.assertEqual(next(u for u in admin.request("/api/admin/users")[1]["users"] if u["id"] == user["id"])["role"], "admin")
+
     def test_admin_auth_configuration_runtime_and_persistence(self):
         browser = self.start()
         self.login(browser)
@@ -758,6 +772,10 @@ class OidcIsolation(unittest.TestCase):
             self.assertEqual(ordinary.request("/ws/control", extra_headers=websocket)[0], 403)
         self.assertFalse(admin.request("/api/auth/status")[1]["authenticated"])
         self.assertFalse(pin_browser.request("/api/auth/status")[1]["authenticated"])
+        absent = Browser(self.base)
+        callback = self.prepare(absent, "admin-subject", claims={"_fixture_omit_role": True})
+        self.assertEqual(absent.request(callback, cross_site=True)[2]["Location"], "/")
+        self.assertFalse(absent.request("/api/auth/status")[1]["admin_access"])
         # A token with an admin claim but invalid nonce cannot grant any session.
         forged = Browser(self.base)
         callback = self.prepare(forged, "admin-subject", claims={"moonlight_role": "internal_admin", "nonce": "forged"})

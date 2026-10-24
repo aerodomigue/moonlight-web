@@ -158,6 +158,7 @@ public:
     bool proveSsoAdministrator(const QString& token);
     UserAccount synchronizeSsoRole(UserAccount user, const QString& role, const AuthConfig& config);
     bool isSsoAdmin(const QString& token) const;
+    QString effectiveRole(const UserAccount& user) const;
     bool userAdministrator(const UserAccount& user) const;
     bool verifiedSsoAdministrator(const AuthConfig& config) const;
     void applyConfig(const AuthConfig& config);

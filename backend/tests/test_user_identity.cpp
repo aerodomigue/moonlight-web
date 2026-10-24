@@ -368,6 +368,8 @@ void run_user_identity_tests()
     CHECK(managed.isAdminSession(ownerPin));
     player.enabled = false;
     managed.users().update(player);
+    CHECK_EQ(managed.effectiveRole(player), QString("admin"));
+    CHECK(!managed.userAdministrator(player));
     CHECK(!managed.validateSession(playerToken));
     CHECK(managed.generateUserPin(player.id).isEmpty());
     CHECK(
@@ -393,6 +395,19 @@ void run_user_identity_tests()
     managed.applyConfig(only);
     CHECK(!managed.config().pin);
     CHECK_EQ(managed.configRevision(), quint64(1));
+
+    const auto beforeProviderChange = managed.createSession("10.2.10.50", "Verified SSO", false,
+                                                            false, false, verifiedAdmin.id, "sso");
+    CHECK(managed.proveSsoAdministrator(beforeProviderChange));
+    CHECK(managed.isSsoAdmin(beforeProviderChange));
+    auto otherProvider = only;
+    otherProvider.pin = true;
+    otherProvider.issuer += "other/";
+    managed.applyConfig(otherProvider);
+    CHECK(!managed.validateSession(beforeProviderChange));
+    CHECK(!managed.userAdministrator(managed.users().get(verifiedAdmin.id)));
+    CHECK(!managed.verifiedSsoAdministrator(otherProvider));
+    CHECK(managed.passwordUnlockEligible(managed.createSession("10.2.10.51", "Owner recovery")));
 
     SECTION("Concurrent accounts keep independent streaming and revocation state");
     AuthManager concurrent(nullptr, nullptr, mixed);

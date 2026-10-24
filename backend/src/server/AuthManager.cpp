@@ -571,13 +571,20 @@ QString AuthManager::generateUserPin(const QString& userId, qint64 nowSecs)
     return pin;
 }
 
-bool AuthManager::userAdministrator(const UserAccount& user) const
+QString AuthManager::effectiveRole(const UserAccount& user) const
 {
-    if (user.id.isEmpty() || !user.enabled || user.deleting) return false;
+    if (user.id.isEmpty()) return QStringLiteral("user");
     if (!user.issuer.isEmpty())
         return user.issuer == m_config.issuer && user.ssoRole == "admin" &&
-               user.verifiedConfig == m_config.signature();
-    return user.role == "admin";
+                       user.verifiedConfig == m_config.signature()
+                   ? QStringLiteral("admin")
+                   : QStringLiteral("user");
+    return user.role;
+}
+
+bool AuthManager::userAdministrator(const UserAccount& user) const
+{
+    return user.enabled && !user.deleting && effectiveRole(user) == "admin";
 }
 
 bool AuthManager::passwordUnlockEligible(const QString& token) const
