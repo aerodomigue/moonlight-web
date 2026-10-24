@@ -393,7 +393,8 @@
         "onHostMachine": "On the host machine itself?",
         "openLocally": "Open it via localhost",
         "rememberMe": "Keep me signed in on this device",
-        "rememberMeHint": "Uncheck on a shared or public computer: the session then ends when the browser closes, and after a few idle hours in any case."
+        "rememberMeHint": "Uncheck on a shared or public computer: the session then ends when the browser closes, and after a few idle hours in any case.",
+        "rememberSsoHint": "SSO is checked with Authentik at each page load. The application session lasts at most eight hours; remembering it never skips the SSO check."
     },
     "pairing": {
         "title": "Pair with {{name}}",
@@ -1199,6 +1200,8 @@
         "noMethod": "No enabled sign-in method",
         "scopes": "Scopes",
         "roleClaimHint": "Authentik must include moonlight_role in the signed ID token: internal_admin or internal_user. Roles refresh at the next SSO sign-in.",
-        "authentikRole": "Source: Authentik. This role is synchronized at SSO sign-in and cannot be edited here."
+        "authentikRole": "Source: Authentik. This role is synchronized at SSO sign-in and cannot be edited here.",
+        "backchannelUrl": "Back-channel logout URL",
+        "backchannelHint": "Configure this URL for Back-channel logout in Authentik and allow signed POST notifications through the proxy without interactive login. SSO is checked at each page load; revoked sessions lose their streams."
     }
 }

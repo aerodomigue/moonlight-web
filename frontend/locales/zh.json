@@ -393,7 +393,8 @@
         "onHostMachine": "就在主机上？",
         "openLocally": "通过 localhost 打开",
         "rememberMe": "在此设备上保持登录",
-        "rememberMeHint": "在共用或公共电脑上请取消勾选：会话将在浏览器关闭时结束，闲置数小时后也会自动失效。"
+        "rememberMeHint": "在共用或公共电脑上请取消勾选：会话将在浏览器关闭时结束，闲置数小时后也会自动失效。",
+        "rememberSsoHint": "每次加载页面都会向 Authentik 验证 SSO。应用会话最长持续八小时；记住会话不会跳过 SSO 检查。"
     },
     "pairing": {
         "title": "与 {{name}} 配对",
@@ -1199,6 +1200,8 @@
         "noMethod": "无已启用的登录方式",
         "scopes": "作用域",
         "roleClaimHint": "Authentik 必须在签名的 ID 令牌中包含 moonlight_role：internal_admin 或 internal_user。角色在下次 SSO 登录时更新。",
-        "authentikRole": "来源：Authentik。角色在 SSO 登录时同步，无法在此修改。"
+        "authentikRole": "来源：Authentik。角色在 SSO 登录时同步，无法在此修改。",
+        "backchannelUrl": "后端通道注销 URL",
+        "backchannelHint": "在 Authentik 中配置此后端通道注销 URL，并允许签名的 POST 通知通过代理，无需交互式登录。每次加载页面都会检查 SSO；会话撤销后会关闭流。"
     }
 }

@@ -59,6 +59,9 @@ export class AdminLoginSettings {
                 <div class="settings-field"><label>${t('adminAccounts.publicUrl')}</label><code>${esc(c.public_url || '—')}</code></div>
                 <div class="settings-field"><label>${t('adminAccounts.callback')}</label><code id="admin-oidc-callback">${esc(c.callback_url || '—')}</code>
                     <button type="button" class="btn btn-secondary" id="admin-copy-callback">${t('common.copy')}</button></div>
+                <div class="settings-field"><label>${t('adminAccounts.backchannelUrl')}</label>
+                    <code>${esc(c.backchannel_logout_url || '')}</code></div>
+                <p class="settings-hint">${t('adminAccounts.backchannelHint')}</p>
                 <p class="settings-hint">${t('adminAccounts.proxyHint')}</p>
                 <p class="settings-hint" id="admin-login-feedback" role="status" aria-live="polite"></p>
                 <button class="btn btn-secondary" type="button" id="admin-test-oidc">${t('adminAccounts.testProvider')}</button>

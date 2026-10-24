@@ -29,7 +29,7 @@ try {
     await admin.locator('#admin-oidc-scopes').waitFor();
     assert.equal(await admin.locator('#admin-oidc-scopes').inputValue(), 'openid profile email moonlight_role');
     assert.match(await admin.locator('#admin-section-login h3').innerText(), /connexion/i);
-    const adminId = await admin.evaluate(async () => (await (await fetch('/api/auth/status')).json()).user.id);
+    const adminId = await admin.evaluate(async () => (await (await import('/js/api/BackendClient.js')).BackendClient.getAuthStatus()).user.id);
     await admin.locator('#admin-user-select').selectOption(adminId);
     await admin.locator('[data-role-source]').waitFor();
     assert.match(await admin.locator('[data-role-source]').innerText(), /Source : Authentik/);
@@ -50,7 +50,7 @@ try {
     await pinPage.locator('#login-pin-input').fill(pin);
     await pinPage.locator('#btn-login-unlock').click();
     await pinPage.locator('#view-hosts').waitFor();
-    const status = await pinPage.evaluate(async () => (await (await fetch('/api/auth/status')).json()));
+    const status = await pinPage.evaluate(async () => (await (await import('/js/api/BackendClient.js')).BackendClient.getAuthStatus()));
     assert.equal(status.auth_method, 'pin');
     assert.equal(status.admin_access, false);
     assert.equal(status.admin_unlock_available, true);
@@ -65,12 +65,14 @@ try {
 
     const { page: user } = await sso('ordinary-subject');
     assert.equal(await user.locator('#btn-admin').isVisible(), false);
-    await user.goto(`${base}/admin`, { waitUntil: 'networkidle' });
+    await user.goto(`${base}/admin`, { waitUntil: 'domcontentloaded' });
+    await user.locator('#view-hosts').waitFor({ timeout: 15000 });
     assert.equal(await user.locator('#admin-oidc-scopes').count(), 0);
     assert.equal(await user.locator('#btn-admin').isVisible(), false);
     const denied = await user.evaluate(async () => {
-        const config = await fetch('/api/admin/auth-config');
-        const unlock = await fetch('/api/auth/admin-unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'fixture-admin-password' }) });
+        const { authenticatedFetch } = await import('/js/api/SsoSession.js');
+        const config = await authenticatedFetch('/api/admin/auth-config');
+        const unlock = await authenticatedFetch('/api/auth/admin-unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'fixture-admin-password' }) });
         return [config.status, unlock.status];
     });
     assert.deepEqual(denied, [403, 403]);

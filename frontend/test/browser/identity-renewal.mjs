@@ -36,7 +36,7 @@ try {
     const afterSso = await page.evaluate(async () => {
         const { loadOrCreateIdentity } = await import('/js/util/pairingCrypto.js');
         const i = await loadOrCreateIdentity();
-        const status = await (await fetch('/api/auth/status')).json();
+        const status = await (await import('/js/api/BackendClient.js')).BackendClient.getAuthStatus();
         return {
             browserKey: i.keyId,
             hostId: i.hostId,
@@ -68,12 +68,15 @@ try {
             throw new Error('Cannot reproduce stale pre-upgrade browser record');
         return pin;
     }, first);
+    const stale = await page.evaluate(async () => (await import('/js/api/BackendClient.js')).BackendClient.getAuthStatus());
+    assert.equal(stale.identity_error, 'identityChanged');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('#view-hosts').waitFor({ timeout: 15000 });
+    assert.equal(await page.evaluate(async () => (await (await import('/js/util/pairingCrypto.js')).loadOrCreateIdentity()).hostId), afterSso.apiId);
+    console.log('PASS: reload performs fresh OIDC and renews identity; a cached cookie alone cannot renew it.');
+    await page.evaluate(async () => (await import('/js/api/BackendClient.js')).BackendClient.logout());
     await page.reload({ waitUntil: 'networkidle' });
     await page.locator('#btn-login-pin').waitFor();
-    await page
-        .locator('.login-error')
-        .filter({ hasText: 'L’identité du serveur a changé' })
-        .waitFor();
     await page.locator('#btn-login-pin').click();
     await page.locator('#login-pin-input').fill(pin);
     await page.locator('#btn-login-unlock').click();

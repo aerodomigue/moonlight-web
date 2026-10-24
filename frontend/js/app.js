@@ -47,6 +47,7 @@
  */
 // First, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
+import { SsoSession, authenticatedFetch } from './api/SsoSession.js';
 import { refreshClientLog } from './util/ClientLog.js';
 import { HostListView } from './ui/HostListView.js';
 import { StreamView } from './ui/StreamView.js';
@@ -351,6 +352,19 @@ export const MoonlightApp = {
         // the only one that proves the browser runs on this machine.
 
         // ── Auth check: show login if remote and not authenticated ─────────
+        try {
+            if (!(await SsoSession.startup())) return;
+        } catch {
+            // No privileged UI is initialized; the regular auth check displays the failure.
+            SsoSession.active = false;
+        }
+        window.addEventListener('pagehide', () => {
+            if (SsoSession.sessionId)
+                document.getElementById('main-content').style.visibility = 'hidden';
+        });
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted && SsoSession.sessionId) location.reload();
+        });
         const authOk = await this._checkAuth();
         if (!authOk) return; // LoginView handles rendering, stop here
         this._offerHomeScreenHandoff();
@@ -402,10 +416,10 @@ export const MoonlightApp = {
         const url = `${scheme}://${window.location.host}/ws/control`;
         let backoff = 1000;
 
-        const connect = () => {
+        const connect = async () => {
             let ws;
             try {
-                ws = new WebSocket(url);
+                ws = new WebSocket(url, await SsoSession.protocols(url));
             } catch (e) {
                 console.warn('[MW] control channel: connect failed', e);
                 this._controlReconnectTimer = setTimeout(connect, backoff);
@@ -1394,7 +1408,7 @@ export const MoonlightApp = {
             instances,
         );
         try {
-            const fresh = await fetch(`/api/app/web-manifest?t=${Date.now()}`, {
+            const fresh = await authenticatedFetch(`/api/app/web-manifest?t=${Date.now()}`, {
                 cache: 'no-store',
             });
             if (!fresh.ok) return;
@@ -1498,7 +1512,7 @@ export const MoonlightApp = {
      * but none of the local desktop the setup wizard needs.
      */
     _isHostMachine() {
-        if (this._isRealHostMachine) return true;
+        if (typeof this._isRealHostMachine === 'boolean') return this._isRealHostMachine;
         const hostname = window.location.hostname;
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
     },
