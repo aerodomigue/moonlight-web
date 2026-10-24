@@ -1133,6 +1133,23 @@ class OidcIsolation(unittest.TestCase):
         for path in ["/ws", "/ws1", "/ws/stream", "/ws/control"]: self.assertEqual(copied.request(path, extra_headers=websocket)[0], 401)
         self.assertTrue(admin.request("/api/auth/status")[1]["admin_access"])
 
+    def test_guest_routes_do_not_inherit_or_require_ambient_sso_authority(self):
+        self.start()
+        admin, _ = self.administrator()
+        guest = Browser(self.base, signing=False)
+        import copy
+        for cookie in admin.cookies: guest.cookies.set_cookie(copy.copy(cookie))
+        anonymous = Browser(self.base, signing=False)
+        for path in ["/api/share/player/info", "/api/share/player/pin"]:
+            body = {} if path.endswith("/pin") else None
+            expected = anonymous.request(path, body)
+            actual = guest.request(path, body)
+            self.assertEqual(actual[0], expected[0])
+            # The same IP's invalid PIN counter advances between these calls.
+            self.assertEqual(actual[1].get("error"), expected[1].get("error"))
+            self.assertNotEqual(actual[1].get("error"), "sso_revalidation_required")
+        self.assertEqual(guest.request("/api/admin/users")[0], 401)
+
     def test_request_signature_replay_wrong_body_and_page_context_are_denied(self):
         self.start()
         admin, _ = self.administrator()

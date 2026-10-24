@@ -1204,7 +1204,7 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         req.path == "/api/auth/status" || req.path == "/api/auth/oidc/prepare" ||
         req.path == "/api/auth/oidc/callback" || req.path == "/api/auth/oidc/activate" ||
         req.path == "/api/auth/oidc/backchannel-logout" || req.path == "/api/auth/validate" ||
-        req.path == "/api/health";
+        req.path == "/api/health" || req.path.startsWith("/api/share/player/");
     if (ssoCookie && req.path.startsWith("/api/")) {
         req.ssoAuthorized = m_AuthManager->authorizeSsoRequest(sessionToken, req);
         if (!req.ssoAuthorized && !ssoBootstrap) {
