@@ -64,6 +64,7 @@ public:
         int width = 1920;
         int height = 1080;
         int fps = 60;
+        int clientRefreshMilliHz = 0;
         int bitrateKbps = 20000;
         int packetSize = 1024;
         int supportedVideoFormats = 0x0001; // VIDEO_FORMAT_H264

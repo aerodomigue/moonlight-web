@@ -50,6 +50,13 @@ struct StreamConfig
     static constexpr int kPacketSize = 1024;
     static constexpr int kMaxRefFrames = 1;
     static constexpr int kClientRefreshRateX100 = 6000;
+    // GameStream carries centihertz; the browser measures millihertz. Preserve
+    // fractional refresh rates, and fall back to the selected FPS when unknown.
+    static int clientRefreshRateX100(int milliHz, int fps)
+    {
+        return milliHz > 0 ? static_cast<int>((static_cast<int64_t>(milliHz) + 5) / 10)
+                           : (fps > 0 && fps <= 1000 ? fps * 100 : 0);
+    }
     static constexpr int kVideoEncoderSlicesPerFrame = 1;
 
     // Codec preferences — will be user-selectable later

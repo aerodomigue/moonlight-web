@@ -701,6 +701,11 @@ if(MW_BUILD_TESTS)
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_oidc_integration.py"
                     "$<TARGET_FILE:mw-server>")
         set_tests_properties(oidc-user-isolation PROPERTIES TIMEOUT 90 LABELS integration)
+        add_test(NAME gamestream-negotiation
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_stream_negotiation.py"
+                    "$<TARGET_FILE:mw-server>")
+        set_tests_properties(gamestream-negotiation PROPERTIES TIMEOUT 150 LABELS integration)
     endif()
 endif()
 
