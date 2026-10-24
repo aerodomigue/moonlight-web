@@ -8,7 +8,7 @@ start = source.index('static NetClassify::Kind streamClientKind(')
 end = source.index('\n// A browser', start)
 program = (
     '#include "common/Types.h"\n#include "server/NetClassify.h"\n'
-    '#include <QDebug>\n#include <iostream>\n' + source[start:end] + r'''
+    '#include <QDebug>\n#include <iostream>\n#include "server/StreamClientPolicy.h"\n' + source[start:end] + r'''
 int main() {
     HttpRequest req;
     req.clientAddress = "10.2.100.122";

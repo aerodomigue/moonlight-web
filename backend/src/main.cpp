@@ -78,6 +78,7 @@
 #include "server/AuthManager.h"
 #include "server/UserHostAccess.h"
 #include "server/NetClassify.h"
+#include "server/StreamClientPolicy.h"
 #include "server/ShareManager.h"
 #include "server/SessionPool.h"
 #include "server/SingleSessionHosts.h"
@@ -1331,29 +1332,11 @@ static QStringList filterTransportsByCodec(const QStringList& transports, VideoC
     return result;
 }
 
-// Where a stream's browser is, for the ICE plan. The socket peer answers it for
-// a browser that reaches us itself. Behind a reverse proxy — Tailscale Funnel,
-// cloudflared, nginx, on this machine or elsewhere on the LAN — the peer is the
-// proxy, and a phone on 4G would read as loopback or LAN: no STUN, no ICE-TCP,
-// and a UDP rung that can only reach it by luck. Two signs of a proxy: a
-// loopback peer under a name that is not ours (a local proxy passes the
-// visitor's Host along), and the forwarding headers proxies add. Either one
-// can only move a browser to "public", never grant anything, so a forged
-// header costs its sender nothing but the LAN shortcut. A bare-hostname LAN
-// browser sends neither and keeps its LAN plan.
+// ICE candidate policy uses the resolved peer from trusted ProxyHeaders. Unknown
+// forwarding headers remain conservative; candidate selection grants no privilege.
 static NetClassify::Kind streamClientKind(const HttpRequest& req)
 {
-    const NetClassify::Kind kind = NetClassify::classify(req.clientAddress);
-    if (kind != NetClassify::Kind::Loopback && kind != NetClassify::Kind::Private) return kind;
-    const bool localProxy = kind == NetClassify::Kind::Loopback && !req.hostTrusted;
-    const bool forwarded = req.headers.contains(QStringLiteral("x-forwarded-for")) ||
-                           req.headers.contains(QStringLiteral("forwarded")) ||
-                           req.headers.contains(QStringLiteral("cf-connecting-ip")) ||
-                           req.headers.contains(QStringLiteral("tailscale-funnel-request"));
-    if (!localProxy && !forwarded) return kind;
-    qInfo() << "[Session] Browser behind a reverse proxy (peer" << req.clientAddress << ", Host"
-            << req.headers.value(QStringLiteral("host")) << ") — planning ICE for the internet";
-    return NetClassify::Kind::Public;
+    return StreamClientPolicy::classify(req);
 }
 
 // A browser whose STUN probe got no answer (frontend/js/api/UdpProbe.js) sits
