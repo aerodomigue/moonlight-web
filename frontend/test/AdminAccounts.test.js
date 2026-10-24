@@ -67,12 +67,30 @@ describe('Administration sign-in configuration', () => {
         await vi.waitFor(() => expect(document.querySelector('#admin-login-feedback').textContent).toContain('adminAccounts.providerOk'));
         expect(post).toHaveBeenCalledWith('/api/admin/auth-config/test', expect.any(Object));
     });
-    it('supports explicit secret replacement and clears the field after success', async () => {
-        await openLogin();
+    it('preserves a replacement secret through discovery and clears it only after saving', async () => {
+        const changed = vi.fn();
+        await openLogin(changed);
         document.querySelector('#admin-oidc-secret').value = 'fixture-only-secret';
         document.querySelector('[name="clear_secret"]').checked = true;
         await view.submit(true);
         expect(post).toHaveBeenCalledWith('/api/admin/auth-config/test', expect.objectContaining({ client_secret: 'fixture-only-secret', clear_secret: true }));
+        expect(document.querySelector('#admin-oidc-secret').value).toBe('fixture-only-secret');
+        expect(changed).not.toHaveBeenCalled();
+        post.mockResolvedValue(config());
+        await view.submit(false);
+        expect(post).toHaveBeenLastCalledWith('/api/admin/auth-config', expect.objectContaining({ client_secret: 'fixture-only-secret', clear_secret: true }));
+        expect(document.querySelector('#admin-oidc-secret').value).toBe('');
+        expect(changed).toHaveBeenCalledOnce();
+    });
+    it('retains an unsaved secret after a failed request and clears it on closing', async () => {
+        await openLogin();
+        document.querySelector('#admin-oidc-secret').value = 'fixture-only-secret';
+        post.mockRejectedValue(new Error('provider unreachable'));
+        await view.submit(true);
+        expect(document.querySelector('#admin-oidc-secret').value).toBe('fixture-only-secret');
+        await view.submit(false);
+        expect(document.querySelector('#admin-oidc-secret').value).toBe('fixture-only-secret');
+        view.destroy();
         expect(document.querySelector('#admin-oidc-secret').value).toBe('');
     });
     it('shows a failed validation without invoking the saved callback', async () => {

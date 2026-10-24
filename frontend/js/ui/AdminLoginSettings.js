@@ -105,7 +105,7 @@ export class AdminLoginSettings {
                 data,
             );
             if (this.destroyed) return;
-            form.elements.client_secret.value = '';
+            if (!test) form.elements.client_secret.value = '';
             this.feedback(t(test ? 'adminAccounts.providerOk' : 'adminAccounts.saved'));
             if (!test) {
                 this.config = result;
