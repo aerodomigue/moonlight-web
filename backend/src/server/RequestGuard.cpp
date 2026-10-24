@@ -255,12 +255,14 @@ Decision evaluate(const Request& req, const Context& ctx)
     // and browser cookie. No other auth route inherits this exception.
     const bool oidcReturn =
         req.method == QLatin1String("GET") && req.path == QLatin1String("/api/auth/oidc/callback");
-    if (isApi && !oidcReturn && isCrossSite(req.headers)) {
+    const bool oidcLogout = req.method == "POST" && req.path == "/api/auth/oidc/backchannel-logout";
+    if (isApi && !oidcReturn && !oidcLogout && isCrossSite(req.headers)) {
         d.outcome = Outcome::BlockCrossSite;
         return d;
     }
-    if (isApi && !isBodyContentTypeAllowed(req.headers.value(QStringLiteral("content-type")),
-                                           req.bodySize)) {
+    if (isApi && !oidcLogout &&
+        !isBodyContentTypeAllowed(req.headers.value(QStringLiteral("content-type")),
+                                  req.bodySize)) {
         d.outcome = Outcome::BlockContentType;
         return d;
     }

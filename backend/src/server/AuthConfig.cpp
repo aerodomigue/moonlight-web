@@ -89,6 +89,7 @@ QJsonObject AuthConfig::json(bool includeSecret) const
                   {"client_id", clientId},
                   {"public_url", publicUrl},
                   {"callback_url", callbackUrl()},
+                  {"backchannel_logout_url", publicUrl + "/api/auth/oidc/backchannel-logout"},
                   {"ca_file", caFile},
                   {"scopes", scopes},
                   {"secret_configured", !clientSecret.isEmpty()}};

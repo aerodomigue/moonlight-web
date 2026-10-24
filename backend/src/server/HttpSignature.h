@@ -32,8 +32,8 @@ inline QByteArray base(const HttpRequest& req, const QString& params)
     const auto query = target.indexOf('?');
     const auto path = query < 0 ? target : target.left(query);
     const auto search = query < 0 ? QByteArray("?") : target.mid(query);
-    return "\"@method\": " + req.method.toUtf8() + "\n\"@path\": " + path +
-           "\n\"@query\": " + search +
+    return "\"@method\": " + (req.rawMethod.isEmpty() ? req.method : req.rawMethod).toUtf8() +
+           "\n\"@path\": " + path + "\n\"@query\": " + search +
            "\n\"content-digest\": " + req.headers.value("content-digest").toUtf8() +
            "\n\"x-mw-session-id\": " + req.headers.value("x-mw-session-id").toUtf8() +
            "\n\"x-mw-page-id\": " + req.headers.value("x-mw-page-id").toUtf8() +

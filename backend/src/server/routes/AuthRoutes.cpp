@@ -536,6 +536,21 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QJsonObject obj;
         QString authedToken; // set when a valid session cookie is found below
         const QString currentToken = HttpServer::sessionTokenFromRequest(req);
+        const auto candidate = authManager.sessionForToken(currentToken);
+        if (!candidate.token.isEmpty() && candidate.authMethod == "sso" && !req.ssoAuthorized) {
+            auto response = HttpResponse::json({{"authenticated", false},
+                                                {"is_localhost", false},
+                                                {"is_host_machine", false},
+                                                {"auth_method", "sso"},
+                                                {"sso_revalidation_required", true},
+                                                {"sso_session_id", candidate.token},
+                                                {"server_time", QDateTime::currentSecsSinceEpoch()},
+                                                {"pin_enabled", authManager.config().pin},
+                                                {"sso_enabled", authManager.config().sso},
+                                                {"sso_origin", authManager.config().publicUrl}});
+            response.headers["Cache-Control"] = "no-store";
+            return response;
+        }
         if (authManager.validateSession(currentToken)) {
             authedToken = currentToken;
             authManager.touchSession(currentToken);
@@ -641,8 +656,9 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // 90-day window without ever re-entering the PIN. A session the visitor
         // asked not to remember stays session-scoped — see sessionCookie().
         if (!authedToken.isEmpty()) {
-            resp.headers["Set-Cookie"] =
-                sessionCookie(authedToken, !authManager.isEphemeralSession(authedToken));
+            resp.headers["Set-Cookie"] = sessionCookie(
+                authedToken, authManager.sessionForToken(authedToken).authMethod != "sso" &&
+                                 !authManager.isEphemeralSession(authedToken));
         }
         return resp;
     });

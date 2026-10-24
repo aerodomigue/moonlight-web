@@ -51,6 +51,7 @@ HttpRequest parse(const QByteArray& raw)
         QStringList parts = lines[0].split(' ');
         if (parts.size() >= 2) {
             req.method = parts[0].toUpper();
+            req.rawMethod = parts[0];
             req.rawTarget = parts[1].toUtf8();
             QUrl url(parts[1]);
             req.path = url.path();
