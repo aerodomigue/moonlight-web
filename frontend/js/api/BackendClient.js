@@ -788,12 +788,13 @@ export class BackendClient {
     /** End this browser's own session and clear its cookie. Works from anywhere
      *  (no localhost gate) — it is the visitor's way out of a public machine. */
     static async logout() {
+        const result = await this.post('/api/auth/logout');
         try {
             sessionStorage.setItem('mw-sso-logged-out', '1');
         } catch {
             /* optional browser storage */
         }
-        return this.post('/api/auth/logout');
+        return result;
     }
     /** Redeem the host key (?mwk=... from the host machine's own entry points)
      *  for a localhost-equivalent session over the public domain. */

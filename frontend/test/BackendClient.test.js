@@ -49,6 +49,12 @@ describe('BackendClient', () => {
         expect(sessionStorage.getItem('mw_auth_reload')).toBeNull();
     });
 
+    it('does not mark logout complete when durable revocation fails', async () => {
+        mockFetch(jsonResponse({error:'session_persistence_failed'}, {ok:false, status:503}));
+        await expect(BackendClient.logout()).rejects.toMatchObject({statusCode:503});
+        expect(sessionStorage.getItem('mw-sso-logged-out')).toBeNull();
+    });
+
     it('GET returns parsed JSON on success', async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ hosts: [] }));
         vi.stubGlobal('fetch', fetchMock);

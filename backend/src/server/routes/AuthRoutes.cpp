@@ -83,20 +83,21 @@ QJsonObject hostPairingIdentity(AppSettings& settings)
 /// Bind the browser public key carried in a login body, when there is one.
 /// Pairing with a PIN is the one moment a key may be registered from anywhere,
 /// including the internet: the visitor has just proven they hold the secret.
-void bindKeyFromLoginBody(AuthManager& authManager, const QString& token, const QJsonObject& body,
+bool bindKeyFromLoginBody(AuthManager& authManager, const QString& token, const QJsonObject& body,
                           QJsonObject& reply, AppSettings& settings)
 {
     const QString b64 = body.value(QStringLiteral("public_key")).toString();
-    if (b64.isEmpty()) return; // older frontend: nothing to bind, nothing to fail
+    if (b64.isEmpty()) return true; // older frontend: nothing to bind, nothing to fail
 
     if (!authManager.bindSessionKey(token, QByteArray::fromBase64(b64.toUtf8()))) {
         reply["pairing_key"] = "rejected";
-        return;
+        return !PairingCrypto::isValidP256Spki(QByteArray::fromBase64(b64.toUtf8()));
     }
     reply["pairing_key"] = "bound";
     const QJsonObject identity = hostPairingIdentity(settings);
     for (auto it = identity.constBegin(); it != identity.constEnd(); ++it)
         reply[it.key()] = it.value();
+    return true;
 }
 
 } // namespace
@@ -185,6 +186,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                 QString token =
                     authManager.createSession(req.clientAddress, machineName, false, !remember,
                                               false, UserStore::localId(), "certificate");
+                if (token.isEmpty()) return HttpResponse::error(503, "session_persistence_failed");
                 geoIpService.lookupIp(
                     req.clientAddress,
                     [&authManager, token](const QString& city, const QString& country) {
@@ -197,7 +199,10 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                 obj["auth_method"] = "certificate";
                 obj["user"] = authManager.users().get(UserStore::localId()).json();
                 obj["remembered"] = remember;
-                bindKeyFromLoginBody(authManager, token, body, obj, settings);
+                if (!bindKeyFromLoginBody(authManager, token, body, obj, settings)) {
+                    authManager.logoutSession(token);
+                    return HttpResponse::error(503, "session_persistence_failed");
+                }
                 HttpResponse resp = HttpResponse::json(obj);
                 resp.headers["Set-Cookie"] = sessionCookie(token, remember);
                 return resp;
@@ -227,6 +232,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             QString token = authManager.createSession(req.clientAddress, machineName, false,
                                                       !remember, false, userId, "pin");
 
+            if (token.isEmpty()) return HttpResponse::error(503, "session_persistence_failed");
+
             // Look up the IP geolocation asynchronously and store in the session
             geoIpService.lookupIp(req.clientAddress, [&authManager, token](const QString& city,
                                                                            const QString& country) {
@@ -242,7 +249,10 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             obj["pin_regenerated"] = true;
             obj["user"] = authManager.users().get(userId).json();
             obj["remembered"] = remember;
-            bindKeyFromLoginBody(authManager, token, body, obj, settings);
+            if (!bindKeyFromLoginBody(authManager, token, body, obj, settings)) {
+                authManager.logoutSession(token);
+                return HttpResponse::error(503, "session_persistence_failed");
+            }
             if (obj["pairing_key"] == "bound")
                 authManager.authorizeIdentityRenewal(token, settings.hostSigningPublicKey());
             HttpResponse resp = HttpResponse::json(obj);
@@ -293,6 +303,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         const QString token =
             authManager.createSession(req.clientAddress, machineName, false, false, false,
                                       handoff->userId, handoff->authMethod);
+        if (token.isEmpty()) return HttpResponse::error(503, "session_persistence_failed");
         geoIpService.lookupIp(req.clientAddress,
                               [&authManager, token](const QString& city, const QString& country) {
                                   authManager.setSessionGeo(token, city, country);
@@ -304,7 +315,10 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         obj["status"] = "ok";
         obj["remembered"] = true;
         obj["instances"] = handoff->instances;
-        bindKeyFromLoginBody(authManager, token, body, obj, settings);
+        if (!bindKeyFromLoginBody(authManager, token, body, obj, settings)) {
+            authManager.logoutSession(token);
+            return HttpResponse::error(503, "session_persistence_failed");
+        }
         HttpResponse resp = HttpResponse::json(obj);
         resp.headers["Set-Cookie"] = sessionCookie(token, true);
         return resp;
@@ -723,7 +737,13 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
     // must not require reaching the host's admin page.
     server.router()->post("/api/auth/logout", [&authManager](const HttpRequest& req) {
         const QString token = HttpServer::sessionTokenFromRequest(req);
-        const bool destroyed = authManager.logoutSession(token);
+        bool destroyed = false;
+        try {
+            destroyed = authManager.logoutSession(token);
+        } catch (const std::exception&) {
+            // Keep the cookie for an idempotent retry after storage recovers.
+            return HttpResponse::error(503, "session_persistence_failed");
+        }
 
         QJsonObject obj;
         obj["status"] = "ok";
@@ -789,7 +809,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             return HttpResponse::json(obj, 409);
         }
 
-        authManager.destroySession(token);
+        if (!authManager.destroySession(token))
+            return HttpResponse::error(503, "session_persistence_failed");
         QJsonObject obj;
         obj["status"] = "revoked";
         return HttpResponse::json(obj);
