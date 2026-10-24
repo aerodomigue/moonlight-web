@@ -87,7 +87,8 @@ export class AdminUsersPanel {
                 user
                     ? `<form id="admin-edit-user"><div class="settings-field"><label for="admin-user-name">${t('adminAccounts.name')}</label>
                 <input id="admin-user-name" class="settings-input" name="name" maxlength="256" required value="${esc(user.name)}" />
-                <select class="settings-select" aria-label="${t('adminAccounts.role')}" name="role" ${user.protected ? 'disabled' : ''}>${roleOptions(user.role)}</select>
+                <select class="settings-select" aria-label="${t('adminAccounts.role')}" name="role" ${user.protected || user.sso_linked ? 'disabled' : ''}>${roleOptions(user.role)}</select>
+                ${user.sso_linked ? `<p class="settings-hint" data-role-source>${t('adminAccounts.authentikRole')}</p>` : ''}
                 <label><input type="checkbox" name="enabled" ${user.enabled ? 'checked' : ''} ${user.protected ? 'disabled' : ''} /> ${t('adminAccounts.enabled')}</label>
                 <button class="btn btn-secondary" type="submit" ${user.deleting ? 'disabled' : ''}>${t('adminAccounts.saveUser')}</button></div></form>
                 <button class="btn btn-secondary" data-user-action="pin" ${!this.config.pin || !user.enabled || user.deleting ? 'disabled' : ''}>${t('adminAccounts.generatePin')}</button>
@@ -141,7 +142,9 @@ export class AdminUsersPanel {
             this.act(() =>
                 BackendClient.post(`/api/admin/users/${encodeURIComponent(user.id)}`, {
                     name: fields.get('name'),
-                    role: user.protected ? 'admin' : fields.get('role'),
+                    ...(user.sso_linked
+                        ? {}
+                        : { role: user.protected ? 'admin' : fields.get('role') }),
                     enabled: user.protected || fields.get('enabled') === 'on',
                 }),
             );

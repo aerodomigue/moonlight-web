@@ -194,7 +194,7 @@ void OidcClient::prepare(const HttpRequest& req, ResponseCallback respond)
                     query.addQueryItem("response_type", "code");
                     query.addQueryItem("client_id", c.clientId);
                     query.addQueryItem("redirect_uri", c.callbackUrl());
-                    query.addQueryItem("scope", "openid profile");
+                    query.addQueryItem("scope", it->config.scopes);
                     if (!it->targetUser.isEmpty()) query.addQueryItem("prompt", "select_account");
                     query.addQueryItem("state", state);
                     query.addQueryItem("nonce", it->nonce);
@@ -288,6 +288,10 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                         return;
                     }
                     try {
+                        const auto role = (*claims)["moonlight_role"];
+                        const auto ssoRole = role.isString() && role.toString() == "internal_admin"
+                                                 ? QStringLiteral("admin")
+                                                 : QStringLiteral("user");
                         if (!pending.targetUser.isEmpty()) {
                             if (!m_auth.users().active(pending.targetUser)) {
                                 respond(redirect("/admin?oidc_link=error"));
@@ -311,6 +315,7 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                                               (*claims)["name"].toString(),
                                               digest(pending.previousToken),
                                               pending.config.signature(),
+                                              ssoRole,
                                               pending.revision,
                                               QDateTime::currentSecsSinceEpoch()};
                             auto response = redirect("/admin?oidc_link=ready");
@@ -328,12 +333,12 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                             respond(redirect("/?auth_error=sso"));
                             return;
                         }
-                        user.verifiedConfig = pending.config.signature();
-                        m_auth.users().update(user);
+                        user = m_auth.synchronizeSsoRole(user, ssoRole, pending.config);
                         const QString token =
                             m_auth.createSession(req.clientAddress, pending.machine, false,
                                                  !pending.remember, false, user.id, "sso");
-                        if (token.isEmpty()) {
+                        if (token.isEmpty() || !m_auth.proveSsoAdministrator(token)) {
+                            m_auth.logoutSession(token);
                             respond(redirect("/?auth_error=sso"));
                             return;
                         }
@@ -507,7 +512,9 @@ void OidcClient::registerAdminRoutes()
             (user.issuer != grant.issuer || user.subject != grant.subject))
             return HttpResponse::error(409, "Account already has a different SSO identity");
         try {
-            m_auth.users().bind(grant.user, grant.issuer, grant.subject, grant.signature);
+            m_auth.users().bind(grant.user, grant.issuer, grant.subject, grant.signature,
+                                grant.role);
+            m_auth.revokeUserSessions(grant.user);
             auto response = HttpResponse::json({{"status", "ok"}});
             response.headers["Set-Cookie"] =
                 "__Host-mw_oidc_link=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";

@@ -12,7 +12,7 @@ OpenID Connect, avec Authorization Code et PKCE S256.
 | `MW_OIDC_CLIENT_ID` | Identifiant de l'application OIDC |
 | `MW_OIDC_CLIENT_SECRET_FILE` | Fichier contenant le secret client, accessible au compte du service |
 | `MW_OIDC_CLIENT_SECRET` | Autre possibilité : secret dans l'environnement ; le fichier a priorité |
-| `MW_OIDC_ADMIN_SUBJECTS` | Liste séparée par des virgules des valeurs `sub` autorisées à administrer |
+| `MW_OIDC_SCOPES` | `openid profile email moonlight_role` par défaut ; modifiable dans l’interface |
 | `MW_OIDC_CA_FILE` | Facultatif : certificat PEM d'une CA privée supplémentaire pour le fournisseur |
 
 Les connexions au fournisseur vérifient toujours TLS. Les signatures RS256 et
@@ -27,12 +27,16 @@ Créer une application avec un fournisseur **OAuth2/OpenID Connect** :
 1. Choisir Authorization Code, PKCE S256 et une clé de signature RS256 ou ES256.
 2. Enregistrer une URI de redirection exacte :
    `https://votre-domaine/api/auth/oidc/callback`.
-3. Autoriser les scopes `openid` et `profile`.
+3. Autoriser les scopes `openid profile email moonlight_role`. Associer au scope
+   personnalisé une propriété qui fournit `moonlight_role` dans **l’ID token signé**,
+   avec exactement la chaîne `internal_admin` ou `internal_user`. Une liste de
+   groupes, un tableau ou un attribut présent uniquement dans UserInfo ne suffit pas.
 4. Dans **Administration → Connexion**, reporter l'issuer exact, le Client ID et
    le secret. Tester le fournisseur, puis enregistrer **PIN et SSO**.
-5. Effectuer une connexion SSO et attribuer le rôle administrateur au compte
-   concerné dans **Administration → Utilisateurs**. Le mode SSO seul devient
-   possible après une connexion réussie d'un administrateur avec ces paramètres.
+5. Effectuer une nouvelle connexion SSO avec un compte recevant `internal_admin`.
+   Le bouton Admin ouvre alors directement la console. Dans **Utilisateurs**, la
+   source du rôle est Authentik et le rôle est en lecture seule. Le mode SSO seul
+   devient possible après cette connexion réussie avec les paramètres enregistrés.
 
 Le test de fournisseur contrôle discovery, TLS, clés de signature et PKCE ;
 il ne prouve pas que le secret est correct. Celui-ci est vérifié lors du véritable
@@ -58,7 +62,7 @@ MW_PUBLIC_URL=https://moonlight.example.org
 MW_OIDC_ISSUER=https://auth.example.org/application/o/moonlight/
 MW_OIDC_CLIENT_ID=moonlight-web
 MW_OIDC_CLIENT_SECRET_FILE=/etc/moonlightweb/oidc-client-secret
-MW_OIDC_ADMIN_SUBJECTS=subject-du-compte-administrateur
+MW_OIDC_SCOPES=openid profile email moonlight_role
 ```
 
 Le fichier du secret doit être lisible par le service et protégé des autres
@@ -104,13 +108,26 @@ d'identité envoyés par un proxy ne connectent aucun utilisateur.
   Apollo/Sunshine tout en conservant leurs listes et réglages distincts.
 - Le rôle administrateur donne accès aux réglages, aux utilisateurs et à leurs
   enregistrements de machines via les routes administrateur. Les listes ordinaires
-  restent privées. Les rôles valent par PIN comme par SSO. Pour le propriétaire
-  local historique, le PIN conserve l'étape du mot de passe d'administration à
-  distance ; il ne transforme pas les anciens appareils PIN en administrateurs.
-- Les comptes SSO sont créés automatiquement à la première connexion. Un rôle
-  défini dans l'interface et une désactivation ne sont pas écrasés par les claims.
-  `MW_OIDC_ADMIN_SUBJECTS` reste un mécanisme de démarrage pour les comptes dont
-  le rôle n'a pas encore été administré explicitement.
+  restent privées. Un administrateur connecté par **SSO** accède directement à la
+  console ; le même compte connecté par **PIN** doit saisir le mot de passe
+  administrateur, dans les conditions d’accès réseau configurées. Un utilisateur
+  ordinaire ne peut pas déverrouiller la console, même avec ce mot de passe.
+- Les comptes SSO sont créés automatiquement. Authentik fait autorité sur leur rôle
+  à la prochaine connexion SSO : `internal_admin` donne le rôle administrateur ;
+  `internal_user`, un claim absent, inconnu ou malformé donnent le rôle utilisateur.
+  Le rôle local est conservé séparément mais ne contourne jamais le claim SSO.
+  L’ancienne variable `MW_OIDC_ADMIN_SUBJECTS` n’accorde plus de droits. Une
+  désactivation ou une suppression en cours restent prioritaires sur Authentik.
+- Un changement de rôle révoque les anciennes sessions et ferme leurs connexions
+  et flux propres, sans toucher aux autres comptes. Une promotion exige une
+  nouvelle connexion SSO ; une ancienne session sans preuve de rôle doit se
+  reconnecter. Les modifications de fournisseur, de scopes ou des autres paramètres
+  OIDC invalident les preuves et transactions précédentes. Aucune association de
+  comptes n’est réalisée par e-mail.
+- Le propriétaire local conserve sa récupération par PIN et mot de passe, même
+  si son identité SSO reçoit `internal_user`. Sa connexion SSO suit le claim. La
+  perte du dernier administrateur dans Authentik retire réellement ses droits ;
+  utiliser la récupération locale pour réactiver le PIN si nécessaire.
 - Au premier démarrage après mise à jour, les anciennes machines et sessions
   appartiennent au propriétaire local. Leurs identifiants et appairages restent
   utilisables. Les anciennes sessions PIN sont refusées si le PIN est désactivé.
@@ -135,21 +152,23 @@ Ces réglages ne désactivent ni l'accès Internet, ni UPnP, ni WebRTC, ni le WO
 Les services de relais et de télémétrie MoonlightWeb restent désactivés par le
 profil reverse proxy.
 
-Le modèle enrichi est enregistré dans `users.json` version 2. Un retour à un
+Le modèle enrichi est enregistré dans `users.json` version 3. Un retour à un
 ancien binaire doit restaurer aussi la sauvegarde de l'état réalisée avant mise
 à jour ; l'ancien lecteur ne comprend pas les comptes locaux enrichis.
 
 ## Gestion des comptes et des machines
 
 L'administrateur peut créer, renommer, activer/désactiver un compte, modifier son
-rôle, générer son PIN et révoquer ses sessions. Une désactivation ferme ses
+rôle s’il n’est pas lié au SSO, générer son PIN et révoquer ses sessions. Une désactivation ferme ses
 connexions et ses flux propres. Le propriétaire local est protégé, ainsi que le
-dernier administrateur SSO utilisable lorsque le PIN est désactivé.
+dernier administrateur SSO utilisable pour les modifications locales lorsque le
+PIN est désactivé. Cette protection ne bloque pas une rétrogradation reçue du fournisseur.
 
 Pour rattacher un compte local à une identité SSO, ouvrir l'administration sous
 l'URL publique, sélectionner le compte, puis **Associer une identité SSO**. Le
 fournisseur vérifie l'identité ; l'administrateur confirme ensuite le nom, l'issuer
-et le sujet affichés. Le compte conserve son identifiant et ses machines. Une
+et le sujet affichés. La confirmation applique aussi le rôle SSO vérifié et révoque
+les anciennes sessions du compte ; le simple début du parcours ne change aucun droit. Le compte conserve son identifiant et ses machines. Une
 identité déjà attribuée à un autre compte est refusée ; aucune association n'est
 faite par nom ou e-mail. Un lien existant peut être retiré explicitement avant
 réattribution, sous réserve des protections d'accès administrateur.

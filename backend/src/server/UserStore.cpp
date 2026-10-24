@@ -22,6 +22,8 @@ QJsonObject UserAccount::adminJson() const
     o["issuer"] = issuer;
     o["subject"] = subject;
     o["role"] = role;
+    o["sso_role"] = ssoRole;
+    o["role_source"] = issuer.isEmpty() ? "local" : "authentik";
     o["enabled"] = enabled;
     o["deleting"] = deleting;
     o["protected"] = id == UserStore::localId();
@@ -51,7 +53,8 @@ UserStore::UserStore(QString path)
     if (error.error != QJsonParseError::NoError || !doc.isObject() || !doc["users"].isArray())
         throw std::runtime_error("Invalid user store; refusing to discard accounts");
     const int version = doc["version"].toInt(1);
-    if (version != 1 && version != 2) throw std::runtime_error("Unsupported user store version");
+    if (version != 1 && version != 2 && version != 3)
+        throw std::runtime_error("Unsupported user store version");
     QMap<QString, bool> seen;
     for (const auto& value : doc["users"].toArray()) {
         const auto o = value.toObject();
@@ -79,6 +82,13 @@ UserStore::UserStore(QString path)
         u.managedRole = o.value("managed_role").toBool(false);
         u.managedName = o.value("managed_name").toBool(false);
         u.verifiedConfig = o.value("verified_config").toString();
+        // Old local/subject-list administrator assignments are not verified SSO roles.
+        if (version >= 3) {
+            u.ssoRole = o.value("sso_role").toString("user");
+            u.roleRevision = o.value("role_revision").toVariant().toULongLong();
+            if (u.ssoRole != "admin" && u.ssoRole != "user")
+                throw std::runtime_error("Invalid SSO role");
+        }
         if (u.id == localId() && (!u.enabled || u.deleting || u.role != "admin"))
             throw std::runtime_error("Local owner must remain available");
         m_users[u.id] = u;
@@ -128,7 +138,7 @@ UserAccount UserStore::createLocal(const QString& name, const QString& role)
 void UserStore::update(const UserAccount& u)
 {
     if (!contains(u.id) || u.name.simplified().isEmpty() || u.name.size() > 256 ||
-        (u.role != "user" && u.role != "admin") ||
+        (u.role != "user" && u.role != "admin") || (u.ssoRole != "user" && u.ssoRole != "admin") ||
         (u.id == localId() && (!u.enabled || u.deleting || u.role != "admin")))
         throw std::runtime_error("Invalid user update");
     auto users = m_users;
@@ -137,7 +147,7 @@ void UserStore::update(const UserAccount& u)
 }
 
 void UserStore::bind(const QString& id, const QString& issuer, const QString& subject,
-                     const QString& verifiedConfig)
+                     const QString& verifiedConfig, const QString& ssoRole)
 {
     auto user = get(id);
     const auto existing = findIdentity(issuer, subject);
@@ -147,6 +157,8 @@ void UserStore::bind(const QString& id, const QString& issuer, const QString& su
     user.issuer = issuer;
     user.subject = subject;
     user.verifiedConfig = verifiedConfig;
+    user.ssoRole = ssoRole;
+    ++user.roleRevision;
     update(user);
 }
 
@@ -168,12 +180,13 @@ void UserStore::commit(const QMap<QString, UserAccount>& users)
             o["managed_role"] = u.managedRole;
             o["managed_name"] = u.managedName;
             o["verified_config"] = u.verifiedConfig;
+            o["role_revision"] = static_cast<qint64>(u.roleRevision);
             entries.append(o);
         }
         QSaveFile file(m_path);
         if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error("Cannot write user store");
         file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-        const auto bytes = QJsonDocument(QJsonObject{{"version", 2}, {"users", entries}}).toJson();
+        const auto bytes = QJsonDocument(QJsonObject{{"version", 3}, {"users", entries}}).toJson();
         if (file.write(bytes) != bytes.size() || !file.commit())
             throw std::runtime_error("Cannot commit user store");
     }

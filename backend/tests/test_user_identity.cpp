@@ -6,6 +6,8 @@
 #include "server/UserStore.h"
 #include "common/PairingCrypto.h"
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include <QTemporaryDir>
 #include <stdexcept>
 
@@ -104,6 +106,8 @@ void run_user_identity_tests()
     local = store.get(local.id);
     local.enabled = false;
     local.role = "admin";
+    local.ssoRole = "user";
+    local.roleRevision = 7;
     store.update(local);
     CHECK(!store.active(local.id));
     CHECK(!store.upsert(config.issuer, "linked-sub", "Still disabled").enabled);
@@ -118,6 +122,21 @@ void run_user_identity_tests()
     CHECK_EQ(managedReload.findIdentity(config.issuer, "linked-sub").id, local.id);
     CHECK(!managedReload.active(local.id));
     CHECK_EQ(managedReload.get(local.id).role, QString("admin"));
+    CHECK_EQ(managedReload.get(local.id).ssoRole, QString("user"));
+    CHECK_EQ(managedReload.get(local.id).roleRevision, quint64(7));
+    const auto legacyPath = temporary.filePath("legacy-users.json");
+    QFile legacyFile(legacyPath);
+    CHECK(legacyFile.open(QIODevice::WriteOnly));
+    legacyFile.write(
+        QJsonDocument(QJsonObject{{"version", 2}, {"users", QJsonArray{local.adminJson()}}})
+            .toJson());
+    legacyFile.close();
+    UserStore migrated(legacyPath);
+    CHECK_EQ(migrated.get(local.id).id, local.id);
+    CHECK_EQ(migrated.get(local.id).role, QString("admin"));
+    CHECK_EQ(migrated.get(local.id).ssoRole, QString("user"));
+    CHECK_EQ(migrated.get(local.id).roleRevision, quint64(0));
+    CHECK(!migrated.active(local.id));
     auto owner = store.get(UserStore::localId());
     owner.enabled = false;
     conflict = false;
@@ -158,6 +177,14 @@ void run_user_identity_tests()
 #endif
     CHECK_EQ(AuthConfig::edited(loaded, {{"client_secret", ""}}).clientSecret, saved.clientSecret);
     CHECK(AuthConfig::edited(loaded, {{"clear_secret", true}}).clientSecret.isEmpty());
+    CHECK_EQ(loaded.json()["scopes"].toString(), QString("openid profile email moonlight_role"));
+    const auto scoped = AuthConfig::edited(loaded, {{"scopes", "openid moonlight_role"}});
+    CHECK(scoped.signature() != loaded.signature());
+    CHECK_EQ(scoped.clientSecret, saved.clientSecret);
+    scoped.save(authPath);
+    CHECK_EQ(AuthConfig::load(authPath, bootstrap).json()["scopes"].toString(),
+             QString("openid moonlight_role"));
+    saved.save(authPath);
     auto ssoMode = saved;
     ssoMode.pin = false;
     CHECK_EQ(saved.signature(), ssoMode.signature());
@@ -228,7 +255,7 @@ void run_user_identity_tests()
     CHECK(!auth.isSsoAdmin(session));
     const auto adminSession =
         auth.createSession("10.2.10.21", "Admin", false, false, false, administrator.id, "sso");
-    CHECK(auth.isSsoAdmin(adminSession));
+    CHECK(!auth.isSsoAdmin(adminSession)); // legacy subject lists are not role proof
     CHECK(!auth.isSsoAdmin("invented-cookie"));
     CHECK(auth.createSession("10.2.10.21", "Unknown", false, false, false, "unknown", "sso")
               .isEmpty());
@@ -291,10 +318,58 @@ void run_user_identity_tests()
           AuthManager::Valid);
     const auto playerToken =
         managed.createSession("10.2.10.45", "Local admin", false, false, false, player.id, "pin");
-    CHECK(managed.isSsoAdmin(playerToken));
+    CHECK(!managed.isSsoAdmin(playerToken)); // PIN always requires password unlock
     CHECK(!managed.isSsoAdmin(managed.createSession("10.2.10.46", "Legacy owner")));
+    CHECK(managed.passwordUnlockEligible(playerToken));
+    CHECK(!managed.isAdminSession(playerToken));
+    CHECK(managed.promoteSessionToAdmin(playerToken));
+    CHECK(managed.isAdminSession(playerToken));
+    auto linked = managed.users().upsert(mixed.issuer, "roles-subject", "Roles");
+    linked.role = "admin"; // An old manual assignment must never override the issuer.
+    managed.users().update(linked);
+    auto oldSso =
+        managed.createSession("10.2.10.47", "Old SSO", false, false, false, linked.id, "sso");
+    CHECK(!managed.isSsoAdmin(oldSso));
+    linked = managed.synchronizeSsoRole(linked, "admin", mixed);
+    CHECK(!managed.validateSession(oldSso));
+    auto freshSso =
+        managed.createSession("10.2.10.47", "Fresh SSO", false, false, false, linked.id, "sso");
+    CHECK(!managed.isSsoAdmin(freshSso)); // A session alone is not verified-role proof.
+    CHECK(managed.proveSsoAdministrator(freshSso));
+    CHECK(managed.isSsoAdmin(freshSso));
+    CHECK(!managed.passwordUnlockEligible(freshSso));
+    auto linkedPin =
+        managed.createSession("10.2.10.48", "Linked PIN", false, false, false, linked.id);
+    CHECK(!managed.isSsoAdmin(linkedPin));
+    CHECK(managed.passwordUnlockEligible(linkedPin));
+    CHECK(managed.promoteSessionToAdmin(linkedPin));
+    linked = managed.synchronizeSsoRole(linked, "user", mixed);
+    CHECK_EQ(linked.role, QString("admin"));
+    CHECK(!managed.userAdministrator(linked));
+    CHECK(!managed.validateSession(freshSso));
+    CHECK(!managed.isAdminSession(linkedPin));
+    auto userPin = managed.createSession("10.2.10.48", "User PIN", false, false, false, linked.id);
+    CHECK(!managed.passwordUnlockEligible(userPin));
+    CHECK(!managed.promoteSessionToAdmin(userPin));
+    auto userSso =
+        managed.createSession("10.2.10.47", "User SSO", false, false, false, linked.id, "sso");
+    CHECK(managed.proveSsoAdministrator(userSso));
+    CHECK(!managed.isSsoAdmin(userSso));
+    auto localOwner = managed.users().get(UserStore::localId());
+    managed.users().bind(localOwner.id, mixed.issuer, "owner-sub", mixed.signature(), "user");
+    auto ownerSso =
+        managed.createSession("10.2.10.49", "Owner SSO", false, false, false, localOwner.id, "sso");
+    CHECK(managed.proveSsoAdministrator(ownerSso));
+    CHECK(!managed.isSsoAdmin(ownerSso));
+    CHECK(!managed.passwordUnlockEligible(ownerSso));
+    auto ownerPin = managed.createSession("10.2.10.49", "Recovery");
+    CHECK(managed.passwordUnlockEligible(ownerPin));
+    CHECK(managed.promoteSessionToAdmin(ownerPin));
+    CHECK(managed.isAdminSession(ownerPin));
     player.enabled = false;
     managed.users().update(player);
+    CHECK_EQ(managed.effectiveRole(player), QString("admin"));
+    CHECK(!managed.userAdministrator(player));
     CHECK(!managed.validateSession(playerToken));
     CHECK(managed.generateUserPin(player.id).isEmpty());
     CHECK(
@@ -312,6 +387,7 @@ void run_user_identity_tests()
     CHECK(managed.config().pin);
     auto verifiedAdmin = managed.users().upsert(mixed.issuer, "verified-admin", "Verified");
     verifiedAdmin.role = "admin";
+    verifiedAdmin.ssoRole = "admin";
     verifiedAdmin.managedRole = true;
     verifiedAdmin.verifiedConfig = mixed.signature();
     managed.users().update(verifiedAdmin);
@@ -319,6 +395,19 @@ void run_user_identity_tests()
     managed.applyConfig(only);
     CHECK(!managed.config().pin);
     CHECK_EQ(managed.configRevision(), quint64(1));
+
+    const auto beforeProviderChange = managed.createSession("10.2.10.50", "Verified SSO", false,
+                                                            false, false, verifiedAdmin.id, "sso");
+    CHECK(managed.proveSsoAdministrator(beforeProviderChange));
+    CHECK(managed.isSsoAdmin(beforeProviderChange));
+    auto otherProvider = only;
+    otherProvider.pin = true;
+    otherProvider.issuer += "other/";
+    managed.applyConfig(otherProvider);
+    CHECK(!managed.validateSession(beforeProviderChange));
+    CHECK(!managed.userAdministrator(managed.users().get(verifiedAdmin.id)));
+    CHECK(!managed.verifiedSsoAdministrator(otherProvider));
+    CHECK(managed.passwordUnlockEligible(managed.createSession("10.2.10.51", "Owner recovery")));
 
     SECTION("Concurrent accounts keep independent streaming and revocation state");
     AuthManager concurrent(nullptr, nullptr, mixed);

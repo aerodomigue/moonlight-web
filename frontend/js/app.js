@@ -1484,7 +1484,8 @@ export const MoonlightApp = {
      * a LAN machine that unlocked with the remote admin password.
      */
     _isHostLocal() {
-        if (this._hasAdminAccess) return true;
+        if (typeof this._hasAdminAccess === 'boolean')
+            return this._hasAdminAccess && !BackendClient.adminLocked;
         // Booth mode (--noadmin): on localhost too, nobody administers.
         if (BackendClient.adminLocked) return false;
         const hostname = window.location.hostname;

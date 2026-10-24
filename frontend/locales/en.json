@@ -1138,7 +1138,7 @@
         "pinOnly": "PIN only",
         "ssoOnly": "SSO only",
         "both": "PIN and SSO",
-        "safeSsoOnly": "Sign in an administrator with the configured SSO before disabling PIN.",
+        "safeSsoOnly": "Sign in successfully through SSO with the internal_admin role before disabling PIN. Local recovery remains available.",
         "issuer": "OpenID Connect issuer",
         "clientId": "Client ID",
         "secret": "Client secret",
@@ -1196,6 +1196,9 @@
         "confirmMachineAction": "Perform this operation to the selected account while keeping pairing?",
         "linkFailed": "SSO linking failed or this identity is already assigned to another account.",
         "role": "Role",
-        "noMethod": "No enabled sign-in method"
+        "noMethod": "No enabled sign-in method",
+        "scopes": "Scopes",
+        "roleClaimHint": "Authentik must include moonlight_role in the signed ID token: internal_admin or internal_user. Roles refresh at the next SSO sign-in.",
+        "authentikRole": "Source: Authentik. This role is synchronized at SSO sign-in and cannot be edited here."
     }
 }

@@ -181,6 +181,8 @@ void AuthManager::loadSessions()
             obj.value("auth_method")
                 .toString(obj["is_host"].toBool() ? QStringLiteral("host") : QStringLiteral("pin"));
         if (!m_users.active(info.userId)) continue;
+        info.ssoAdminConfig = obj.value("sso_admin_config").toString();
+        info.roleRevision = obj.value("role_revision").toVariant().toULongLong();
         info.token = obj["token"].toString();
         info.ip = obj["ip"].toString();
         info.machineName = obj["machine_name"].toString();
@@ -569,28 +571,73 @@ QString AuthManager::generateUserPin(const QString& userId, qint64 nowSecs)
     return pin;
 }
 
+QString AuthManager::effectiveRole(const UserAccount& user) const
+{
+    if (user.id.isEmpty()) return QStringLiteral("user");
+    if (!user.issuer.isEmpty())
+        return user.issuer == m_config.issuer && user.ssoRole == "admin" &&
+                       user.verifiedConfig == m_config.signature()
+                   ? QStringLiteral("admin")
+                   : QStringLiteral("user");
+    return user.role;
+}
+
 bool AuthManager::userAdministrator(const UserAccount& user) const
 {
-    if (!m_users.active(user.id)) return false;
-    if (user.id == UserStore::localId() || user.role == "admin") return true;
-    return !user.managedRole && user.issuer == m_config.issuer &&
-           m_config.administrator(user.subject);
+    return user.enabled && !user.deleting && effectiveRole(user) == "admin";
+}
+
+bool AuthManager::passwordUnlockEligible(const QString& token) const
+{
+    if (!validateSession(token)) return false;
+    const auto session = sessionForToken(token);
+    if (session.authMethod != "pin" && session.authMethod != "certificate") return false;
+    return session.userId == UserStore::localId() || userAdministrator(m_users.get(session.userId));
 }
 
 bool AuthManager::isSsoAdmin(const QString& token) const
 {
     if (!validateSession(token)) return false;
     const auto session = sessionForToken(token);
-    const auto user = m_users.get(session.userId);
-    // Preserve the legacy owner's PIN + remote-admin-password boundary.
-    if (user.id == UserStore::localId() && session.authMethod != "sso") return false;
-    return userAdministrator(user);
+    return session.authMethod == "sso" && session.ssoAdminConfig == m_config.signature() &&
+           userAdministrator(m_users.get(session.userId));
+}
+
+bool AuthManager::proveSsoAdministrator(const QString& token)
+{
+    if (!validateSession(token)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    if (it->authMethod != "sso") return false;
+    if (!userAdministrator(m_users.get(it->userId))) return true;
+    it->ssoAdminConfig = m_config.signature();
+    if (!it->ephemeral && !saveSessions()) {
+        it->ssoAdminConfig.clear();
+        return false;
+    }
+    return true;
+}
+
+UserAccount AuthManager::synchronizeSsoRole(UserAccount user, const QString& role,
+                                            const AuthConfig& config)
+{
+    if (!m_users.active(user.id) || user.issuer != config.issuer ||
+        config.signature() != m_config.signature() || (role != "user" && role != "admin"))
+        throw std::runtime_error("Unavailable account or obsolete SSO configuration");
+    const bool changed = user.ssoRole != role || user.verifiedConfig != config.signature();
+    user.ssoRole = role;
+    user.verifiedConfig = config.signature();
+    if (changed) ++user.roleRevision;
+    m_users.update(user); // Fail closed before creating a session or acknowledging any promotion.
+    // The durable revision also rejects old cookies if revocation cannot be persisted.
+    if (changed) revokeUserSessions(user.id);
+    return user;
 }
 
 bool AuthManager::verifiedSsoAdministrator(const AuthConfig& config) const
 {
     for (const auto& user : m_users.all()) {
-        if (userAdministrator(user) && user.issuer == config.issuer && !user.subject.isEmpty() &&
+        if (user.enabled && !user.deleting && user.ssoRole == "admin" &&
+            user.issuer == config.issuer && !user.subject.isEmpty() &&
             user.verifiedConfig == config.signature())
             return true;
     }
@@ -611,7 +658,9 @@ void AuthManager::applyConfig(const AuthConfig& config)
                 ? !config.pin
                 : (session.authMethod == "sso" &&
                    (!config.sso || m_users.get(session.userId).issuer != config.issuer));
-        if (disabled) destroySession(session.token);
+        const bool obsoleteRoleProof = config.signature() != m_config.signature() &&
+                                       !m_users.get(session.userId).issuer.isEmpty();
+        if (disabled || obsoleteRoleProof) destroySession(session.token);
     }
     if (!saveSessions()) throw std::runtime_error("Cannot persist revoked sessions");
     if (m_settings)
@@ -797,6 +846,7 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     SessionInfo info;
     info.userId = userId;
     info.authMethod = isHost ? QStringLiteral("host") : method;
+    info.roleRevision = m_users.get(userId).roleRevision;
     info.token = id;
     info.ip = cleanIp;
     info.machineName = machineName.isEmpty() ? QStringLiteral("Unknown") : machineName;
@@ -823,6 +873,7 @@ bool AuthManager::validateSession(const QString& token) const
     auto it = m_sessions.find(hashToken(token));
     if (it == m_sessions.end()) return false;
     if (!m_users.active(it->userId)) return false;
+    if (it->roleRevision != m_users.get(it->userId).roleRevision) return false;
     if (it->authMethod == QLatin1String("pin") || it->authMethod == QLatin1String("certificate")) {
         if (!m_config.pin) return false;
     } else if (it->authMethod == QLatin1String("sso")) {
@@ -868,20 +919,23 @@ bool AuthManager::isTunnelHostSession(const QString& token) const
 
 bool AuthManager::isAdminSession(const QString& token) const
 {
-    if (!validateSession(token)) return false;
+    if (!passwordUnlockEligible(token)) return false;
     auto it = m_sessions.find(hashToken(token));
     return it != m_sessions.end() && it->isAdmin;
 }
 
 bool AuthManager::promoteSessionToAdmin(const QString& token)
 {
-    if (!validateSession(token)) return false;
+    if (!passwordUnlockEligible(token)) return false;
     auto it = m_sessions.find(hashToken(token));
     if (it == m_sessions.end()) return false;
     if (it->isAdmin) return true;
 
     it->isAdmin = true;
-    saveSessions();
+    if (!it->ephemeral && !saveSessions()) {
+        it->isAdmin = false;
+        return false;
+    }
     emit sessionsChanged();
     Logger::info(
         QString("[Auth] Admin access unlocked for %1 (machine='%2')").arg(it->ip, it->machineName));

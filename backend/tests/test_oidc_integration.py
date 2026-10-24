@@ -88,7 +88,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             code = secrets.token_urlsafe(24)
             self.server.codes[code] = {
-                "subject": getattr(self.server, "browser_subject", "browser-subject"), "nonce": query["nonce"][0],
+                "subject": query.get("fixture_subject", [getattr(self.server, "browser_subject", "browser-subject")])[0], "nonce": query["nonce"][0],
                 "challenge": query["code_challenge"][0],
             }
             self.send_response(303)
@@ -153,8 +153,12 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             "iss": self.server.issuer, "sub": grant["subject"], "name": grant["subject"],
             "aud": "fixture-client", "nonce": grant["nonce"],
             "iat": int(time.time()), "exp": int(time.time()) + 300,
+            "moonlight_role": getattr(self.server, "roles", {}).get(grant["subject"],
+                "internal_admin" if grant["subject"] == "admin-subject" else "internal_user"),
         }
         claims.update(grant.get("claims", {}))
+        if claims.pop("_fixture_omit_role", False):
+            claims.pop("moonlight_role", None)
         header = {"alg": "RS256", "kid": "fixture-key"}
         payload = (b64(json.dumps(header).encode()) + "." + b64(json.dumps(claims).encode())).encode()
         signature = subprocess.run(
@@ -205,6 +209,7 @@ class OidcIsolation(unittest.TestCase):
         self.state = Path(tempfile.mkdtemp(dir=self.root))
         self.process = None
         self.log = None
+        self.issuer_server.roles = {}
 
     def tearDown(self):
         self.stop()
@@ -228,7 +233,12 @@ class OidcIsolation(unittest.TestCase):
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 return listener.getsockname()[1]
-        tls, http, ws = port(), port(), port()
+        if not hasattr(self, "ports"):
+            ports = set()
+            while len(ports) < 3:
+                ports.add(port())
+            self.ports = tuple(ports)
+        tls, http, ws = self.ports
         self.base = "https://127.0.0.1:" + str(tls)
         self.issuer_server.callback = self.base + "/api/auth/oidc/callback"
         settings = self.state / "settings.json"
@@ -281,6 +291,8 @@ class OidcIsolation(unittest.TestCase):
         self.assertEqual(status, 200, "Local HTTPS issuer discovery failed")
         params = urllib.parse.parse_qs(urllib.parse.urlparse(body["authorization_url"]).query)
         self.assertEqual(params["code_challenge_method"], ["S256"])
+        self.assertIn("openid", params["scope"][0].split())
+        self.last_scopes = params["scope"][0]
         code = secrets.token_urlsafe(24)
         self.issuer_server.codes[code] = {"nonce": params["nonce"][0], "challenge": params["code_challenge"][0],
                                          "subject": subject, "claims": claims or {}}
@@ -511,7 +523,10 @@ class OidcIsolation(unittest.TestCase):
         pin = admin.request("/api/admin/users/" + root["id"] + "/pin", {}, extra_headers=headers)[1]["pin"]
         local_admin = Browser(self.base)
         self.assertEqual(local_admin.request("/api/auth/validate", {"pin": pin})[0], 200)
-        self.assertTrue(local_admin.request("/api/admin/token")[1]["token"])
+        self.assertFalse(local_admin.request("/api/admin/token")[1].get("token"))
+        self.assertFalse(local_admin.request("/api/auth/status")[1]["is_localhost"])
+        self.assertEqual(admin.request("/api/admin/password", {"password": "fixture-admin-password", "enabled": True, "internet": True}, extra_headers=headers)[0], 200)
+        self.assertEqual(local_admin.request("/api/auth/admin-unlock", {"password": "fixture-admin-password"})[0], 200)
         self.assertTrue(local_admin.request("/api/auth/status")[1]["is_localhost"])
         self.assertEqual(admin.request(path, {"enabled": False}, extra_headers=headers)[0], 200)
         self.assertFalse(visitor.request("/api/auth/status")[1]["authenticated"])
@@ -524,6 +539,18 @@ class OidcIsolation(unittest.TestCase):
         self.start()
         local_admin.base = self.base
         self.assertTrue(local_admin.request("/api/auth/status")[1]["is_localhost"])
+
+    def test_disabled_local_admin_keeps_its_assigned_role(self):
+        self.start()
+        admin, headers = self.administrator()
+        user = admin.request("/api/admin/users", {"name": "Disabled administrator", "role": "admin"}, extra_headers=headers)[1]["user"]
+        path = "/api/admin/users/" + user["id"]
+        self.assertEqual(admin.request(path, {"enabled": False}, extra_headers=headers)[0], 200)
+        row = next(u for u in admin.request("/api/admin/users")[1]["users"] if u["id"] == user["id"])
+        self.assertFalse(row["enabled"])
+        self.assertEqual(row["role"], "admin")
+        self.assertEqual(admin.request(path, {"name": "Still administrator", "enabled": True}, extra_headers=headers)[0], 200)
+        self.assertEqual(next(u for u in admin.request("/api/admin/users")[1]["users"] if u["id"] == user["id"])["role"], "admin")
 
     def test_admin_auth_configuration_runtime_and_persistence(self):
         browser = self.start()
@@ -584,7 +611,7 @@ class OidcIsolation(unittest.TestCase):
         sso = Browser(self.base)
         self.assertEqual(self.login(sso, "linked-local-sub")["user"]["id"], user["id"])
         self.assertEqual(sso.request("/api/hosts")[1]["hosts"][0]["uuid"], pc)
-        self.assertEqual(local.request("/api/auth/status")[1]["user"]["id"], user["id"])
+        self.assertFalse(local.request("/api/auth/status")[1]["authenticated"]) # binding revokes old sessions
         other = admin.request("/api/admin/users", {"name": "Other local"}, extra_headers=headers)[1]["user"]
         callback = self.prepare(admin, "linked-local-sub", path="/api/admin/users/" + other["id"] + "/sso/prepare", headers=headers)
         self.assertEqual(admin.request(callback, cross_site=True)[2]["Location"], "/admin?oidc_link=conflict")
@@ -667,6 +694,19 @@ class OidcIsolation(unittest.TestCase):
         self.assertFalse(alice.request("/api/auth/status")[1]["authenticated"])
         self.assertFalse(any(c.name == "__Host-mw_session" for c in alice.cookies))
 
+    def control_socket(self, browser):
+        port = int(self.base.rsplit(":", 1)[1])
+        conn = ssl._create_unverified_context().wrap_socket(socket.create_connection(("127.0.0.1", port), timeout=3), server_hostname="127.0.0.1")
+        cookie = next(c.value for c in browser.cookies if c.name == "__Host-mw_session")
+        headers = {"Host": "127.0.0.1:" + str(port), "Origin": self.base, "Upgrade": "websocket", "Connection": "Upgrade", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": base64.b64encode(secrets.token_bytes(16)).decode(), "Cookie": "__Host-mw_session=" + cookie, "X-Forwarded-For": "203.0.113.20", "X-Forwarded-Proto": "https"}
+        request = "GET /ws/control HTTP/1.1\r\n" + "".join(k + ": " + v + "\r\n" for k, v in headers.items()) + "\r\n"
+        conn.sendall(request.encode())
+        response = b""
+        while b"\r\n\r\n" not in response:
+            response += conn.recv(4096)
+        self.assertTrue(response.startswith(b"HTTP/1.1 101"))
+        return conn
+
     def test_revoking_one_administrator_closes_only_its_websocket(self):
         self.start()
         admin, headers = self.administrator()
@@ -675,19 +715,9 @@ class OidcIsolation(unittest.TestCase):
         pin = admin.request(path + "/pin", {}, extra_headers=headers)[1]["pin"]
         other = Browser(self.base)
         self.assertEqual(other.request("/api/auth/validate", {"pin": pin})[0], 200)
-        def websocket(browser):
-            port = int(self.base.rsplit(":", 1)[1])
-            conn = ssl._create_unverified_context().wrap_socket(socket.create_connection(("127.0.0.1", port), timeout=3), server_hostname="127.0.0.1")
-            cookie = next(c.value for c in browser.cookies if c.name == "__Host-mw_session")
-            headers = {"Host": "127.0.0.1:" + str(port), "Origin": self.base, "Upgrade": "websocket", "Connection": "Upgrade", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": base64.b64encode(secrets.token_bytes(16)).decode(), "Cookie": "__Host-mw_session=" + cookie, "X-Forwarded-For": "203.0.113.20", "X-Forwarded-Proto": "https"}
-            request = "GET /ws/control HTTP/1.1\r\n" + "".join(k + ": " + v + "\r\n" for k, v in headers.items()) + "\r\n"
-            conn.sendall(request.encode())
-            response = b""
-            while b"\r\n\r\n" not in response:
-                response += conn.recv(4096)
-            self.assertTrue(response.startswith(b"HTTP/1.1 101"))
-            return conn
-        first, second = websocket(admin), websocket(other)
+        self.assertEqual(admin.request("/api/admin/password", {"password": "fixture-admin-password", "enabled": True, "internet": True}, extra_headers=headers)[0], 200)
+        self.assertEqual(other.request("/api/auth/admin-unlock", {"password": "fixture-admin-password"})[0], 200)
+        first, second = self.control_socket(admin), self.control_socket(other)
         try:
             self.assertEqual(admin.request(path, {"enabled": False}, extra_headers=headers)[0], 200)
             second.settimeout(3)
@@ -703,6 +733,227 @@ class OidcIsolation(unittest.TestCase):
         finally:
             first.close()
             second.close()
+
+    def test_verified_role_mapping_pin_boundary_and_legacy_admin_override(self):
+        self.start()
+        admin, headers = self.administrator()
+        status = admin.request("/api/auth/status")[1]
+        self.assertEqual(status["auth_method"], "sso")
+        self.assertEqual(status["effective_role"], "admin")
+        self.assertTrue(status["admin_access"])
+        self.assertFalse(status["admin_unlock_available"])
+        config = admin.request("/api/admin/auth-config")[1]
+        self.assertEqual(config["scopes"], "openid profile email moonlight_role")
+        self.assertEqual(admin.request("/api/admin/password", {"password": "fixture-admin-password", "enabled": True, "internet": True}, extra_headers=headers)[0], 200)
+        pin = admin.request("/api/auth/pin", {})[1]["pin"]
+        pin_browser = Browser(self.base)
+        self.assertEqual(pin_browser.request("/api/auth/validate", {"pin": pin})[0], 200)
+        status = pin_browser.request("/api/auth/status")[1]
+        self.assertEqual(status["auth_method"], "pin")
+        self.assertFalse(status["admin_access"])
+        self.assertTrue(status["admin_unlock_available"])
+        self.assertEqual(pin_browser.request("/api/admin/users")[0], 403)
+        self.assertEqual(pin_browser.request("/api/auth/admin-unlock", {"password": "wrong"})[0], 401)
+        self.assertEqual(pin_browser.request("/api/auth/admin-unlock", {"password": "fixture-admin-password"})[0], 200)
+        self.assertEqual(pin_browser.request("/api/admin/users")[0], 200)
+        # Every unexpected JSON type is ordinary, even for the old admin-subject.
+        for value in [None, "", "admin", "INTERNAL_ADMIN", ["internal_admin"], {"role": "internal_admin"}, True, 1, "internal_user"]:
+            ordinary = Browser(self.base)
+            callback = self.prepare(ordinary, "admin-subject", claims={"moonlight_role": value})
+            self.assertEqual(ordinary.request(callback, cross_site=True)[2]["Location"], "/")
+            status = ordinary.request("/api/auth/status")[1]
+            self.assertFalse(status["admin_access"], repr(value))
+            self.assertFalse(status["admin_unlock_available"])
+            self.assertEqual(status["effective_role"], "user")
+            for route in ["/api/admin/users", "/api/admin/auth-config"]:
+                self.assertEqual(ordinary.request(route)[0], 403)
+            self.assertFalse(ordinary.request("/api/admin/token")[1].get("token"))
+            self.assertEqual(ordinary.request("/api/auth/admin-unlock", {"password": "fixture-admin-password"})[0], 403)
+            websocket = {"Upgrade": "websocket", "Connection": "Upgrade", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": base64.b64encode(secrets.token_bytes(16)).decode(), "Origin": self.base}
+            self.assertEqual(ordinary.request("/ws/control", extra_headers=websocket)[0], 403)
+        self.assertFalse(admin.request("/api/auth/status")[1]["authenticated"])
+        self.assertFalse(pin_browser.request("/api/auth/status")[1]["authenticated"])
+        absent = Browser(self.base)
+        callback = self.prepare(absent, "admin-subject", claims={"_fixture_omit_role": True})
+        self.assertEqual(absent.request(callback, cross_site=True)[2]["Location"], "/")
+        self.assertFalse(absent.request("/api/auth/status")[1]["admin_access"])
+        # A token with an admin claim but invalid nonce cannot grant any session.
+        forged = Browser(self.base)
+        callback = self.prepare(forged, "admin-subject", claims={"moonlight_role": "internal_admin", "nonce": "forged"})
+        self.assertEqual(forged.request(callback, cross_site=True)[2]["Location"], "/?auth_error=sso")
+        self.assertFalse(forged.request("/api/auth/status")[1]["authenticated"])
+
+    def test_role_changes_revoke_only_that_account_and_survive_restart(self):
+        self.start()
+        admin, headers = self.administrator()
+        user = Browser(self.base)
+        status = self.login(user)
+        user_id = status["user"]["id"]
+        host = user.request("/api/hosts/manual", {"address": "127.0.0.1:" + str(self.pc.server_port)})[1]["hosts"][0]["uuid"]
+        self.issuer_server.roles["alice-sub"] = "internal_admin"
+        promoted = Browser(self.base)
+        self.assertTrue(self.login(promoted)["admin_access"])
+        self.assertFalse(user.request("/api/auth/status")[1]["authenticated"])
+        self.assertTrue(admin.request("/api/auth/status")[1]["admin_access"])
+        self.assertEqual(promoted.request("/api/hosts")[1]["hosts"][0]["uuid"], host)
+        path = "/api/admin/users/" + user_id
+        row = next(u for u in admin.request("/api/admin/users")[1]["users"] if u["id"] == user_id)
+        self.assertEqual(row["role_source"], "authentik")
+        self.assertEqual(admin.request(path, {"role": "admin"}, extra_headers=headers)[0], 409)
+        self.start()
+        promoted.base = admin.base = self.base
+        headers = {"X-MW-Admin-Key": admin.request("/api/admin/token")[1]["token"]}
+        self.assertTrue(promoted.request("/api/auth/status")[1]["admin_access"])
+        self.issuer_server.roles["alice-sub"] = "internal_user"
+        demoted = Browser(self.base)
+        self.assertFalse(self.login(demoted)["admin_access"])
+        self.assertFalse(promoted.request("/api/auth/status")[1]["authenticated"])
+        self.assertEqual(demoted.request("/api/hosts")[1]["hosts"][0]["uuid"], host)
+        self.assertTrue(admin.request("/api/auth/status")[1]["admin_access"])
+        self.assertEqual(admin.request(path, {"enabled": False}, extra_headers=headers)[0], 200)
+        self.issuer_server.roles["alice-sub"] = "internal_admin"
+        callback = self.prepare(demoted)
+        self.assertEqual(demoted.request(callback, cross_site=True)[2]["Location"], "/?auth_error=sso")
+
+    def test_role_sync_storage_failure_rejects_login_and_old_session_revision(self):
+        if os.name != "posix" or os.geteuid() == 0:
+            self.skipTest("Requires an unprivileged POSIX process")
+        self.start()
+        user = Browser(self.base)
+        self.login(user)
+        store = self.state / "data/MoonlightWeb/MoonlightWeb/users.json"
+        backup = store.with_suffix(".saved")
+        store.rename(backup)
+        store.mkdir() # QSaveFile cannot replace a directory.
+        self.issuer_server.roles["alice-sub"] = "internal_admin"
+        fresh = Browser(self.base)
+        try:
+            callback = self.prepare(fresh)
+            self.assertEqual(fresh.request(callback, cross_site=True)[2]["Location"], "/?auth_error=sso")
+            self.assertFalse(fresh.request("/api/auth/status")[1]["authenticated"])
+            self.assertFalse(user.request("/api/auth/status")[1]["admin_access"])
+        finally:
+            store.rmdir()
+            backup.rename(store)
+        sessions = store.with_name("sessions.json")
+        session_backup = sessions.with_suffix(".saved")
+        sessions.rename(session_backup)
+        sessions.mkdir()
+        try:
+            callback = self.prepare(fresh)
+            self.assertEqual(fresh.request(callback, cross_site=True)[2]["Location"], "/?auth_error=sso")
+            self.assertFalse(fresh.request("/api/auth/status")[1]["authenticated"])
+            self.assertFalse(user.request("/api/auth/status")[1]["authenticated"])
+            self.assertIsNone(self.process.poll())
+        finally:
+            sessions.rmdir()
+            session_backup.rename(sessions)
+        self.start()
+        user.base = self.base
+        # Old persisted cookies are rejected even after a failed revocation write.
+        self.assertFalse(user.request("/api/auth/status")[1]["authenticated"])
+        fresh.base = self.base
+        self.assertTrue(self.login(fresh)["admin_access"])
+        # A restored legacy SSO session without its own role proof is ordinary.
+        self.stop()
+        stored = json.loads(sessions.read_text())
+        for session in stored["sessions"]:
+            session.pop("sso_admin_config", None)
+            session["is_admin"] = True # historical/manual flags cannot bypass SSO proof.
+        sessions.write_text(json.dumps(stored))
+        self.start()
+        fresh.base = self.base
+        self.assertTrue(fresh.request("/api/auth/status")[1]["authenticated"])
+        self.assertFalse(fresh.request("/api/auth/status")[1]["admin_access"])
+        self.assertEqual(fresh.request("/api/auth/admin-unlock", {"password": "anything"})[0], 403)
+
+    def test_owner_sso_follows_claim_but_pin_keeps_password_recovery(self):
+        self.start()
+        admin, headers = self.administrator()
+        owner_path = "/api/admin/users/local-owner"
+        callback = self.prepare(admin, "owner-sub", claims={"moonlight_role": "internal_user"}, path=owner_path + "/sso/prepare", headers=headers)
+        self.assertEqual(admin.request(callback, cross_site=True)[2]["Location"], "/admin?oidc_link=ready")
+        self.assertEqual(admin.request(owner_path + "/sso/confirm", {}, extra_headers=headers)[0], 200)
+        sso = Browser(self.base)
+        self.assertFalse(self.login(sso, "owner-sub")["admin_access"])
+        self.assertEqual(sso.request("/api/auth/admin-unlock", {"password": "fixture-admin-password"})[0], 403)
+        self.assertEqual(admin.request("/api/admin/password", {"password": "fixture-admin-password", "enabled": True, "internet": True}, extra_headers=headers)[0], 200)
+        pin = admin.request(owner_path + "/pin", {}, extra_headers=headers)[1]["pin"]
+        recovery = Browser(self.base)
+        self.assertEqual(recovery.request("/api/auth/validate", {"pin": pin})[0], 200)
+        self.assertFalse(recovery.request("/api/auth/status")[1]["admin_access"])
+        self.assertTrue(recovery.request("/api/auth/status")[1]["admin_unlock_available"])
+        self.assertEqual(recovery.request("/api/auth/admin-unlock", {"password": "fixture-admin-password"})[0], 200)
+        self.assertEqual(recovery.request("/api/admin/users")[0], 200)
+
+    def test_sso_demotion_closes_only_its_control_websocket(self):
+        self.start()
+        admin, _ = self.administrator()
+        self.issuer_server.roles["alice-sub"] = "internal_admin"
+        other = Browser(self.base)
+        self.login(other)
+        first, second = self.control_socket(admin), self.control_socket(other)
+        try:
+            self.issuer_server.roles["alice-sub"] = "internal_user"
+            self.assertFalse(self.login(Browser(self.base))["admin_access"])
+            second.settimeout(3)
+            while second.recv(4096):
+                pass
+            first.sendall(b"\x89\x80" + secrets.token_bytes(4))
+            first.settimeout(2)
+            try:
+                self.assertNotEqual(first.recv(4096), b"")
+            except socket.timeout:
+                pass
+            self.assertTrue(admin.request("/api/auth/status")[1]["admin_access"])
+        finally:
+            first.close()
+            second.close()
+
+    def test_confirmed_link_claim_overrides_a_local_admin_only_after_confirmation(self):
+        self.start()
+        admin, headers = self.administrator()
+        local = admin.request("/api/admin/users", {"name": "Old local admin", "role": "admin"}, extra_headers=headers)[1]["user"]
+        path = "/api/admin/users/" + local["id"]
+        callback = self.prepare(admin, "linked-sub", path=path + "/sso/prepare", headers=headers)
+        self.assertEqual(admin.request(callback, cross_site=True)[2]["Location"], "/admin?oidc_link=ready")
+        before = next(u for u in admin.request("/api/admin/users")[1]["users"] if u["id"] == local["id"])
+        self.assertEqual(before["role"], "admin")
+        self.assertEqual(before["role_source"], "local")
+        self.assertEqual(admin.request(path + "/sso/confirm", {}, extra_headers=headers)[0], 200)
+        after = next(u for u in admin.request("/api/admin/users")[1]["users"] if u["id"] == local["id"])
+        self.assertEqual(after["role"], "user")
+        self.assertEqual(after["role_source"], "authentik")
+        pin = admin.request(path + "/pin", {}, extra_headers=headers)[1]["pin"]
+        pin_browser = Browser(self.base)
+        self.assertEqual(pin_browser.request("/api/auth/validate", {"pin": pin})[0], 200)
+        self.assertFalse(pin_browser.request("/api/auth/status")[1]["admin_unlock_available"])
+        self.assertEqual(pin_browser.request("/api/auth/admin-unlock", {"password": "anything"})[0], 403)
+
+    def test_scopes_invalidate_transactions_and_sso_only_validation(self):
+        self.start()
+        admin, headers = self.administrator()
+        waiting = Browser(self.base)
+        callback = self.prepare(waiting)
+        self.assertEqual(self.last_scopes, "openid profile email moonlight_role")
+        self.assertEqual(admin.request("/api/admin/auth-config", {"scopes": "openid profile moonlight_role"}, extra_headers=headers)[0], 200)
+        self.assertEqual(waiting.request(callback, cross_site=True)[2]["Location"], "/?auth_error=sso")
+        # Old SSO proof cannot disable PIN with the edited scope set.
+        self.assertEqual(admin.request("/api/admin/auth-config", {"pin": False}, extra_headers=headers)[0], 401)
+        fresh = Browser(self.base)
+        self.assertTrue(self.login(fresh, "admin-subject")["admin_access"])
+        self.assertEqual(self.last_scopes, "openid profile moonlight_role")
+        fresh_headers = {"X-MW-Admin-Key": fresh.request("/api/admin/token")[1]["token"]}
+        self.assertTrue(fresh.request("/api/admin/auth-config")[1]["secret_configured"])
+        self.assertEqual(fresh.request("/api/admin/auth-config", {"pin": False}, extra_headers=fresh_headers)[0], 200)
+        # Losing the last IdP administrator really removes access, even in SSO-only mode.
+        self.issuer_server.roles["admin-subject"] = "internal_user"
+        ordinary = Browser(self.base)
+        self.assertFalse(self.login(ordinary, "admin-subject")["admin_access"])
+        self.assertFalse(fresh.request("/api/auth/status")[1]["authenticated"])
+        recovery = Browser(self.base)
+        local_headers = {"Host": "localhost", "X-MW-Admin-Key": recovery.request("/api/admin/token", local=True, extra_headers={"Host": "localhost"})[1]["token"]}
+        self.assertEqual(recovery.request("/api/admin/auth-config", {"pin": True}, local=True, extra_headers=local_headers)[0], 200)
 
     def test_state_cookie_replay_and_invalid_token(self):
         alice = self.start()
