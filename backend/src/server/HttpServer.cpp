@@ -1035,7 +1035,8 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         return;
     }
 
-    const bool peerLocal = !req.viaProxy && isLocalRequest(req.clientAddress);
+    const bool peerLocal = !req.viaProxy && isLocalRequest(req.clientAddress) &&
+                           !req.headers.contains("x-mw-internal-fetch");
 
     // HTTP→HTTPS redirect for plain HTTP connections.
     //
@@ -1187,7 +1188,8 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         return;
     }
 
-    const bool peerLocal = !viaTunnel && !req.viaProxy && isLocalRequest(req.clientAddress);
+    const bool peerLocal = !viaTunnel && !req.viaProxy && isLocalRequest(req.clientAddress) &&
+                           !req.headers.contains("x-mw-internal-fetch");
     const QString sessionToken = sessionTokenFromRequest(req);
 
     // The single exception, computed once so the two lines below cannot drift

@@ -954,13 +954,13 @@ void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns
     });
 }
 
-void ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
+bool ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
                                       const QString& ownerId)
 {
     NvComputer newHost(serverInfo, addr);
 
-    if (newHost.uuid.isEmpty()) return;
-    if (ownerId.isEmpty()) return;
+    if (newHost.uuid.isEmpty()) return false;
+    if (ownerId.isEmpty()) return false;
     newHost.physicalUuid = newHost.uuid;
     newHost.ownerId = ownerId;
     newHost.uuid = UserAccess::hostId(ownerId, newHost.physicalUuid);
@@ -974,6 +974,9 @@ void ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
     NvComputer* existing = findHostByUuid(newHost.uuid);
 
     if (existing) {
+        // Legacy IDs are raw physical UUIDs. Never merge a legacy/private ID
+        // collision across owners, even when a peer deliberately reports it.
+        if (existing->ownerId != ownerId) return false;
         if (!existing->identitySeat.isEmpty()) newHost.pairState = existing->pairState;
         // Merge new data into existing host
         if (existing->update(newHost)) {
@@ -992,6 +995,7 @@ void ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
         Logger::info(QString("Host added: %1 (%2) at %3")
                          .arg(computer->name, computer->uuid, addr.toString()));
     }
+    return true;
 }
 
 NvComputer* ComputerManager::findHostByUuid(const QString& uuid) const
@@ -1171,6 +1175,7 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
     QNetworkRequest req(url);
     req.setTransferTimeout(NvHTTP::REQUEST_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
+    req.setRawHeader("X-MW-Internal-Fetch", "1");
 
     QNetworkAccessManager nam;
     QNetworkReply* reply = nam.get(req);
@@ -1197,12 +1202,15 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
         return {400, {{"status", "error"}, {"message", e.what()}}};
     }
 
-    addOrUpdateHost(xml, nvAddr, ownerId);
+    if (!addOrUpdateHost(xml, nvAddr, ownerId))
+        return {409,
+                {{"status", "error"},
+                 {"message", "Host registration conflicts with an existing entry"}}};
 
     // Look up the resulting host to return its JSON
     NvComputer parsedHost(xml, nvAddr);
     NvComputer* host = findHostByUuid(UserAccess::hostId(ownerId, parsedHost.uuid));
-    if (!host) {
+    if (!host || host->ownerId != ownerId) {
         return {500,
                 {{"status", "error"}, {"message", "Host was added but could not be retrieved"}}};
     }
@@ -1556,6 +1564,11 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     NvComputer* host = findHostByUuid(uuid);
     if (!host) {
         respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+    if (host->ownerId != UserStore::localId() &&
+        (type == NativeHostBackend::typeName() || host->isNativeEngine())) {
+        respond(HttpResponse::error(403, "Native capture belongs to the local owner"));
         return;
     }
 

@@ -230,7 +230,7 @@ private:
 
     // A provider bound to one host. Returns nullptr for an unknown uuid.
 
-    void addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
+    bool addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
                          const QString& ownerId = QStringLiteral("local-owner"));
     void tryAddHostFromAddress(const NvAddress& addr, bool fromMdns,
                                const QString& name = QString(),

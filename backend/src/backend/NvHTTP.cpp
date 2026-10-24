@@ -379,6 +379,8 @@ QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
 
 void NvHTTP::closeWhenDone(QNetworkRequest& req)
 {
+    // User-selected hosts must never inherit the server's loopback admin privilege.
+    req.setRawHeader("X-MW-Internal-Fetch", "1");
     req.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, 0);
 }
 

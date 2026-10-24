@@ -115,6 +115,7 @@ void probeMultiSeat(QNetworkAccessManager* nam, const QString& address,
     url.setPath(QStringLiteral("/api/system/auth"));
 
     QNetworkRequest req(url);
+    req.setRawHeader("X-MW-Internal-Fetch", "1");
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                      QNetworkRequest::ManualRedirectPolicy);
     req.setTransferTimeout(kProbeTimeoutMs);

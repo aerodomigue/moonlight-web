@@ -118,6 +118,7 @@ void WolfApiClient::get(const QString& path,
                         std::function<void(bool, const WolfApiError&, const QJsonDocument&)> cb)
 {
     QNetworkRequest request{QUrl(m_BaseUrl + QStringLiteral("/api/v1") + path)};
+    request.setRawHeader("X-MW-Internal-Fetch", "1");
     if (!m_AuthToken.isEmpty()) {
         request.setRawHeader("Authorization",
                              QStringLiteral("Bearer %1").arg(m_AuthToken).toUtf8());
@@ -130,6 +131,7 @@ void WolfApiClient::post(const QString& path, const QJsonObject& body,
                          std::function<void(bool, const WolfApiError&, const QJsonDocument&)> cb)
 {
     QNetworkRequest request{QUrl(m_BaseUrl + QStringLiteral("/api/v1") + path)};
+    request.setRawHeader("X-MW-Internal-Fetch", "1");
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     if (!m_AuthToken.isEmpty()) {
         request.setRawHeader("Authorization",

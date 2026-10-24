@@ -21,6 +21,8 @@ Branche : `feat/oidc-user-isolation`. Comparaison avec `main` à partir de
 | Constat                                                                                | Correction et vérification                                                                                            |
 | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Le stockage par UUID physique fusionnait les machines des comptes                      | Identifiant d'enregistrement par compte ; tests de persistance et ajout du même PC par deux comptes                   |
+| Le choix d’un backend interne pouvait contourner la propriété de l’écran du serveur    | Capture native refusée sur les enregistrements SSO ; test de tentative de sélection du backend natif                  |
+| Un ancien identifiant brut pouvait entrer en collision avec un identifiant privé       | Fusion et réponse refusées si le propriétaire diffère ; test avec un faux PC revendiquant l’identifiant privé         |
 | Une session valide suffisait pour accéder aux routes d'une autre machine               | Autorisation centrale avant dispatch et listes filtrées ; tests GET/POST/DELETE croisés                               |
 | Un utilisateur pouvait viser le slot de signalisation d'un autre                       | Vérification de la session propriétaire pour WebSocket et les slots standby                                           |
 | L'arrêt forcé traitait les slots et identifiants de manière globale                    | Arrêt limité à l'enregistrement demandé ; conservation des autres comptes                                             |
@@ -34,6 +36,7 @@ Branche : `feat/oidc-user-isolation`. Comparaison avec `main` à partir de
 | Les droits de navigation restaient ceux du visiteur anonyme après un PIN de compte SSO | Nouvelle lecture des droits après connexion ; trois tests de rôle et contrôle Chromium du PIN administrateur          |
 | Une réponse SSO tardive pouvait rediriger après fermeture de la vue                    | Vérification du cycle de vie ; test avec réponse différée                                                             |
 | Des contrôles PIN restaient visibles en mode SSO seul                                  | Masquage des contrôles et refus serveur des méthodes désactivées                                                      |
+| Une requête vers un PC pouvait hériter du privilège de boucle locale du serveur | Requêtes sortantes marquées et exemption locale refusée ; test opérateur local / requête interne |
 | Les traces OAuth pouvaient contenir un code ou un secret                               | Masquage des champs OAuth dans les archives, tests de nettoyage                                                       |
 
 ## Validation locale
@@ -41,7 +44,7 @@ Branche : `feat/oidc-user-isolation`. Comparaison avec `main` à partir de
 - Compilation du serveur natif et des tests réussie.
 - Tests ciblés des identités, PIN, autorisations et signatures : 139 assertions
   valides. WOL : 65 ; reverse proxy/Internet/UPnP : 58.
-- Six scénarios d'intégration avec le vrai serveur, un fournisseur OIDC HTTPS
+- Sept scénarios d'intégration avec le vrai serveur, un fournisseur OIDC HTTPS
   local et un faux PC : comptes séparés, accès croisés, cookie/state/rejeu,
   secret fichier, TLS, sessions temporaires, redémarrage et arrêt asynchrone.
 - Chromium : interface française, choix des méthodes, SSO seul, redirection

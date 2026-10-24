@@ -116,11 +116,13 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 gate.wait(timeout=10)
             self.reply(b'<root status_code="200"><cancel>1</cancel></root>', content_type="application/xml")
         elif self.path.startswith("/serverinfo"):
+            self.server.fetch_marker = self.headers.get("X-MW-Internal-Fetch")
             xml = ('<root status_code="200"><hostname>Fixture PC</hostname>'
                    '<uniqueid>fixture-physical-pc</uniqueid><appversion>7.1.431.0</appversion>'
                    '<GfeVersion>3.23.0.74</GfeVersion><PairStatus>1</PairStatus>'
                    '<LocalIP>127.0.0.1</LocalIP><mac>02:11:22:33:44:55</mac>'
                    f'<HttpsPort>{self.server.https_port}</HttpsPort></root>')
+            xml = xml.replace("fixture-physical-pc", getattr(self.server, "physical_uuid", "fixture-physical-pc"))
             self.reply(xml.encode(), content_type="application/xml")
         else:
             self.reply({}, 404)
@@ -212,7 +214,7 @@ class OidcIsolation(unittest.TestCase):
             self.log.close()
             self.log = None
 
-    def start(self, methods="pin,sso", trust_issuer=True, secret_file=False):
+    def start(self, methods="pin,sso", trust_issuer=True, secret_file=False, trust_proxy=True):
         self.stop()
         def port():
             with socket.socket() as listener:
@@ -234,7 +236,7 @@ class OidcIsolation(unittest.TestCase):
             "MW_AUTH_METHODS": methods, "MW_OIDC_ISSUER": self.issuer,
             "MW_OIDC_CLIENT_ID": "fixture-client", "MW_OIDC_CLIENT_SECRET": "fixture-only-secret",
             "MW_OIDC_ADMIN_SUBJECTS": "admin-subject", "MW_PUBLIC_URL": self.base,
-            "MW_REVERSE_PROXY": "1", "MW_TRUSTED_PROXIES": "127.0.0.1/32",
+            "MW_REVERSE_PROXY": "1", "MW_TRUSTED_PROXIES": "127.0.0.1/32" if trust_proxy else "192.0.2.1/32",
             "MW_NO_TELEMETRY": "1", "MW_CERT_PEM": str(self.cert), "MW_CERT_KEY": str(self.key),
             "MW_SERVICE": "1",  # The fixture must never rewrite desktop launchers.
             "SSL_CERT_FILE": str(self.cert),
@@ -298,12 +300,17 @@ class OidcIsolation(unittest.TestCase):
         address = "127.0.0.1:" + str(self.pc.server_port)
         status, body, _ = alice.request("/api/hosts/manual", {"address": address})
         self.assertEqual(status, 200)
+        self.assertEqual(self.pc.fetch_marker, "1")
         alice_pc = body["hosts"][0]["uuid"]
         self.assertEqual(body["hosts"][0]["pairState"], "not_paired")
         status, body, _ = bob.request("/api/hosts/manual", {"address": address})
         self.assertEqual(status, 200)
         bob_pc = body["hosts"][0]["uuid"]
         self.assertNotEqual(alice_pc, bob_pc)
+        self.assertEqual(alice.request("/api/hosts/" + alice_pc + "/backend",
+                                       {"type": "native", "apiUrl": "http://127.0.0.1"})[0], 403)
+        self.assertNotEqual(alice.request("/api/hosts")[1]["hosts"][0].get("backendType"), "native")
+
         self.assertEqual([h["uuid"] for h in alice.request("/api/hosts")[1]["hosts"]], [alice_pc])
         self.assertEqual([h["uuid"] for h in bob.request("/api/hosts")[1]["hosts"]], [bob_pc])
         for suffix in ("/apps", "/appasset?appid=1", "/backend", "/seats", "/profiles", "/lobbies"):
@@ -328,6 +335,19 @@ class OidcIsolation(unittest.TestCase):
         local_owner = Browser(self.base)
         self.assertEqual(local_owner.request("/api/auth/validate", {"pin": owner_pin})[0], 200)
         self.assertEqual(local_owner.request("/api/share/status?host=" + alice_pc)[0], 404)
+        before = alice.request("/api/hosts")[1]["hosts"]
+        self.pc.physical_uuid = alice_pc
+        try:
+            # A hostile legacy host must not overwrite or disclose a private registration.
+            self.assertEqual(local_owner.request("/api/hosts/manual", {"address": address})[0], 409)
+            after = alice.request("/api/hosts")[1]["hosts"]
+            self.assertEqual(len(after), len(before))
+            for field in ("uuid", "name", "customName", "port"):
+                self.assertEqual(after[0][field], before[0][field])
+            self.assertEqual(local_owner.request("/api/hosts")[1]["hosts"], [])
+        finally:
+            self.pc.physical_uuid = "fixture-physical-pc"
+
         # Appairing on one registration never gives the other its certificate.
         self.assertEqual(alice.request("/api/hosts/" + alice_pc + "/pair/start", {})[0], 200)
         self.assertEqual(bob.request("/api/hosts/" + bob_pc + "/pair/start", {})[0], 200)
@@ -353,6 +373,18 @@ class OidcIsolation(unittest.TestCase):
         alice.base = self.base
         self.assertEqual(alice.request("/api/auth/status")[1]["user"]["id"], alice_status["user"]["id"])
         self.assertEqual(alice.request("/api/hosts")[1]["hosts"][0]["uuid"], alice_pc)
+
+    def test_internal_host_fetch_does_not_inherit_loopback_admin(self):
+        browser = self.start(trust_proxy=False)
+        headers = {"Host": "localhost:" + self.base.rsplit(":", 1)[1]}
+        status, body, _ = browser.request("/api/admin/token", local=True, extra_headers=headers)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["token"])
+        headers["X-MW-Internal-Fetch"] = "1"
+        self.assertEqual(browser.request("/api/admin/token", local=True, extra_headers=headers)[0], 403)
+        status = browser.request("/api/auth/status", local=True, extra_headers=headers)[1]
+        self.assertFalse(status["authenticated"])
+        self.assertFalse(status["is_localhost"])
 
     def test_state_cookie_replay_and_invalid_token(self):
         alice = self.start()
