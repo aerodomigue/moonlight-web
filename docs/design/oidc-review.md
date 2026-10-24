@@ -18,22 +18,23 @@ Branche : `feat/oidc-user-isolation`. Comparaison avec `main` à partir de
 
 ## Problèmes corrigés pendant la revue
 
-| Constat                                                                               | Correction et vérification                                                                                            |
-| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Le stockage par UUID physique fusionnait les machines des comptes                     | Identifiant d'enregistrement par compte ; tests de persistance et ajout du même PC par deux comptes                   |
-| Une session valide suffisait pour accéder aux routes d'une autre machine              | Autorisation centrale avant dispatch et listes filtrées ; tests GET/POST/DELETE croisés                               |
-| Un utilisateur pouvait viser le slot de signalisation d'un autre                      | Vérification de la session propriétaire pour WebSocket et les slots standby                                           |
-| L'arrêt forcé traitait les slots et identifiants de manière globale                   | Arrêt limité à l'enregistrement demandé ; conservation des autres comptes                                             |
-| Un arrêt asynchrone pouvait être suivi d'un démarrage étranger avant la fin du cancel | Réservation du PC physique pendant l'opération ; test d'intégration avec cancel suspendu                              |
-| Une fonction récursive conservait son propre callback indéfiniment                    | Référence faible ; test confirmant que la réservation est libérée après l'arrêt                                       |
-| Une suppression pendant un callback pouvait invalider son pointeur de machine         | Suppression refusée pendant une opération active ; test d'intégration                                                 |
-| Le partage historique pouvait cibler un enregistrement SSO                            | Invitations limitées au propriétaire local et à ses machines, avec contrôle du PC physique pour les invités           |
-| Un sous-domaine pouvait tenter de déposer un cookie de compte                         | Cookies `__Host-`, noms sensibles à la casse, refus des nouveaux jetons dans l'ancien cookie ; tests de falsification |
-| Le changement de compte pouvait laisser les anciennes données du navigateur           | Nettoyage du stockage local au changement, révocation de la session remplacée ; tests unitaires et d'intégration      |
-| Un retour SSO ou une déconnexion pouvait relancer une boucle automatique              | Écran de reprise explicite ; tests Vitest et Chromium                                                                 |
-| Une réponse SSO tardive pouvait rediriger après fermeture de la vue                   | Vérification du cycle de vie ; test avec réponse différée                                                             |
-| Des contrôles PIN restaient visibles en mode SSO seul                                 | Masquage des contrôles et refus serveur des méthodes désactivées                                                      |
-| Les traces OAuth pouvaient contenir un code ou un secret                              | Masquage des champs OAuth dans les archives, tests de nettoyage                                                       |
+| Constat                                                                                | Correction et vérification                                                                                            |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Le stockage par UUID physique fusionnait les machines des comptes                      | Identifiant d'enregistrement par compte ; tests de persistance et ajout du même PC par deux comptes                   |
+| Une session valide suffisait pour accéder aux routes d'une autre machine               | Autorisation centrale avant dispatch et listes filtrées ; tests GET/POST/DELETE croisés                               |
+| Un utilisateur pouvait viser le slot de signalisation d'un autre                       | Vérification de la session propriétaire pour WebSocket et les slots standby                                           |
+| L'arrêt forcé traitait les slots et identifiants de manière globale                    | Arrêt limité à l'enregistrement demandé ; conservation des autres comptes                                             |
+| Un arrêt asynchrone pouvait être suivi d'un démarrage étranger avant la fin du cancel  | Réservation du PC physique pendant l'opération ; test d'intégration avec cancel suspendu                              |
+| Une fonction récursive conservait son propre callback indéfiniment                     | Référence faible ; test confirmant que la réservation est libérée après l'arrêt                                       |
+| Une suppression pendant un callback pouvait invalider son pointeur de machine          | Suppression refusée pendant une opération active ; test d'intégration                                                 |
+| Le partage historique pouvait cibler un enregistrement SSO                             | Invitations limitées au propriétaire local et à ses machines, avec contrôle du PC physique pour les invités           |
+| Un sous-domaine pouvait tenter de déposer un cookie de compte                          | Cookies `__Host-`, noms sensibles à la casse, refus des nouveaux jetons dans l'ancien cookie ; tests de falsification |
+| Le changement de compte pouvait laisser les anciennes données du navigateur            | Nettoyage du stockage local au changement, révocation de la session remplacée ; tests unitaires et d'intégration      |
+| Un retour SSO ou une déconnexion pouvait relancer une boucle automatique               | Écran de reprise explicite ; tests Vitest et Chromium                                                                 |
+| Les droits de navigation restaient ceux du visiteur anonyme après un PIN de compte SSO | Nouvelle lecture des droits après connexion ; trois tests de rôle et contrôle Chromium du PIN administrateur          |
+| Une réponse SSO tardive pouvait rediriger après fermeture de la vue                    | Vérification du cycle de vie ; test avec réponse différée                                                             |
+| Des contrôles PIN restaient visibles en mode SSO seul                                  | Masquage des contrôles et refus serveur des méthodes désactivées                                                      |
+| Les traces OAuth pouvaient contenir un code ou un secret                               | Masquage des champs OAuth dans les archives, tests de nettoyage                                                       |
 
 ## Validation locale
 
@@ -45,9 +46,9 @@ Branche : `feat/oidc-user-isolation`. Comparaison avec `main` à partir de
   secret fichier, TLS, sessions temporaires, redémarrage et arrêt asynchrone.
 - Chromium : interface française, choix des méthodes, SSO seul, redirection
   entre deux sites, cookie de session, identité d'appairage et déconnexion.
-- Suites CTest sécurité, native-host et licence : trois suites valides.
-  Le scénario OIDC est également enregistré dans CTest sous Linux pour la CI existante.
-- Frontend : 1 609 tests valides, couverture des lignes 93,11 %, formatage,
+- Quatre suites CTest valides : sécurité, OIDC, native-host et licence.
+  Le scénario OIDC est exécuté sous Linux par la CI existante.
+- Frontend : 1 612 tests valides, couverture des lignes 93,11 %, formatage,
   ESLint et traductions valides. C++ : clang-format 19 et cppcheck sur les sources modifiées.
 - La suite backend complète sous Linux conserve les cinq échecs de référence
   de `test_launcher_detect.cpp` (chemins Steam Windows). Aucun nouvel échec

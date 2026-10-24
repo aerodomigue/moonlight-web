@@ -1549,10 +1549,13 @@ export const MoonlightApp = {
             }
 
             // Not authenticated and not localhost — show login
-            this.loginView = new LoginView(main, () => {
+            this.loginView = new LoginView(main, async () => {
                 // On successful login, re-initialize the app
                 console.log('[MW] Authentication successful, re-initializing...');
                 this.loginView = null;
+                // A PIN may now identify an SSO administrator. Re-read roles
+                // before rebuilding navigation, just as after an OIDC redirect.
+                if (!(await this._checkAuth())) return;
                 this._offerHomeScreenHandoff();
                 this._initNavButtons();
                 this._initRouter();

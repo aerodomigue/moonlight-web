@@ -88,7 +88,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             code = secrets.token_urlsafe(24)
             self.server.codes[code] = {
-                "subject": "browser-subject", "nonce": query["nonce"][0],
+                "subject": getattr(self.server, "browser_subject", "browser-subject"), "nonce": query["nonce"][0],
                 "challenge": query["code_challenge"][0],
             }
             self.send_response(303)
