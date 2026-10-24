@@ -73,6 +73,7 @@ bool wantsRemember(const QJsonObject& body)
 QJsonObject hostPairingIdentity(AppSettings& settings)
 {
     const QByteArray spki = settings.hostSigningPublicKey();
+    if (!PairingCrypto::isValidP256Spki(spki)) return {};
     QJsonObject obj;
     obj["host_public_key"] = QString::fromLatin1(spki.toBase64());
     obj["host_id"] = PairingCrypto::keyId(spki);
@@ -660,6 +661,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         if (!req.userId.isEmpty()) obj["user"] = authManager.users().get(req.userId).json();
         if (obj["authenticated"].toBool()) {
             const auto identity = hostPairingIdentity(settings);
+            if (identity.isEmpty()) return HttpResponse::error(503, "host_identity_unavailable");
             for (auto it = identity.constBegin(); it != identity.constEnd(); ++it)
                 obj[it.key()] = it.value();
         }

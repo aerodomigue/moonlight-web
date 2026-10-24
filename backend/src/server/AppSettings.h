@@ -874,7 +874,8 @@ public:
     // It must survive updates: losing it invalidates every browser pairing at
     // once, since a browser has no way to tell a new key from a substituted one.
 
-    /// PEM-encoded P-256 private key; generated on first call and persisted.
+    /// PEM P-256 identity, returned only after a checked atomic commit. Empty
+    /// on corrupt/unreadable storage or failed initialization; never auto-rotate.
     QByteArray hostSigningKeyPem();
 
     /// SPKI (DER) public half of hostSigningKeyPem(), for handing to a browser

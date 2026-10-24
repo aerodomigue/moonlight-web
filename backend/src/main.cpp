@@ -2936,6 +2936,15 @@ int main(int argc, char* argv[])
             return;
         }
 
+        // No launch, cancellation or takeover may use an uncommitted identity.
+        const auto streamSigningKey = appSettings.hostSigningKeyPem();
+        const auto streamSigningPublic =
+            PairingCrypto::publicKeySpkiFromPrivatePem(streamSigningKey);
+        if (!PairingCrypto::isValidP256Spki(streamSigningPublic)) {
+            respond(HttpResponse::error(503, "host_identity_unavailable"));
+            return;
+        }
+
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 
@@ -3740,10 +3749,8 @@ int main(int argc, char* argv[])
             s->setFrameFit(reqFitBox, reqAllowUpscale, reqMatchDisplay, reqFallbackW, reqFallbackH);
             s->setClientKind(clientKind);
             // The in-process path needs the same MW-BIND context as a worker.
-            const auto signingKey = appSettings.hostSigningKeyPem();
-            s->setPairingIdentity(
-                PairingCrypto::keyId(PairingCrypto::publicKeySpkiFromPrivatePem(signingKey)),
-                signingKey, authManager.sessionPairingKey(sessionToken));
+            s->setPairingIdentity(PairingCrypto::keyId(streamSigningPublic), streamSigningKey,
+                                  authManager.sessionPairingKey(sessionToken));
             // See the worker path: the administrator-window gate.
             s->setViewerAdmin(req.isLocal);
             // The desktop portal consent this installation already holds, and
@@ -3864,9 +3871,9 @@ int main(int argc, char* argv[])
             // server-side state no attacker can reach in to change, and neither
             // case has a relay in the path today.
             {
-                const QByteArray hostKey = appSettings.hostSigningKeyPem();
+                const QByteArray hostKey = streamSigningKey;
                 const QByteArray browserKey = authManager.sessionPairingKey(sessionToken);
-                cfg["mwBindHostId"] = PairingCrypto::keyId(appSettings.hostSigningPublicKey());
+                cfg["mwBindHostId"] = PairingCrypto::keyId(streamSigningPublic);
                 cfg["mwBindHostKey"] = QString::fromLatin1(hostKey.toBase64());
                 cfg["mwBindBrowserKey"] = QString::fromLatin1(browserKey.toBase64());
             }

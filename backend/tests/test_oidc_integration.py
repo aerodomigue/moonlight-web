@@ -1134,6 +1134,36 @@ class OidcIsolation(unittest.TestCase):
         for path in ["/ws", "/ws1", "/ws/stream", "/ws/control"]: self.assertEqual(copied.request(path, extra_headers=websocket)[0], 401)
         self.assertTrue(admin.request("/api/auth/status")[1]["admin_access"])
 
+    def test_unpersisted_host_identity_blocks_status_and_launch_without_rotation(self):
+        self.start()
+        browser = Browser(self.base)
+        original_status = self.login(browser)
+        _, hosts, _ = browser.request('/api/hosts/manual', {'address':'127.0.0.1:' + str(self.pc.server_port)})
+        host_id = hosts['hosts'][0]['uuid']
+        settings = self.state / 'settings.json'
+        original = settings.read_bytes()
+        content = json.loads(original)
+        content.pop('host_signing_key')
+        settings.write_text(json.dumps(content))
+        settings.chmod(0o444)
+        self.state.chmod(0o555)
+        try:
+            code, body, _ = browser.request('/api/auth/status')
+            self.assertEqual(code, 503)
+            self.assertEqual(body['error'], 'host_identity_unavailable')
+            self.assertNotIn('host_id', body)
+            self.assertEqual(browser.request('/api/hosts/' + host_id + '/start', {'appId':42})[0], 503)
+            self.assertEqual(browser.request('/api/health')[0], 200)
+            self.assertNotIn('host_signing_key', json.loads(settings.read_bytes()))
+        finally:
+            self.state.chmod(0o700)
+            settings.chmod(0o600)
+            settings.write_bytes(original)
+        restored = browser.request('/api/auth/status')[1]
+        self.assertEqual(restored['host_id'], original_status['host_id'])
+        self.start()
+        self.assertEqual(self.login(Browser(self.base))['host_id'], original_status['host_id'])
+
     def test_local_session_binds_a_key_without_exempting_remote_or_proxy_clients(self):
         self.start()
         local = Browser(self.base.replace('127.0.0.1', 'localhost'))
