@@ -55,6 +55,18 @@ describe('Account roles after a PIN login', () => {
         expect(app._hasAdminAccess).toBe(false);
         expect(app._initAsync).toHaveBeenCalledTimes(1);
     });
+    it('offers PIN administrators the password flow without granting direct access', async () => {
+        BackendClient.getAuthStatus.mockResolvedValue({ authenticated: true, auth_method: 'pin', effective_role: 'admin', is_localhost: false, is_host_machine: false, admin_unlock_available: true });
+        expect(await app._checkAuth()).toBe(true);
+        expect(app._hasAdminAccess).toBe(false);
+        expect(app._canReachAdmin()).toBe(true);
+    });
+    it('does not offer administration based on the account role without a session capability', async () => {
+        BackendClient.getAuthStatus.mockResolvedValue({ authenticated: true, auth_method: 'sso', effective_role: 'admin', is_localhost: false, is_host_machine: false, admin_unlock_available: false });
+        expect(await app._checkAuth()).toBe(true);
+        expect(app._hasAdminAccess).toBe(false);
+        expect(app._canReachAdmin()).toBe(false);
+    });
     it('does not enter the application when the renewed auth check fails', async () => {
         BackendClient.getAuthStatus
             .mockResolvedValueOnce({ authenticated: false })

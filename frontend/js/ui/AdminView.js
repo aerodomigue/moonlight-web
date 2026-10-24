@@ -362,6 +362,9 @@ export class AdminView {
     }
 
     async _loadAuthStatus() {
+        this._authStatusKnown = true;
+        this._hasAdminAccess = false;
+        this._adminUnlockAvailable = false;
         try {
             const status = await BackendClient.getAuthStatus();
             this._hasAdminAccess = !!status.is_localhost;
@@ -662,6 +665,7 @@ export class AdminView {
         // through the public domain (host-key session), and when a LAN machine
         // unlocked admin access with the remote admin password — not just on
         // loopback. Named for what it gates (admin), not for where we are.
+        if (this._authStatusKnown) return this._hasAdminAccess && !BackendClient.adminLocked;
         if (this._hasAdminAccess) return true;
         if (BackendClient.adminLocked) return false; // booth mode (--noadmin)
         const hostname = window.location.hostname;

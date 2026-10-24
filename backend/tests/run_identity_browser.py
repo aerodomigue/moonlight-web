@@ -21,8 +21,9 @@ case.setUp()
 try:
     case.issuer_server.browser_subject = "admin-subject"
     case.start()
-    script = Path(__file__).resolve().parents[2] / "frontend/test/browser/identity-renewal.mjs"
-    subprocess.run(["node", str(script), case.base], check=True, timeout=120, env=os.environ.copy())
+    for name in ("identity-renewal.mjs", "authentik-roles.mjs"):
+        script = Path(__file__).resolve().parents[2] / "frontend/test/browser" / name
+        subprocess.run(["node", str(script), case.base], check=True, timeout=120, env=os.environ.copy())
 finally:
     case.tearDown()
     case.tearDownClass()
