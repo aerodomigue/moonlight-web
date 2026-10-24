@@ -255,7 +255,7 @@ void run_user_identity_tests()
     CHECK(!auth.isSsoAdmin(session));
     const auto adminSession =
         auth.createSession("10.2.10.21", "Admin", false, false, false, administrator.id, "sso");
-    CHECK(auth.isSsoAdmin(adminSession));
+    CHECK(!auth.isSsoAdmin(adminSession)); // legacy subject lists are not role proof
     CHECK(!auth.isSsoAdmin("invented-cookie"));
     CHECK(auth.createSession("10.2.10.21", "Unknown", false, false, false, "unknown", "sso")
               .isEmpty());
@@ -318,8 +318,54 @@ void run_user_identity_tests()
           AuthManager::Valid);
     const auto playerToken =
         managed.createSession("10.2.10.45", "Local admin", false, false, false, player.id, "pin");
-    CHECK(managed.isSsoAdmin(playerToken));
+    CHECK(!managed.isSsoAdmin(playerToken)); // PIN always requires password unlock
     CHECK(!managed.isSsoAdmin(managed.createSession("10.2.10.46", "Legacy owner")));
+    CHECK(managed.passwordUnlockEligible(playerToken));
+    CHECK(!managed.isAdminSession(playerToken));
+    CHECK(managed.promoteSessionToAdmin(playerToken));
+    CHECK(managed.isAdminSession(playerToken));
+    auto linked = managed.users().upsert(mixed.issuer, "roles-subject", "Roles");
+    linked.role = "admin"; // An old manual assignment must never override the issuer.
+    managed.users().update(linked);
+    auto oldSso =
+        managed.createSession("10.2.10.47", "Old SSO", false, false, false, linked.id, "sso");
+    CHECK(!managed.isSsoAdmin(oldSso));
+    linked = managed.synchronizeSsoRole(linked, "admin", mixed);
+    CHECK(!managed.validateSession(oldSso));
+    auto freshSso =
+        managed.createSession("10.2.10.47", "Fresh SSO", false, false, false, linked.id, "sso");
+    CHECK(!managed.isSsoAdmin(freshSso)); // A session alone is not verified-role proof.
+    CHECK(managed.proveSsoAdministrator(freshSso));
+    CHECK(managed.isSsoAdmin(freshSso));
+    CHECK(!managed.passwordUnlockEligible(freshSso));
+    auto linkedPin =
+        managed.createSession("10.2.10.48", "Linked PIN", false, false, false, linked.id);
+    CHECK(!managed.isSsoAdmin(linkedPin));
+    CHECK(managed.passwordUnlockEligible(linkedPin));
+    CHECK(managed.promoteSessionToAdmin(linkedPin));
+    linked = managed.synchronizeSsoRole(linked, "user", mixed);
+    CHECK_EQ(linked.role, QString("admin"));
+    CHECK(!managed.userAdministrator(linked));
+    CHECK(!managed.validateSession(freshSso));
+    CHECK(!managed.isAdminSession(linkedPin));
+    auto userPin = managed.createSession("10.2.10.48", "User PIN", false, false, false, linked.id);
+    CHECK(!managed.passwordUnlockEligible(userPin));
+    CHECK(!managed.promoteSessionToAdmin(userPin));
+    auto userSso =
+        managed.createSession("10.2.10.47", "User SSO", false, false, false, linked.id, "sso");
+    CHECK(managed.proveSsoAdministrator(userSso));
+    CHECK(!managed.isSsoAdmin(userSso));
+    auto localOwner = managed.users().get(UserStore::localId());
+    managed.users().bind(localOwner.id, mixed.issuer, "owner-sub", mixed.signature(), "user");
+    auto ownerSso =
+        managed.createSession("10.2.10.49", "Owner SSO", false, false, false, localOwner.id, "sso");
+    CHECK(managed.proveSsoAdministrator(ownerSso));
+    CHECK(!managed.isSsoAdmin(ownerSso));
+    CHECK(!managed.passwordUnlockEligible(ownerSso));
+    auto ownerPin = managed.createSession("10.2.10.49", "Recovery");
+    CHECK(managed.passwordUnlockEligible(ownerPin));
+    CHECK(managed.promoteSessionToAdmin(ownerPin));
+    CHECK(managed.isAdminSession(ownerPin));
     player.enabled = false;
     managed.users().update(player);
     CHECK(!managed.validateSession(playerToken));
@@ -339,6 +385,7 @@ void run_user_identity_tests()
     CHECK(managed.config().pin);
     auto verifiedAdmin = managed.users().upsert(mixed.issuer, "verified-admin", "Verified");
     verifiedAdmin.role = "admin";
+    verifiedAdmin.ssoRole = "admin";
     verifiedAdmin.managedRole = true;
     verifiedAdmin.verifiedConfig = mixed.signature();
     managed.users().update(verifiedAdmin);

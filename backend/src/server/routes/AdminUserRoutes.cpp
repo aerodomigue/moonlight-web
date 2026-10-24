@@ -30,7 +30,7 @@ bool busy(const QString& id, const ComputerManager& computers, const SessionPool
 QJsonObject row(const UserAccount& user, AuthManager& auth, ComputerManager& computers)
 {
     auto o = user.adminJson();
-    o["role"] = auth.userAdministrator(user) ? "admin" : user.role;
+    o["role"] = auth.userAdministrator(user) ? "admin" : "user";
     o["machine_count"] = computers.getHostsJson(user.id).size();
     int count = 0;
     for (const auto& session : auth.sessions())
@@ -43,9 +43,7 @@ bool canKeepAccess(const UserAccount& candidate, AuthManager& auth)
     if (auth.config().pin) return true; // protected local owner remains recoverable.
     for (auto user : auth.users().all()) {
         if (user.id == candidate.id) user = candidate;
-        const bool admin =
-            user.role == "admin" || (!user.managedRole && user.issuer == auth.config().issuer &&
-                                     auth.config().administrator(user.subject));
+        const bool admin = user.ssoRole == "admin";
         if (user.enabled && !user.deleting && admin && user.issuer == auth.config().issuer &&
             !user.subject.isEmpty() && user.verifiedConfig == auth.config().signature())
             return true;
@@ -117,6 +115,8 @@ void registerAdminUserRoutes(HttpServer& server, AuthManager& auth, ComputerMana
             user.name = body["name"].toString().simplified();
             user.managedName = true;
         }
+        if (body.contains("role") && !before.issuer.isEmpty())
+            return HttpResponse::error(409, "Role is managed by Authentik");
         if (body.contains("role")) {
             user.role = body["role"].toString();
             user.managedRole = true;
@@ -130,25 +130,23 @@ void registerAdminUserRoutes(HttpServer& server, AuthManager& auth, ComputerMana
             user.issuer.clear();
             user.subject.clear();
             user.verifiedConfig.clear();
+            user.ssoRole = "user";
         }
         if (id == UserStore::localId() && (!user.enabled || user.role != "admin"))
             return HttpResponse::error(403, "Local owner is protected");
-        if ((!user.enabled || user.role != "admin") && id == req.userId &&
-            auth.userAdministrator(before))
+        if (!auth.userAdministrator(user) && id == req.userId && auth.userAdministrator(before))
             return HttpResponse::error(
                 409, "Use another administrator account to disable or demote this account");
         if (!canKeepAccess(user, auth))
             return HttpResponse::error(
                 409, "Keep a verified SSO administrator before changing this account");
         try {
-            const bool willBeAdmin =
-                user.enabled && (user.role == "admin" ||
-                                 (!user.managedRole && user.issuer == auth.config().issuer &&
-                                  auth.config().administrator(user.subject)));
+            const bool willBeAdmin = auth.userAdministrator(user);
             const bool accessChanged = user.enabled != before.enabled || wasAdmin != willBeAdmin ||
                                        before.issuer != user.issuer ||
                                        before.subject != user.subject;
             if (accessChanged && user.enabled) auth.revokeUserSessions(id);
+            if (accessChanged) ++user.roleRevision;
             auth.users().update(user);
             if (!user.enabled || wasAdmin != auth.userAdministrator(user) ||
                 before.issuer != user.issuer || before.subject != user.subject)

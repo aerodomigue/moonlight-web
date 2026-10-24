@@ -29,7 +29,7 @@ private:
     };
     struct LinkGrant
     {
-        QString user, issuer, subject, name, adminToken, signature;
+        QString user, issuer, subject, name, adminToken, signature, role;
         quint64 revision = 0;
         qint64 issued = 0;
     };

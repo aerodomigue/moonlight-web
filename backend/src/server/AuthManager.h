@@ -38,6 +38,8 @@ struct SessionInfo
 {
     QString userId = UserStore::localId();
     QString authMethod = QStringLiteral("pin");
+    QString ssoAdminConfig; // Verified ID-token role proof, bound to this login/configuration.
+    quint64 roleRevision = 0;
     QString token; // stored value is the SHA-256 of the cookie token (opaque id),
                    // never the raw token — a stolen sessions.json cannot be replayed
     QString ip;
@@ -90,6 +92,8 @@ struct SessionInfo
         QJsonObject obj;
         obj["user_id"] = userId;
         obj["auth_method"] = authMethod;
+        obj["sso_admin_config"] = ssoAdminConfig;
+        obj["role_revision"] = static_cast<qint64>(roleRevision);
         obj["token"] = token;
         if (!pairingKey.isEmpty()) obj["pairing_key"] = QString::fromLatin1(pairingKey.toBase64());
         obj["ip"] = ip;
@@ -149,7 +153,10 @@ public:
     const AuthConfig& config() const { return m_config; }
     UserStore& users() { return m_users; }
     const UserStore& users() const { return m_users; }
-    // Historical name: account roles also apply to local PIN sessions.
+    // Account authority and session proof are deliberately separate.
+    bool passwordUnlockEligible(const QString& token) const;
+    bool proveSsoAdministrator(const QString& token);
+    UserAccount synchronizeSsoRole(UserAccount user, const QString& role, const AuthConfig& config);
     bool isSsoAdmin(const QString& token) const;
     bool userAdministrator(const UserAccount& user) const;
     bool verifiedSsoAdministrator(const AuthConfig& config) const;

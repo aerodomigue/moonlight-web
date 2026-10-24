@@ -417,8 +417,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             return HttpResponse::json(obj);
         }
 
-        if (req.userId != UserStore::localId() &&
-            !authManager.userAdministrator(authManager.users().get(req.userId)))
+        if (!authManager.passwordUnlockEligible(HttpServer::sessionTokenFromRequest(req)))
             return HttpResponse::error(403, "Account is not an administrator");
 
         // The LAN's door by default: the password is a convenience for the
@@ -464,7 +463,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QJsonObject obj;
         switch (result.result) {
         case AuthManager::Valid:
-            authManager.promoteSessionToAdmin(token);
+            if (!authManager.promoteSessionToAdmin(token))
+                return HttpResponse::error(500, "Administrator session could not be saved");
             obj["status"] = "ok";
             return HttpResponse::json(obj);
         case AuthManager::InvalidPin:
@@ -519,7 +519,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             authManager.adminPasswordSet() &&
             AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
                                         authManager.remoteAdminInternet(), req.viaProxy))
-            authManager.promoteSessionToAdmin(token);
+            if (!authManager.promoteSessionToAdmin(token))
+                return HttpResponse::error(500, "Administrator session could not be saved");
 
         QJsonObject obj;
         obj["status"] = "ok";
@@ -589,6 +590,18 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             }
         }
 
+        const auto currentSession = authManager.sessionForToken(currentToken);
+        obj["auth_method"] = currentSession.token.isEmpty()
+                                 ? (req.isHostMachine ? QStringLiteral("host") : QString())
+                                 : currentSession.authMethod;
+        obj["effective_role"] =
+            (req.isHostMachine ||
+             (authManager.validateSession(currentToken) &&
+              (authManager.userAdministrator(authManager.users().get(req.userId)) ||
+               authManager.passwordUnlockEligible(currentToken))))
+                ? "admin"
+                : "user";
+        obj["admin_access"] = isLocal;
         obj["user_admin_enabled"] = true;
         obj["pin_enabled"] = authManager.config().pin;
         obj["sso_enabled"] = authManager.config().sso;
@@ -611,9 +624,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // button never appears where the unlock would be refused.
         obj["admin_unlock_available"] =
             !isLocal && !req.adminLocked && obj["authenticated"].toBool() &&
-            (req.userId == UserStore::localId() ||
-             authManager.userAdministrator(authManager.users().get(req.userId))) &&
-            authManager.remoteAdminEnabled() && authManager.adminPasswordSet() &&
+            authManager.passwordUnlockEligible(currentToken) && authManager.remoteAdminEnabled() &&
+            authManager.adminPasswordSet() &&
             AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
                                         authManager.remoteAdminInternet(), req.viaProxy);
 
