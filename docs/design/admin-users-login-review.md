@@ -47,7 +47,7 @@ supprimé peut revenir vide ; la désactivation interdit son accès.
 ## Validation
 
 - Tests ciblés à chaque étape, puis suites frontend et backend complètes.
-- Frontend : 1 631 tests, couverture des lignes 93,11 %, Prettier/ESLint/i18n.
+- Frontend : 1 632 tests, couverture des lignes 93,13 %, Prettier/ESLint/i18n.
 - Intégration : 14 scénarios sur le vrai serveur avec issuer HTTPS, signatures et PC
   simulé : comptes, rôles, sessions, copie/transfert, rattachement et conflits,
   désactivation, reprise après interruption, opérations en cours, callbacks obsolètes,

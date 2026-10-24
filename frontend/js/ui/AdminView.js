@@ -126,6 +126,7 @@ export class AdminView {
         // Auth / PIN state (default "------" = no valid PIN, 6 digits)
         this._pin = '------';
         this._pinLoginEnabled = true;
+        this._disposed = false;
         this._accountAdministration = false;
         this._accountPanels = [];
         this._pinConsumed = false; // true when PIN was used by remote client
@@ -537,6 +538,7 @@ export class AdminView {
     }
 
     destroy() {
+        this._disposed = true;
         this._accountPanels.forEach((panel) => panel.destroy());
         this._accountPanels = [];
         this._stopSessionsPolling();
@@ -1442,7 +1444,9 @@ export class AdminView {
             if (login && users) {
                 this._accountPanels = [
                     new AdminLoginSettings(login, async () => {
+                        if (this._disposed) return;
                         await this._loadAuthStatus();
+                        if (this._disposed) return;
                         this.render();
                         this.bindEvents();
                         Toast.success(t('adminAccounts.saved'));

@@ -2,6 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { BackendClient } from '../js/api/BackendClient.js';
 import { AdminLoginSettings } from '../js/ui/AdminLoginSettings.js';
 import { AdminUsersPanel } from '../js/ui/AdminUsersPanel.js';
+import { AdminView } from '../js/ui/AdminView.js';
 
 const config = () => ({ pin: true, sso: true, issuer: 'https://auth.example/app/', client_id: 'client', public_url: window.location.origin, callback_url: `${window.location.origin}/api/auth/oidc/callback`, secret_configured: true, ca_file: '' });
 const owner = () => ({ id: 'local-owner', name: 'Local owner', role: 'admin', enabled: true, protected: true, machine_count: 1, session_count: 2 });
@@ -180,5 +181,25 @@ describe('Administration accounts and machine assignments', () => {
         resolve({ pin: '123456', expires_in: 0 });
         await pending;
         expect(document.querySelector('[data-account-pin]').textContent).toBe('');
+    });
+});
+
+
+describe('Administration navigation during settings save', () => {
+    it('does not replace the next view after closing during the auth-status refresh', async () => {
+        const admin = new AdminView(document.querySelector('#panel'), () => {});
+        admin._hasAdminAccess = true;
+        admin._accountAdministration = true;
+        admin.render();
+        admin.bindEvents();
+        let resolve;
+        vi.spyOn(admin, '_loadAuthStatus').mockReturnValue(new Promise((done) => { resolve = done; }));
+        const saved = admin._accountPanels[0].onChanged();
+        admin.destroy();
+        document.querySelector('#panel').innerHTML = '<p id="next-view">Hosts</p>';
+        resolve();
+        await saved;
+        expect(document.querySelector('#next-view')?.textContent).toBe('Hosts');
+        expect(document.querySelector('#view-admin')).toBeNull();
     });
 });
