@@ -81,11 +81,9 @@ bool numericDate(const QJsonValue& value, qint64& result)
 }
 } // namespace
 
-std::optional<QJsonObject> OidcToken::verify(const QByteArray& jwt, const QJsonObject& jwks,
-                                             const AuthConfig& config, const QString& nonce,
-                                             qint64 now)
+static std::optional<QJsonObject> verifySigned(const QByteArray& jwt, const QJsonObject& jwks)
 {
-    if (jwt.size() > 65536 || nonce.isEmpty()) return std::nullopt;
+    if (jwt.size() > 65536) return std::nullopt;
     const auto parts = jwt.split('.');
     if (parts.size() != 3) return std::nullopt;
     const auto header = QJsonDocument::fromJson(decode(parts[0])).object();
@@ -137,6 +135,16 @@ std::optional<QJsonObject> OidcToken::verify(const QByteArray& jwt, const QJsonO
                          reinterpret_cast<const unsigned char*>(signedPart.constData()),
                          signedPart.size()) != 1)
         return std::nullopt;
+    return claims;
+}
+
+std::optional<QJsonObject> OidcToken::verify(const QByteArray& jwt, const QJsonObject& jwks,
+                                             const AuthConfig& config, const QString& nonce,
+                                             qint64 now)
+{
+    const auto signedClaims = verifySigned(jwt, jwks);
+    if (!signedClaims || nonce.isEmpty()) return std::nullopt;
+    const auto claims = *signedClaims;
     qint64 exp = 0, iat = 0, nbf = 0;
     if (claims["iss"].toString() != config.issuer || claims["sub"].toString().isEmpty() ||
         claims["sub"].toString().size() > 1024 || claims["nonce"].toString() != nonce ||
@@ -153,4 +161,31 @@ std::optional<QJsonObject> OidcToken::verify(const QByteArray& jwt, const QJsonO
         (claims.contains("azp") && claims["azp"].toString() != config.clientId))
         return std::nullopt;
     return claims;
+}
+
+std::optional<QJsonObject> OidcToken::verifyLogout(const QByteArray& jwt, const QJsonObject& jwks,
+                                                   const AuthConfig& config, qint64 now)
+{
+    const auto verified = verifySigned(jwt, jwks);
+    if (!verified) return std::nullopt;
+    const auto c = *verified;
+    qint64 issued = 0, exp = 0;
+    const auto audience = c["aud"];
+    const bool aud = audience.isString()
+                         ? audience.toString() == config.clientId
+                         : audience.isArray() && audience.toArray().contains(config.clientId);
+    const auto events = c["events"].toObject();
+    const auto event = events.value("http://schemas.openid.net/event/backchannel-logout");
+    if (c["iss"].toString() != config.issuer || !aud || c.contains("nonce") ||
+        !numericDate(c["iat"], issued) || issued > now + 30 || issued < now - 300 ||
+        c["jti"].toString().isEmpty() || c["jti"].toString().size() > 256 || !event.isObject() ||
+        !event.toObject().isEmpty() ||
+        (c["sid"].toString().isEmpty() && c["sub"].toString().isEmpty()) ||
+        (c.contains("sid") && (!c["sid"].isString() || c["sid"].toString().isEmpty() ||
+                               c["sid"].toString().size() > 1024)) ||
+        (c.contains("sub") && (!c["sub"].isString() || c["sub"].toString().isEmpty() ||
+                               c["sub"].toString().size() > 1024)) ||
+        (c.contains("exp") && (!numericDate(c["exp"], exp) || exp <= now)))
+        return std::nullopt;
+    return c;
 }

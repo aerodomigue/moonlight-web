@@ -51,6 +51,7 @@ HttpRequest parse(const QByteArray& raw)
         QStringList parts = lines[0].split(' ');
         if (parts.size() >= 2) {
             req.method = parts[0].toUpper();
+            req.rawTarget = parts[1].toUtf8();
             QUrl url(parts[1]);
             req.path = url.path();
             if (req.path.isEmpty()) req.path = "/";
@@ -71,13 +72,17 @@ HttpRequest parse(const QByteArray& raw)
         if (colon > 0) {
             QString key = lines[i].left(colon).trimmed();
             QString value = lines[i].mid(colon + 1).trimmed();
-            req.headers[key.toLower()] = value;
+            const auto lower = key.toLower();
+            if (req.headers.contains(lower) &&
+                (lower == "signature" || lower == "signature-input" || lower == "content-digest" ||
+                 lower == "x-mw-session-id" || lower == "x-mw-page-id"))
+                req.malformed = true;
+            req.headers[lower] = value;
         }
     }
 
     if (i < lines.size()) {
-        QStringList bodyLines = lines.mid(i + 1);
-        req.body = bodyLines.join("\r\n").toUtf8();
+        req.body = raw.mid(raw.indexOf("\r\n\r\n") + 4);
     }
     return req;
 }

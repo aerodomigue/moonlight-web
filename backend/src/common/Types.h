@@ -28,6 +28,7 @@
 struct HttpRequest
 {
     QString method;
+    QByteArray rawTarget; // Encoded origin-form request target, before routing normalization.
     QString path;
     QMap<QString, QString> headers;
     QMap<QString, QString> queryParams;

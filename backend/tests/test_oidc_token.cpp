@@ -121,6 +121,28 @@ void run_oidc_token_tests()
         claims[item.first] = item.second;
         CHECK(!verify(sign(key.get(), header, claims)));
     }
+    SECTION("Back-channel logout token separation and validation");
+    auto logout = good;
+    logout.remove("nonce");
+    logout["jti"] = "one-logout";
+    logout["sid"] = "provider-session";
+    logout["events"] =
+        QJsonObject{{"http://schemas.openid.net/event/backchannel-logout", QJsonObject{}}};
+    CHECK(OidcToken::verifyLogout(sign(key.get(), header, logout), keys, config, now).has_value());
+    CHECK(!OidcToken::verifyLogout(valid, keys, config, now));
+    CHECK(!verify(sign(key.get(), header, logout)));
+    for (const auto& item : QList<QPair<QString, QJsonValue>>{{"nonce", "forbidden"},
+                                                              {"jti", ""},
+                                                              {"iat", now - 301},
+                                                              {"iat", now + 31},
+                                                              {"sid", 123},
+                                                              {"iss", "https://wrong.test/"},
+                                                              {"aud", "other-client"},
+                                                              {"events", QJsonObject{}}}) {
+        auto invalid = logout;
+        invalid[item.first] = item.second;
+        CHECK(!OidcToken::verifyLogout(sign(key.get(), header, invalid), keys, config, now));
+    }
     auto multiAudience = good;
     multiAudience["aud"] = QJsonArray{config.clientId, "other-client"};
     multiAudience["azp"] = config.clientId;

@@ -4,6 +4,8 @@
 #include "server/RequestGuard.h"
 #include "server/UserAccess.h"
 #include "server/UserStore.h"
+#include "server/HttpSignature.h"
+#include "server/HttpParser.h"
 #include "common/PairingCrypto.h"
 #include <QFile>
 #include <QJsonDocument>
@@ -13,6 +15,39 @@
 
 void run_user_identity_tests()
 {
+    SECTION("RFC 9421 request signatures and raw target integrity");
+    const auto httpKey = PairingCrypto::generatePrivateKeyPem();
+    const auto httpPublic = PairingCrypto::publicKeySpkiFromPrivatePem(httpKey);
+    auto request = HttpParser::parse(
+        "POST /api/hosts/a%2Fb?x=a%20b&x=c HTTP/1.1\r\nHost: example.test\r\n\r\nbody");
+    CHECK_EQ(request.rawTarget, QByteArray("/api/hosts/a%2Fb?x=a%20b&x=c"));
+    request.headers["x-mw-session-id"] = "session";
+    request.headers["x-mw-page-id"] = "page";
+    request.headers["content-digest"] = HttpSignature::digest(request.body);
+    const auto params =
+        HttpSignature::parameters(1000, 1060, QString(32, 'a'), PairingCrypto::keyId(httpPublic));
+    request.headers["signature-input"] = "mw=" + params;
+    request.headers["signature"] =
+        "mw=:" +
+        QString::fromLatin1(
+            PairingCrypto::sign(httpKey, HttpSignature::base(request, params)).toBase64()) +
+        ":";
+    CHECK(HttpSignature::verify(request, httpPublic, "session", 1001).has_value());
+    CHECK(!HttpSignature::verify(request, httpPublic, "another-session", 1001));
+    CHECK(!HttpSignature::verify(request, httpPublic, "session", 1060));
+    auto tampered = request;
+    tampered.body += 'x';
+    CHECK(!HttpSignature::verify(tampered, httpPublic, "session", 1001));
+    tampered = request;
+    tampered.rawTarget += "&other=1";
+    CHECK(!HttpSignature::verify(tampered, httpPublic, "session", 1001));
+    tampered = request;
+    tampered.headers["x-mw-page-id"] = "another-page";
+    CHECK(!HttpSignature::verify(tampered, httpPublic, "session", 1001));
+    CHECK(HttpParser::parse("GET / HTTP/1.1\r\nSignature: a\r\nSignature: b\r\n\r\n").malformed);
+    const auto binaryRequest =
+        HttpParser::parse(QByteArray("POST / HTTP/1.1\r\n\r\n") + QByteArray::fromHex("ff0080"));
+    CHECK_EQ(binaryRequest.body, QByteArray::fromHex("ff0080"));
     SECTION("User identities and machine isolation");
     AuthConfig config;
     CHECK(config.error().isEmpty());
