@@ -958,6 +958,31 @@ QByteArray AuthManager::sessionPairingKey(const QString& token) const
     return it->pairingKey;
 }
 
+bool AuthManager::authorizeIdentityRenewal(const QString& token, const QByteArray& hostSpki,
+                                           qint64 nowSecs)
+{
+    if (!validateSession(token) || !PairingCrypto::isValidP256Spki(hostSpki)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    if (it->pairingKey.isEmpty() || (it->authMethod != "pin" && it->authMethod != "sso"))
+        return false;
+    it->renewalHostKey = hostSpki;
+    it->renewalIssuedAt = nowSecs > 0 ? nowSecs : QDateTime::currentSecsSinceEpoch();
+    it->renewalRevision = m_configRevision;
+    return true;
+}
+
+bool AuthManager::canRenewIdentity(const QString& token, const QByteArray& browserSpki,
+                                   const QByteArray& hostSpki, qint64 nowSecs) const
+{
+    if (!validateSession(token)) return false;
+    const auto it = m_sessions.constFind(hashToken(token));
+    const auto now = nowSecs > 0 ? nowSecs : QDateTime::currentSecsSinceEpoch();
+    return !browserSpki.isEmpty() && !hostSpki.isEmpty() && it->pairingKey == browserSpki &&
+           it->renewalHostKey == hostSpki && it->renewalIssuedAt > 0 &&
+           now >= it->renewalIssuedAt && now - it->renewalIssuedAt < 300 &&
+           it->renewalRevision == m_configRevision;
+}
+
 void AuthManager::setSessionGeo(const QString& token, const QString& city, const QString& country)
 {
     auto it = m_sessions.find(hashToken(token));
