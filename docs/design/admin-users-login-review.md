@@ -31,7 +31,7 @@ supprimé peut revenir vide ; la désactivation interdit son accès.
   l'administrateur et à la révision de configuration. Elle ne remplace pas sa session.
 - Les suppressions de comptes utilisent un état durable de suppression ; la reprise
   se fait avec le compte bloqué. Les sessions sont sauvegardées atomiquement avec
-  permissions `0600`, y compris lors du nettoyage de sessions ignorées au démarrage.
+  permissions `0600` sous Unix (répertoire du profil utilisateur sous Windows), y compris lors du nettoyage de sessions ignorées au démarrage.
 - Un ajout réseau déjà engagé ne peut pas recréer une machine pour un compte
   supprimé ou désactivé. Un worker ne démarre pas après révocation de sa session.
 - La fermeture des WebSockets et des workers est limitée aux sessions révoquées.

@@ -151,7 +151,10 @@ void run_user_identity_tests()
     auto loaded = AuthConfig::load(authPath, bootstrap);
     CHECK(loaded.pin);
     CHECK_EQ(loaded.clientSecret, saved.clientSecret);
+#ifdef Q_OS_UNIX
+    // POSIX mode bits are not NTFS ACLs. Windows still exercises the full save/load path.
     CHECK(!(QFile::permissions(authPath) & (QFile::ReadGroup | QFile::ReadOther)));
+#endif
     CHECK_EQ(AuthConfig::edited(loaded, {{"client_secret", ""}}).clientSecret, saved.clientSecret);
     CHECK(AuthConfig::edited(loaded, {{"clear_secret", true}}).clientSecret.isEmpty());
     auto ssoMode = saved;
