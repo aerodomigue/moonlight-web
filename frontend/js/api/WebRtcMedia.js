@@ -766,8 +766,10 @@ export class WebRtcMedia {
             // Normal on the host machine itself (local privilege, no session),
             // where there is no relay to guard against anyway.
             console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
-        } else if (this._mwBind) {
-            console.warn('[MW-BIND] No stored host identity — cannot verify this offer');
+        } else if (msg.nonce) {
+            console.error('[MW-BIND] No stored host identity — refusing an unverifiable offer');
+            this._onError(IDENTITY_REFUSED);
+            return;
         }
 
         try {

@@ -358,6 +358,10 @@
     "login": {
         "usePin": "Sign in with PIN",
         "ssoError": "SSO sign-in failed. Please try again.",
+        "identityChanged": "The server identity has changed. Sign in again with PIN or SSO to renew it.",
+        "identityBrowserKeyChanged": "This browser's pairing key is missing or has changed. Sign in again with PIN or SSO.",
+        "identityStorageUnavailable": "Secure browser storage is unavailable. Allow site storage before signing in.",
+        "identityRenewalFailed": "The server identity could not be renewed. Sign in again with PIN or SSO and check that site storage is allowed.",
         "useSso": "Sign in with SSO",
         "chooseMethod": "Choose how to sign in",
         "connecting": "Connecting to server...",
@@ -927,7 +931,7 @@
         "unavailableRemote": "\"{{mode}}\" is not available through the remote link — streaming over {{used}} instead",
         "connectFailed": "{{from}} connection failed — trying {{to}}…",
         "allFailed": "Connection failed — all transport modes failed",
-        "identityRefused": "This host could not prove its identity, so the stream was not started. If MoonlightWeb was reinstalled on it, pair this browser again with a PIN.",
+        "identityRefused": "The connection identity could not be verified, so the stream was stopped. Sign in again with PIN or SSO. If it persists, check the server identity and browser storage.",
         "launchFailed": "The host did not start the stream — try again in a moment",
         "launchFailedNext": "The host did not start the stream on {{from}} — trying {{to}}…"
     },

@@ -19,6 +19,16 @@ describe.each([
     ['WebRtcDataChannel', () => new WebRtcDataChannel('ws://test.invalid')],
     ['WebRtcMedia', () => new WebRtcMedia('ws://test.invalid')],
 ])('%s — an offer that fails MW-BIND', (_name, make) => {
+    it.each([null, { hostPublicKey: null }])('refuses a signed offer without a pinned host identity (%j)', async identity => {
+        const transport = make();
+        transport._mwBind = identity;
+        transport.onError = vi.fn();
+        const createPc = vi.spyOn(transport, '_createPeerConnection').mockImplementation(() => {});
+        await transport._handleSdpOffer({ sdp: 'v=0\r\n', nonce: 'signed-offer-nonce', sig: 'signature' });
+        expect(transport.onError.mock.calls[0][0].message).toBe(IDENTITY_REFUSED);
+        expect(createPc).not.toHaveBeenCalled();
+        expect(transport.pc).toBeNull();
+    });
     it('reports IDENTITY_REFUSED and never negotiates', async () => {
         const t = make();
         const onError = vi.fn();

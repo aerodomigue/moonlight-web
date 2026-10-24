@@ -1527,7 +1527,7 @@ export const MoonlightApp = {
             this._adminUnlockAvailable = !!status.admin_unlock_available;
 
             // Localhost or already authenticated — proceed
-            if (status.is_localhost || status.authenticated) {
+            if ((status.is_localhost || status.authenticated) && !status.identity_error) {
                 // MW-BIND-v1: a session created before this mechanism existed has
                 // no pairing key. Register one now rather than asking the user for
                 // a PIN they already gave. The server only accepts it from

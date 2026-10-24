@@ -94,7 +94,7 @@ export class LoginView {
         // Check auth status — maybe already authenticated
         try {
             const status = await BackendClient.getAuthStatus();
-            if (status.authenticated) {
+            if (status.authenticated && !status.identity_error) {
                 this._releaseServerField();
                 this.onAuthenticated();
                 return;
@@ -108,6 +108,7 @@ export class LoginView {
             const query = new URLSearchParams(window.location.search);
             const error = query.has('auth_error');
             if (error) this._error = t('login.ssoError');
+            if (status.identity_error) this._error = t(`login.${status.identity_error}`);
 
             this._remaining = status.remaining !== undefined ? status.remaining : 3;
             if (status.lockout_seconds > 0) {
@@ -125,6 +126,7 @@ export class LoginView {
             if (
                 this._ssoEnabled &&
                 !error &&
+                !status.identity_error &&
                 !loggedOut &&
                 (!this._pinEnabled || query.get('sso') === '1')
             ) {
@@ -474,10 +476,10 @@ export class LoginView {
             if (this._destroyed) return;
             if (!url || new URL(url).protocol !== 'https:') throw new Error('Invalid SSO URL');
             this._navigate(url);
-        } catch {
+        } catch (error) {
             if (this._destroyed) return;
             this._submitting = false;
-            this._error = t('login.ssoError');
+            this._error = error.identityError ? error.message : t('login.ssoError');
             this.render();
             this.bindEvents();
         }

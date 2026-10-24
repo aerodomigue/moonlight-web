@@ -176,6 +176,36 @@ function dbPut(db, key, value) {
     });
 }
 
+// Read/modify/write in one transaction. Crypto work must finish before entering
+// it: awaiting WebCrypto inside an IndexedDB transaction can close it early.
+function dbUpdate(db, key, update) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        const store = tx.objectStore(STORE);
+        const req = store.get(key);
+        let record;
+        req.onsuccess = () => {
+            record = update(req.result);
+            if (record) store.put(record, key);
+        };
+        tx.oncomplete = () => resolve(record);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Pairing storage transaction aborted'));
+    });
+}
+
+async function validHostIdentity(publicKey, hostId) {
+    if (typeof publicKey !== 'string' || publicKey.length > 1024 || !hostId) return false;
+    try {
+        const spki = base64ToBytes(publicKey);
+        if (bytesToBase64(spki) !== publicKey) return false;
+        await crypto.subtle.importKey('spki', spki, ALGORITHM, false, ['verify']);
+        return base64Url(await crypto.subtle.digest('SHA-256', spki)) === hostId;
+    } catch {
+        return false;
+    }
+}
+
 // ── The pairing identity ───────────────────────────────────────────────────
 
 /**
@@ -202,8 +232,9 @@ export async function loadOrCreateIdentity({ forHost } = {}) {
         return null;
     }
 
+    let db;
     try {
-        const db = await openDb();
+        db = await openDb();
         let record = await dbGet(db, recordId(forHost));
 
         if (!record?.privateKey || !record?.publicKeySpki) {
@@ -211,8 +242,14 @@ export async function loadOrCreateIdentity({ forHost } = {}) {
             const spki = new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey));
             // `false` above is the whole point: the public half exports, the
             // private half never does.
-            record = { privateKey: pair.privateKey, publicKeySpki: spki, hostPublicKey: null };
-            await dbPut(db, recordId(forHost), record);
+            const candidate = {
+                privateKey: pair.privateKey,
+                publicKeySpki: spki,
+                hostPublicKey: null,
+            };
+            record = await dbUpdate(db, recordId(forHost), (current) =>
+                current?.privateKey && current?.publicKeySpki ? current : candidate,
+            );
             console.log('[MW-BIND] Generated a new pairing key for this browser');
         }
 
@@ -231,6 +268,8 @@ export async function loadOrCreateIdentity({ forHost } = {}) {
     } catch (e) {
         console.warn('[MW-BIND] Could not open the pairing key store:', e.message);
         return null;
+    } finally {
+        db?.close();
     }
 }
 
@@ -238,47 +277,58 @@ export async function loadOrCreateIdentity({ forHost } = {}) {
  * Remember the host's public key alongside our own, after pairing.
  *
  * Trust-on-first-use: the first host identity we see for this origin is the one
- * we keep. A *different* one arriving later is refused rather than accepted —
- * that is either a host that regenerated its key (the user re-pairs with a PIN,
- * which clears this record) or exactly the substitution this protocol exists to
- * catch. Returns false when the identity was refused.
+ * we keep. A different one arriving later is refused by default.
+ * A replacement is allowed only by the fresh-login renewal API's caller. It
+ * retains the browser key and compares the record read before the request, so
+ * a late reply cannot overwrite an identity another tab has just renewed.
  *
- * @param {{ forHost?: string }} [options]  see loadOrCreateIdentity.
+ * @param {{ forHost?: string, replace?: boolean, expectedBrowserKey?: string,
+ *   expectedHostId?: string|null }} [options] see loadOrCreateIdentity.
  */
-export async function rememberHostIdentity(hostPublicKeyBase64, hostId, { forHost } = {}) {
-    if (!hostPublicKeyBase64 || !globalThis.indexedDB) return false;
-
+export async function rememberHostIdentity(
+    hostPublicKeyBase64,
+    hostId,
+    { forHost, replace = false, expectedBrowserKey, expectedHostId } = {},
+) {
+    if (!globalThis.indexedDB || !(await validHostIdentity(hostPublicKeyBase64, hostId)))
+        return false;
+    let db;
     try {
-        const db = await openDb();
-        const record = await dbGet(db, recordId(forHost));
-        if (!record) return false;
-
-        if (record.hostPublicKey && record.hostPublicKey !== hostPublicKeyBase64) {
-            console.error(
-                '[MW-BIND] This host presented a different identity key than the one ' +
-                    'this browser paired with — refusing to overwrite it',
-            );
-            return false;
-        }
-
-        record.hostPublicKey = hostPublicKeyBase64;
-        record.hostId = hostId || record.hostId || null;
-        await dbPut(db, recordId(forHost), record);
-        return true;
+        db = await openDb();
+        const updated = await dbUpdate(db, recordId(forHost), (record) => {
+            if (!record?.privateKey || !record?.publicKeySpki) return null;
+            if (expectedBrowserKey && bytesToBase64(record.publicKeySpki) !== expectedBrowserKey)
+                return null;
+            if (record.hostPublicKey && record.hostPublicKey !== hostPublicKeyBase64) {
+                if (
+                    !replace ||
+                    !expectedBrowserKey ||
+                    (record.hostId || null) !== (expectedHostId || null)
+                )
+                    return null;
+            }
+            return { ...record, hostPublicKey: hostPublicKeyBase64, hostId };
+        });
+        return !!updated;
     } catch (e) {
         console.warn('[MW-BIND] Could not store the host identity:', e.message);
         return false;
+    } finally {
+        db?.close();
     }
 }
 
 /** Forget everything, so the next visit pairs from scratch. */
 export async function clearIdentity() {
     if (!globalThis.indexedDB) return;
+    let db;
     try {
-        const db = await openDb();
+        db = await openDb();
         await dbPut(db, recordId(), undefined);
     } catch {
         /* nothing to clear */
+    } finally {
+        db?.close();
     }
 }
 

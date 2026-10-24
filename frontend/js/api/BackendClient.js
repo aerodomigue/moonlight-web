@@ -72,6 +72,7 @@ const RIDE_OUT_LOSS = true;
  *   statusCode?: number,
  *   responseBody?: any,
  *   aborted?: boolean,
+ *   identityError?: string,
  * }} BackendError
  */
 
@@ -607,6 +608,7 @@ export class BackendClient {
      *  server-side lifetime — for a machine the visitor does not own. */
     static async beginSso(machineName, remember = true) {
         const identity = await loadOrCreateIdentity();
+        if (!identity) throw this._identityError('identityStorageUnavailable');
         const result = await this.post('/api/auth/oidc/prepare', {
             machine_name: machineName,
             remember,
@@ -626,6 +628,7 @@ export class BackendClient {
 
     static async validatePin(pin, machineName, remember = true) {
         const identity = await loadOrCreateIdentity();
+        if (!identity) throw this._identityError('identityStorageUnavailable');
         const resp = await this.post('/api/auth/validate', {
             pin,
             machine_name: machineName,
@@ -636,7 +639,9 @@ export class BackendClient {
             public_key: identity?.publicKeyBase64 || undefined,
         });
         if (resp?.host_public_key) {
-            await rememberHostIdentity(resp.host_public_key, resp.host_id);
+            await this._renewHostIdentity(identity);
+        } else {
+            throw this._identityError('identityRenewalFailed');
         }
         if (resp?.user) {
             acceptAccount(resp.user);
@@ -704,8 +709,36 @@ export class BackendClient {
             this.currentUser = status.user;
         }
         this.pinEnabled = status.pin_enabled !== false;
-        if (status.host_public_key) {
-            await rememberHostIdentity(status.host_public_key, status.host_id);
+        if (
+            status.authenticated &&
+            status.host_public_key &&
+            (!status.is_host_machine || status.has_session)
+        ) {
+            try {
+                const identity = await loadOrCreateIdentity();
+                if (!identity) throw this._identityError('identityStorageUnavailable');
+                if (status.browser_key_id && status.browser_key_id !== identity.keyId)
+                    throw this._identityError('identityBrowserKeyChanged');
+                if (status.identity_renewal_available) {
+                    await this._renewHostIdentity(identity);
+                } else {
+                    // Legacy sessions may bind only on networks already allowed
+                    // by this route. A cookie alone never replaces a bound key.
+                    if (status.has_session && status.browser_key_id === '') {
+                        await this.post('/api/auth/pairing-key', {
+                            public_key: identity.publicKeyBase64,
+                        });
+                    }
+                    if (
+                        !(await rememberHostIdentity(status.host_public_key, status.host_id, {
+                            expectedBrowserKey: identity.publicKeyBase64,
+                        }))
+                    )
+                        throw this._identityError('identityChanged');
+                }
+            } catch (error) {
+                status.identity_error = error.identityError || 'identityRenewalFailed';
+            }
         }
         // The one place that can say so. Everything else the application does is
         // downstream of this answer.
@@ -713,6 +746,24 @@ export class BackendClient {
         // Booth mode (--noadmin): the views read it here rather than each asking.
         this.adminLocked = status.admin_locked === true;
         return status;
+    }
+
+    static _identityError(code) {
+        const error = /** @type {BackendError} */ (new Error(t(`login.${code}`)));
+        error.identityError = code;
+        return error;
+    }
+
+    static async _renewHostIdentity(identity) {
+        const renewed = await this.post('/api/auth/identity/renew', {
+            public_key: identity.publicKeyBase64,
+        });
+        const stored = await rememberHostIdentity(renewed.host_public_key, renewed.host_id, {
+            replace: true,
+            expectedBrowserKey: identity.publicKeyBase64,
+            expectedHostId: identity.hostId,
+        });
+        if (!stored) throw this._identityError('identityRenewalFailed');
     }
     /** End this browser's own session and clear its cookie. Works from anywhere
      *  (no localhost gate) — it is the visitor's way out of a public machine. */

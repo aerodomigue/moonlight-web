@@ -20,6 +20,7 @@ void run_request_guard_tests();
 void run_api_csrf_tests();
 void run_share_manager_tests();
 void run_pairing_binding_tests();
+int run_pairing_browser_fixture();
 void run_gamepad_driver_tests();
 void run_virtual_display_tests();
 void run_driver_package_tests();
@@ -28,6 +29,8 @@ void run_update_apply_tests();
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
+    if (app.arguments().contains(QStringLiteral("--browser-fixture")))
+        return run_pairing_browser_fixture();
     // ShareManager persists its state under AppDataLocation. Test mode moves
     // that to a throwaway directory so a test run never touches (or wipes) the
     // share state of a real install on the developer's machine.

@@ -193,3 +193,38 @@ Le test d'intégration utilise un vrai serveur Moonlight-Web, un fournisseur
 HTTPS OIDC local avec de vraies signatures et un faux PC GameStream. Tous les
 ports, comptes, clés et fichiers sont temporaires. Il ne contacte pas Authentik
 ni les machines de l'installation réelle.
+# Browser identity renewal
+
+After a successful PIN sign-in or a completed OIDC sign-in, the browser automatically
+renews its pinned Moonlight-Web public identity. This changes only the server's
+public identity in IndexedDB; it retains the browser's non-extractable private key
+and all Apollo/Sunshine pairings stored on the backend.
+
+`POST /api/auth/identity/renew` takes `public_key` (the session-bound browser SPKI,
+base64) and returns `host_public_key` and `host_id` with `Cache-Control: no-store`.
+It requires a fresh PIN/OIDC authorization valid for five minutes, bound to this
+session, browser key, server identity and authentication configuration revision.
+Retries for that exact identity are idempotent during the window. The authorization
+is runtime-only: restarting the server, revoking the session, disabling the account,
+changing authentication configuration or changing the server identity invalidates it.
+An existing cookie or starting an OIDC transaction does not grant renewal.
+
+`GET /api/auth/status` additionally returns `browser_key_id` and
+`identity_renewal_available`. A restored session cannot replace a different pinned
+identity without signing in again. A missing browser key with a surviving cookie
+also requires signing in again. Clearing cookies alone does not erase IndexedDB.
+
+If the identity changed, use the PIN or SSO option offered on the login screen.
+Allow secure site storage when the browser reports a storage failure. Re-pairing
+the backend with Apollo is unnecessary. Failed signature checks continue to stop
+the launch before negotiation, without falling back to an unverified transport.
+
+Real Chromium regressions (including C++/WebCrypto interoperability) can be run with:
+
+```sh
+MW_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  python3 backend/tests/run_identity_browser.py build/MoonlightWeb
+```
+
+Build `mw-security-tests` alongside the server: the browser harness uses its
+`--browser-fixture` mode with ephemeral test keys, never the service's private keys.

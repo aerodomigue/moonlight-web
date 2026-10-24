@@ -1211,12 +1211,10 @@ export class WebRtcDataChannel {
             // Normal on the host machine itself, which gets local privilege
             // without a session — and where no relay exists to guard against.
             console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
-        } else if (this._mwBind) {
-            // The host signed but we have no identity to check it against: our
-            // stored record is incomplete (site data cleared, or paired before
-            // the host had a key). We can still sign our own half, which is what
-            // the host verifies; re-pairing restores the other direction.
-            console.warn('[MW-BIND] No stored host identity — cannot verify this offer');
+        } else if (msg.nonce) {
+            console.error('[MW-BIND] No stored host identity — refusing an unverifiable offer');
+            this._onError(IDENTITY_REFUSED);
+            return;
         }
 
         // Safety net: if ice-config never arrived, create PC now.
