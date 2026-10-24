@@ -23,6 +23,7 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <functional>
+#include <memory>
 
 struct HttpRequest
 {
@@ -60,6 +61,9 @@ struct HttpRequest
                                 // currently set when the percent-decoded path
                                 // carries control characters (CR/LF smuggled in
                                 // as %0d/%0a). Answered with 400 and never routed.
+
+    QString userId; // Resolved only from a session or local-owner recovery access.
+    std::shared_ptr<void> authorizationLease; // Held through async response completion.
 };
 
 struct HttpResponse

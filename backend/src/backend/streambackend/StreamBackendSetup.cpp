@@ -63,8 +63,10 @@ void registerAll(NvHTTP* http, QNetworkAccessManager* nam, HostLookup lookup, Pa
 
             // No QObject parent: the unique_ptr is the sole owner. Parenting as
             // well would double-delete.
-            return std::make_unique<GameStreamBackend>(
+            auto backend = std::make_unique<GameStreamBackend>(
                 uuid, [lookup, uuid]() { return lookup(uuid); }, http, nam, nullptr);
+            backend->setIdentitySeat(config.value(QStringLiteral("identitySeat")).toString());
+            return backend;
         });
 
     registry.registerFactory(

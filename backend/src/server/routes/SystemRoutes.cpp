@@ -343,7 +343,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["is_localhost"] = true;
         HttpResponse resp = HttpResponse::json(obj);
         resp.headers["Set-Cookie"] =
-            QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
+            QString(
+                "__Host-mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
                 .arg(token);
         return resp;
     });

@@ -713,6 +713,8 @@ quint16 HttpServer::authorizeTunnelWebSocket(const HttpRequest& req, QString* ou
         m_ConnGuard.reportAuthFailure(req.clientAddress);
         return refuse(QStringLiteral("authentication required"));
     }
+    if (m_OwnerSlotAuth && !m_OwnerSlotAuth(req, slot))
+        return refuse(QStringLiteral("not authorised for this stream slot"));
     return targetPort;
 }
 
@@ -807,14 +809,21 @@ QString HttpServer::cookieFromRequest(const HttpRequest& req, const QString& nam
     QStringList cookies = cookie.split(";");
     for (const QString& c : cookies) {
         QString trimmed = c.trimmed();
-        if (trimmed.startsWith(prefix, Qt::CaseInsensitive)) return trimmed.mid(prefix.length());
+        // Cookie names are case-sensitive. In particular, a differently cased
+        // __Host- prefix must not bypass the browser's host-only cookie rules.
+        if (trimmed.startsWith(prefix, Qt::CaseSensitive)) return trimmed.mid(prefix.length());
     }
     return {};
 }
 
 QString HttpServer::sessionTokenFromRequest(const HttpRequest& req)
 {
-    return cookieFromRequest(req, QStringLiteral("mw_session"));
+    const QString current = cookieFromRequest(req, QStringLiteral("__Host-mw_session"));
+    if (!current.isEmpty()) return current;
+    const QString legacy = cookieFromRequest(req, QStringLiteral("mw_session"));
+    // Tokens minted since OIDC require a host-only cookie. A sibling subdomain
+    // must not be able to plant its own account token through a Domain cookie.
+    return legacy.startsWith(QLatin1String("v2.")) ? QString() : legacy;
 }
 
 void HttpServer::reportAuthFailure(const QString& ip)
@@ -1191,7 +1200,8 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     ctx.peerLocal = peerLocal;
     ctx.hostSession =
         m_AuthManager && m_AuthManager->isHostSession(sessionToken) && (!viaTunnel || tunnelHost);
-    ctx.adminSession = m_AuthManager && m_AuthManager->isAdminSession(sessionToken);
+    ctx.adminSession = m_AuthManager && (m_AuthManager->isAdminSession(sessionToken) ||
+                                         m_AuthManager->isSsoAdmin(sessionToken));
     // The admin key has to follow the two sessions that carry admin rights
     // through the tunnel, or they would be read-only: admin WRITES require it,
     // so an admin page that loads and then refuses every change is worse than
@@ -1238,6 +1248,10 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     req.isLocal = decision.adminPrivilege;
     req.isHostMachine = decision.hostMachine;
     req.hostTrusted = decision.hostTrusted;
+    if (m_AuthManager && m_AuthManager->validateSession(sessionToken))
+        req.userId = m_AuthManager->sessionForToken(sessionToken).userId;
+    else if (localPrivilege || req.isHostMachine)
+        req.userId = UserStore::localId();
 
     // The frontend fetches the admin key here. Handled inline rather than as a
     // route so it can never be reached without the checks above.
@@ -1405,17 +1419,26 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         return;
     }
 
-    m_Router->dispatchAsync(req, [respond](const HttpResponse& resp) {
-        // API answers are per-session state (host list, sessions, settings)
-        // and several are privilege-dependent — the very same URL returns
-        // less to a remote client than to the host. Nothing may keep a copy:
-        // no-store also keeps them out of the browser's on-disk cache, where
-        // they would outlive the session that was allowed to see them.
-        // Handlers that set their own policy keep it.
-        HttpResponse out = resp;
-        if (!out.headers.contains("Cache-Control")) out.headers["Cache-Control"] = "no-store";
-        respond(out);
-    });
+    if (m_RequestAuth) {
+        if (auto denied = m_RequestAuth(req)) {
+            respond(*denied);
+            return;
+        }
+    }
+
+    m_Router->dispatchAsync(req,
+                            [respond, lease = req.authorizationLease](const HttpResponse& resp) {
+                                // API answers are per-session state (host list, sessions, settings)
+                                // and several are privilege-dependent — the very same URL returns
+                                // less to a remote client than to the host. Nothing may keep a
+                                // copy: no-store also keeps them out of the browser's on-disk
+                                // cache, where they would outlive the session that was allowed to
+                                // see them. Handlers that set their own policy keep it.
+                                HttpResponse out = resp;
+                                if (!out.headers.contains("Cache-Control"))
+                                    out.headers["Cache-Control"] = "no-store";
+                                respond(out);
+                            });
 }
 
 void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData)
@@ -1517,6 +1540,11 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
             sendResponse(clientSocket, resp);
             return;
         }
+    }
+
+    if (!playerSlot && m_OwnerSlotAuth && !m_OwnerSlotAuth(up, wsSlot)) {
+        sendResponse(clientSocket, HttpResponse::error(403, "Not authorised for this stream"));
+        return;
     }
 
     qInfo() << "[HttpServer] WebSocket upgrade detected, path=" << path

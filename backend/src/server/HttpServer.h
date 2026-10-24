@@ -27,6 +27,7 @@
 #include <QList>
 #include <functional>
 #include <limits>
+#include <optional>
 #include "common/Types.h"
 #include "server/ConnectionGuard.h"
 #include "server/CertManager.h"
@@ -200,6 +201,14 @@ public:
 
     /// Set the AuthManager for PIN-based authentication of remote requests.
     void setAuthManager(AuthManager* am) { m_AuthManager = am; }
+    void setRequestAuthorizer(std::function<std::optional<HttpResponse>(HttpRequest&)> fn)
+    {
+        m_RequestAuth = std::move(fn);
+    }
+    void setOwnerSlotAuthorizer(std::function<bool(const HttpRequest&, int)> fn)
+    {
+        m_OwnerSlotAuth = std::move(fn);
+    }
     /// --noadmin: no request is granted admin rights, and the ones that change
     /// what the booth offers are refused (RequestGuard::lockedByNoAdmin).
     void setAdminLocked(bool locked) { m_AdminLocked = locked; }
@@ -325,6 +334,8 @@ private:
 
     /// PIN-based authentication manager (nullable — auth disabled when null).
     AuthManager* m_AuthManager = nullptr;
+    std::function<std::optional<HttpResponse>(HttpRequest&)> m_RequestAuth;
+    std::function<bool(const HttpRequest&, int)> m_OwnerSlotAuth;
     bool m_AdminLocked = false;
 
     /// Per-run secret required on admin writes (see adminKeyMatches). Generated

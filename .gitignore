@@ -78,6 +78,7 @@ docs/*
 !docs/screenshots
 !docs/upstream
 !docs/optimisations-existant.md
+!docs/authentication.md
 
 # Local benchmark prompt documents (never committed)
 docs/application/

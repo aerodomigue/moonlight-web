@@ -259,6 +259,12 @@ void run_log_scrubber_tests()
     names.user = "bruno";
     LogScrubber s(names);
 
+    CHECK(!s.scrubLine("/api/auth/oidc/callback?code=secret-code&state=secret-state")
+               .contains("secret-code"));
+    CHECK(!s.scrubLine("/token?code_verifier=secret-verifier&client_secret=secret-password&id_"
+                       "token=secret-jwt")
+               .contains("secret-"));
+
     // Secrets: rikey and the client id through Qt's error string, which quotes
     // the whole URL; the pairing handshake.
     {

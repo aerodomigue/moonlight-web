@@ -44,9 +44,9 @@ du projet amont restent disponibles selon les capacités du matériel et du navi
 
 Images publiées pour **Linux amd64 et arm64** :
 
-| Image                                               | Usage                                                         |
-| --------------------------------------------------- | ------------------------------------------------------------- |
-| `ghcr.io/aerodomigue/moonlight-web-dev:dev`         | Dernière image de développement publiée du fork.              |
+| Image                                                | Usage                                                                 |
+| ---------------------------------------------------- | --------------------------------------------------------------------- |
+| `ghcr.io/aerodomigue/moonlight-web-dev:dev`          | Dernière image de développement publiée du fork.                      |
 | `ghcr.io/aerodomigue/moonlight-web-dev:sha-<commit>` | Tag d’une version publiée, à remplacer par son identifiant de commit. |
 
 ```bash
@@ -110,6 +110,15 @@ Une requête proxifiée ne bénéficie jamais de l'exemption de l'hôte local.
 Voir [le guide reverse proxy](docs/reverse-proxy.md) et
 [le guide Docker](docker/README.md) pour les détails.
 
+## Authentification SSO et espaces utilisateurs
+
+Le mode `MW_AUTH_METHODS=pin,sso` propose le choix PIN ou OpenID Connect.
+`pin` conserve la connexion actuelle ; `sso` redirige automatiquement vers le
+fournisseur. Authentik est pris en charge avec une configuration OIDC générique.
+Chaque compte possède ses machines et ses appairages, même lorsqu'un PC est
+ajouté par plusieurs utilisateurs. Les anciennes machines restent au propriétaire
+local. Voir [la configuration et les limites du SSO](docs/authentication.md).
+
 ## Wake-on-LAN des machines enregistrées
 
 Moonlight-Web mémorise les informations de réveil disponibles lors de
@@ -136,7 +145,7 @@ Il n'est pas nécessaire d'exposer un port WOL sur Internet.
 
 | Variable                         | Valeur par défaut               | Rôle                                                                       |
 | -------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| `MW_REVERSE_PROXY`               | `1`                             | Profil auto-hébergé, sans relais ni télémétrie MoonlightWeb.                                      |
+| `MW_REVERSE_PROXY`               | `1`                             | Profil auto-hébergé, sans relais ni télémétrie MoonlightWeb.               |
 | `MW_PUBLIC_URL`                  | Vide                            | Origine HTTPS utilisée pour les liens publics et le partage.               |
 | `MW_TRUSTED_PROXIES`             | `127.0.0.1/32,::1/128`          | Proxys autorisés à fournir l'adresse client et le schéma HTTPS.            |
 | `MW_NO_TELEMETRY`                | `1` dans l'image                | Désactivation supplémentaire des rapports et vérifications de mise à jour. |

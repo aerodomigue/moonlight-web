@@ -356,6 +356,10 @@
         "quitFailed": "Impossible de quitter {{name}} sur l'hôte."
     },
     "login": {
+        "usePin": "Se connecter avec le PIN",
+        "ssoError": "La connexion SSO a échoué. Réessaie.",
+        "useSso": "Se connecter avec le SSO",
+        "chooseMethod": "Choisis ta méthode de connexion",
         "connecting": "Connexion au serveur...",
         "serverSelection": "Choix du serveur",
         "serverCurrent": "Ce serveur",
@@ -397,6 +401,8 @@
         "paired": "Appairage réussi !"
     },
     "settings": {
+        "accountPinValue": "PIN : {pin} — utilisable une fois, pendant 5 minutes.",
+        "accountPin": "Générer un PIN d’appairage pour mon compte",
         "title": "Paramètres de streaming",
         "video": "Vidéo",
         "advanced": "Avancé",

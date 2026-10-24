@@ -20,6 +20,7 @@
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
+#include "server/OidcClient.h"
 #include "server/AppSettings.h"
 #include "server/NetClassify.h"
 #include "network/GeoIpService.h"
@@ -46,7 +47,8 @@ namespace {
 QString sessionCookie(const QString& token, bool remember)
 {
     QString cookie =
-        QStringLiteral("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict").arg(token);
+        QStringLiteral("__Host-mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict")
+            .arg(token);
     if (remember) cookie += QStringLiteral("; Max-Age=7776000");
     return cookie;
 }
@@ -54,7 +56,8 @@ QString sessionCookie(const QString& token, bool remember)
 /// Expire the session cookie immediately (logout).
 QString clearedSessionCookie()
 {
-    return QStringLiteral("mw_session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0");
+    return QStringLiteral(
+        "__Host-mw_session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0");
 }
 
 /// "remember me" is opt-out: a body without the field keeps the old 90-day
@@ -100,6 +103,8 @@ void bindKeyFromLoginBody(AuthManager& authManager, const QString& token, const 
 void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpService& geoIpService,
                         AppSettings& settings)
 {
+    new OidcClient(authManager, server);
+
     // ── Auth routes ─────────────────────────────────────────────────────────
     // POST /api/auth/validate — validate PIN or certificate, create session, set cookie
     server.router()->post("/api/auth/validate", [&authManager, &geoIpService,
@@ -108,6 +113,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QJsonObject body = doc.object();
         QString pin = body["pin"].toString();
         QString certificate = body["certificate"].toString();
+        if (!authManager.config().pin)
+            return HttpResponse::error(403, "PIN authentication is disabled");
         QString machineName = body["machine_name"].toString();
         const bool remember = wantsRemember(body);
 
@@ -116,7 +123,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             if (authManager.validateCertificate(certificate)) {
                 // Certificate valid — create session (same flow as PIN success)
                 QString token =
-                    authManager.createSession(req.clientAddress, machineName, false, !remember);
+                    authManager.createSession(req.clientAddress, machineName, false, !remember,
+                                              false, UserStore::localId(), "certificate");
                 geoIpService.lookupIp(
                     req.clientAddress,
                     [&authManager, token](const QString& city, const QString& country) {
@@ -124,8 +132,10 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                     });
 
                 QJsonObject obj;
+                authManager.logoutSession(HttpServer::sessionTokenFromRequest(req));
                 obj["status"] = "ok";
                 obj["auth_method"] = "certificate";
+                obj["user"] = authManager.users().get(UserStore::localId()).json();
                 obj["remembered"] = remember;
                 bindKeyFromLoginBody(authManager, token, body, obj, settings);
                 HttpResponse resp = HttpResponse::json(obj);
@@ -145,16 +155,17 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
         // Counted against the socket peer, or the visitor a local reverse proxy
         // names (AuthManager::attemptAddress).
-        auto result = authManager.validatePin(
+        QString userId;
+        auto result = authManager.validateAccountPin(
             (req.viaProxy ? req.clientAddress
                           : AuthManager::attemptAddress(req.clientAddress, req.headers)),
-            pin);
+            pin, userId);
 
         QJsonObject obj;
         switch (result.result) {
         case AuthManager::Valid: {
-            QString token =
-                authManager.createSession(req.clientAddress, machineName, false, !remember);
+            QString token = authManager.createSession(req.clientAddress, machineName, false,
+                                                      !remember, false, userId, "pin");
 
             // Look up the IP geolocation asynchronously and store in the session
             geoIpService.lookupIp(req.clientAddress, [&authManager, token](const QString& city,
@@ -162,11 +173,14 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                 authManager.setSessionGeo(token, city, country);
             });
 
+            authManager.logoutSession(HttpServer::sessionTokenFromRequest(req));
+
             // Auto-regenerate PIN — immediately invalidate the just-used PIN
-            authManager.autoRegeneratePin();
+            if (userId == UserStore::localId()) authManager.autoRegeneratePin();
 
             obj["status"] = "ok";
             obj["pin_regenerated"] = true;
+            obj["user"] = authManager.users().get(userId).json();
             obj["remembered"] = remember;
             bindKeyFromLoginBody(authManager, token, body, obj, settings);
             HttpResponse resp = HttpResponse::json(obj);
@@ -214,7 +228,9 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
         QString machineName = body.value(QStringLiteral("machine_name")).toString().trimmed();
         if (machineName.isEmpty()) machineName = handoff->machineName;
-        const QString token = authManager.createSession(req.clientAddress, machineName);
+        const QString token =
+            authManager.createSession(req.clientAddress, machineName, false, false, false,
+                                      handoff->userId, handoff->authMethod);
         geoIpService.lookupIp(req.clientAddress,
                               [&authManager, token](const QString& city, const QString& country) {
                                   authManager.setSessionGeo(token, city, country);
@@ -321,6 +337,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
     // POST /api/admin/pin/generate — generate a new PIN without revoking sessions (localhost only)
     server.router()->post("/api/admin/pin/generate", [&authManager](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+        if (!authManager.config().pin)
+            return HttpResponse::error(403, "PIN authentication is disabled");
 
         QString pin = authManager.generatePin();
         QJsonObject obj;
@@ -332,6 +350,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
     // POST /api/auth/regenerate — regenerate PIN (localhost only)
     server.router()->post("/api/auth/regenerate", [&authManager](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+        if (!authManager.config().pin)
+            return HttpResponse::error(403, "PIN authentication is disabled");
 
         authManager.regeneratePin();
         QJsonObject obj;
@@ -481,9 +501,15 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
     });
 
     // GET /api/auth/status — check current auth status
-    server.router()->get("/api/auth/status", [&authManager, &geoIpService](const HttpRequest& req) {
+    server.router()->get("/api/auth/status", [&authManager, &geoIpService,
+                                              &settings](const HttpRequest& req) {
         QJsonObject obj;
         QString authedToken; // set when a valid session cookie is found below
+        const QString currentToken = HttpServer::sessionTokenFromRequest(req);
+        if (authManager.validateSession(currentToken)) {
+            authedToken = currentToken;
+            authManager.touchSession(currentToken);
+        }
 
         bool isLocal = req.isLocal;
         // Historical name: it means "has admin access", which since the remote
@@ -509,31 +535,17 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         } else {
             // Check session cookie
             bool auth = false;
-            QString cookie = req.headers.value("cookie");
-            if (!cookie.isEmpty()) {
-                QStringList cookies = cookie.split(";");
-                for (const QString& c : cookies) {
-                    QString trimmed = c.trimmed();
-                    if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive)) {
-                        QString token = trimmed.mid(QStringLiteral("mw_session=").length());
-                        if (authManager.validateSession(token)) {
-                            auth = true;
-                            authedToken = token;
-                            // Activity → slide the session's expiration window.
-                            authManager.touchSession(token);
-                            // Reconnection: refresh source IP and re-run
-                            // geolocation if it changed since last seen.
-                            if (authManager.updateSessionAddress(token, req.clientAddress)) {
-                                geoIpService.lookupIp(
-                                    req.clientAddress,
-                                    [&authManager, token](const QString& city,
-                                                          const QString& country) {
-                                        authManager.setSessionGeo(token, city, country);
-                                    });
-                            }
-                            break;
-                        }
-                    }
+            const QString token = HttpServer::sessionTokenFromRequest(req);
+            if (authManager.validateSession(token)) {
+                auth = true;
+                authedToken = token;
+                authManager.touchSession(token);
+                if (authManager.updateSessionAddress(token, req.clientAddress)) {
+                    geoIpService.lookupIp(
+                        req.clientAddress,
+                        [&authManager, token](const QString& city, const QString& country) {
+                            authManager.setSessionGeo(token, city, country);
+                        });
                 }
             }
             obj["authenticated"] = auth;
@@ -548,9 +560,18 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             }
         }
 
-        obj["requires_pin"] = !hostTrusted;
+        obj["pin_enabled"] = authManager.config().pin;
+        obj["sso_enabled"] = authManager.config().sso;
+        obj["sso_origin"] = authManager.config().sso ? authManager.config().publicUrl : QString();
+        if (!req.userId.isEmpty()) obj["user"] = authManager.users().get(req.userId).json();
+        if (obj["authenticated"].toBool()) {
+            const auto identity = hostPairingIdentity(settings);
+            for (auto it = identity.constBegin(); it != identity.constEnd(); ++it)
+                obj[it.key()] = it.value();
+        }
+        obj["requires_pin"] = !hostTrusted && authManager.config().pin;
         obj["active_sessions"] = authManager.activeSessionCount();
-        obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+        obj["cert_auth_enabled"] = authManager.config().pin && authManager.certAuthEnabled();
         // Tells the frontend to offer the admin page behind a password prompt.
         // Mirrors exactly what /api/auth/admin-unlock will accept, so the
         // button never appears where the unlock would be refused.
@@ -575,6 +596,20 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                 sessionCookie(authedToken, !authManager.isEphemeralSession(authedToken));
         }
         return resp;
+    });
+
+    // Generate a short-lived one-use pairing PIN for this account (or an admin target).
+    server.router()->post("/api/auth/pin", [&authManager](const HttpRequest& req) {
+        if (req.userId.isEmpty()) return HttpResponse::error(401, "Not authenticated");
+        const auto body = QJsonDocument::fromJson(req.body).object();
+        const QString target = body.value("user_id").toString(req.userId);
+        if (target != req.userId && !req.isLocal) return HttpResponse::error(403, "Not authorised");
+        const QString pin = authManager.generateUserPin(target);
+        if (pin.isEmpty())
+            return HttpResponse::error(403, "PIN is disabled or account does not exist");
+        return HttpResponse::json({{"pin", pin},
+                                   {"user_id", target},
+                                   {"expires_in", target == UserStore::localId() ? 0 : 300}});
     });
 
     // POST /api/auth/logout — end *this* browser's session.
@@ -613,6 +648,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             const auto sessions = authManager.sessions();
             for (const auto& s : sessions) {
                 QJsonObject entry = s.toJson();
+                if (s.userId != UserStore::localId())
+                    entry["user_name"] = authManager.users().get(s.userId).name;
                 // "Local" for private IPs, else city/country from stored geo data
                 entry["location"] = AuthManager::isPrivateIP(s.ip);
                 entry["current"] = !currentId.isEmpty() && s.token == currentId;

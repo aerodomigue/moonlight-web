@@ -3,8 +3,10 @@
 Branche dédiée : `feat/oidc-user-isolation`.
 Référence initiale : `95d2476734472e1705ff46de3c34f368483e4aa4`.
 
-Ce document consigne les décisions et les exigences de validation avant
-l'implémentation. La branche ne fournit pas encore de connexion OIDC.
+Ce document consigne les décisions et les exigences de validation.
+L'implémentation et ses vérifications sont décrites dans
+[le guide de configuration](../authentication.md) et
+[la revue de la modification](oidc-review.md).
 
 ## Comportement demandé
 
@@ -77,4 +79,4 @@ Consigner les corrections, résultats des tests et limites restantes dans la PR.
   d'ouverture de ports sur un routeur.
 
 Les journaux locaux sont dans `work/oidc-baseline-*.log` et ne sont pas suivis
-par Git. Les tests du nouveau SSO et de l'isolation restent à implémenter.
+par Git. Les résultats de l'implémentation sont consignés dans la revue ci-dessus.

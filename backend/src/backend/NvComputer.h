@@ -45,6 +45,10 @@ public:
         CS_OFFLINE
     };
 
+    QString ownerId = QStringLiteral("local-owner");
+    QString physicalUuid; // Original GameStream UUID; uuid is the private registration ID.
+    QString identitySeat; // Empty only for the legacy local-owner certificate.
+
     NvComputer() = default;
 
     // Construct from serverInfo XML + active address (polling response)

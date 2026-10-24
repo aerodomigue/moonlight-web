@@ -251,7 +251,11 @@ Decision evaluate(const Request& req, const Context& ctx)
     // Only the API grants privileges or changes state; static files are public
     // by design and must keep loading from anywhere (a bookmarked page, an
     // iframe on the user's own dashboard).
-    if (isApi && isCrossSite(req.headers)) {
+    // The OIDC redirect is a cross-site GET authenticated by its one-use state
+    // and browser cookie. No other auth route inherits this exception.
+    const bool oidcReturn =
+        req.method == QLatin1String("GET") && req.path == QLatin1String("/api/auth/oidc/callback");
+    if (isApi && !oidcReturn && isCrossSite(req.headers)) {
         d.outcome = Outcome::BlockCrossSite;
         return d;
     }

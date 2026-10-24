@@ -71,12 +71,22 @@ void run_cert_manager_tests();
 
 void run_reverse_proxy_tests();
 
+void run_user_identity_tests();
+void run_oidc_token_tests();
+
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     // Keep app data hermetic-ish for any path the units resolve internally.
     QCoreApplication::setApplicationName("mw-server-tests");
     QCoreApplication::setOrganizationName("moonlightweb");
+
+    if (app.arguments().contains(QStringLiteral("--identity"))) {
+        run_user_identity_tests();
+        run_oidc_token_tests();
+        std::fprintf(stderr, "Identity: %d passed, %d failed\n", g_stats.passed, g_stats.failed);
+        return g_stats.failed ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
 
     if (app.arguments().contains(QStringLiteral("--wake-on-lan"))) {
         run_wake_on_lan_tests();
@@ -91,6 +101,8 @@ int main(int argc, char** argv)
         return g_stats.failed ? EXIT_FAILURE : EXIT_SUCCESS;
     }
     qputenv("MW_REVERSE_PROXY", "0");
+    run_user_identity_tests();
+    run_oidc_token_tests();
     run_input_encoder_tests();
     run_stream_config_tests();
     run_input_crypto_tests();
