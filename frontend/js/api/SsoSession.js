@@ -13,6 +13,9 @@ export const SsoSession = {
     pageId: '',
     active: false,
     offset: 0,
+    reset() {
+        Object.assign(this, { sessionId: '', pageId: '', active: false, offset: 0 });
+    },
     page() {
         return this.pageId || (this.pageId = random());
     },

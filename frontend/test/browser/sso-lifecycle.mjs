@@ -36,7 +36,12 @@ try {
     await page.goBack({waitUntil:'domcontentloaded'});
     await page.locator('#view-hosts').waitFor();
     assert.equal(checks(),2);
-    console.log('PASS: returning through browser history rechecks SSO, including the BFCache restoration hook.');
+    console.log('PASS: returning through browser history rechecks SSO.');
+    await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));
+    await page.waitForURL(url=>!url.hash && checks()===3).catch(()=>{});
+    await page.locator('#view-hosts').waitFor();
+    assert.equal(checks(),3);
+    console.log('PASS: a persisted pageshow event forces a fresh OIDC check before restoring data.');
     const copied = await browser.newContext(options); await copied.addCookies([cookie]);
     const intruder = await copied.newPage(); await intruder.goto(base+'/js/api/SsoSession.js');
     const denied = await intruder.evaluate(async()=>{
@@ -48,6 +53,7 @@ try {
     assert.deepEqual(denied,{authenticated:false,privateData:false,codes:[401,401,401,401]});
     console.log('PASS: copying the live SSO cookie into another Chromium context grants neither user data nor administrator access.');
     const other=await login('other-subject');
+    const recoveryPin = await other.page.evaluate(async()=>(await import('/js/api/BackendClient.js')).BackendClient.generateAccountPin().then(r=>r.pin));
     await page.evaluate(async()=>{const {SsoSession:s}=await import('/js/api/SsoSession.js');const url=location.origin.replace('https:','wss:')+'/ws/control';window.testSocket=new WebSocket(url,await s.protocols(url));await new Promise((resolve,reject)=>{testSocket.onopen=resolve;testSocket.onerror=reject;});window.socketClosed=false;testSocket.onclose=()=>window.socketClosed=true;});
     assert.equal((await control({action:'logout'})).status,200);
     await page.waitForFunction(()=>window.socketClosed);
@@ -68,5 +74,11 @@ try {
     await other.page.locator('#btn-login-sso').waitFor();
     assert.equal(await other.page.evaluate(async()=>{const {authenticatedFetch:f}=await import('/js/api/SsoSession.js');return(await f('/api/hosts')).status;}),401);
     console.log('PASS: provider discovery outage blocks access and leaves an explicit retry/login screen.');
+    await other.page.locator('#btn-login-pin').click();
+    await other.page.locator('#login-pin-input').fill(recoveryPin);
+    await other.page.locator('#btn-login-unlock').click();
+    await other.page.locator('#view-hosts').waitFor();
+    assert.deepEqual(await other.page.evaluate(async()=>{const {SsoSession:s}=await import('/js/api/SsoSession.js');const status=await(await import('/js/api/BackendClient.js')).BackendClient.getAuthStatus();return{session:s.sessionId,method:status.auth_method,protocols:await s.protocols('/ws/control')};}),{session:'',method:'pin',protocols:undefined});
+    console.log('PASS: explicitly choosing a valid PIN after SSO failure clears the old SSO request/socket context.');
     assert.deepEqual(errors,[]);
 } finally { await control({action:'authenticated',value:true}).catch(()=>{});await control({action:'provider_available',value:true}).catch(()=>{});await browser.close(); }

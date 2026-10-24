@@ -647,6 +647,7 @@ export class BackendClient {
             public_key: identity?.publicKeyBase64 || undefined,
         });
         if (resp?.host_public_key) {
+            SsoSession.reset();
             await this._renewHostIdentity(identity);
         } else {
             throw this._identityError('identityRenewalFailed');
@@ -907,6 +908,7 @@ export class BackendClient {
             remember: remember !== false,
             public_key: identity?.publicKeyBase64 || undefined,
         });
+        if (resp?.status === 'ok') SsoSession.reset();
         if (resp?.host_public_key) {
             await rememberHostIdentity(resp.host_public_key, resp.host_id);
         }

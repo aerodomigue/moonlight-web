@@ -36,6 +36,10 @@ credentials/tokens never reach browser code.
 - Browser requests, downloads, private covers, diagnostics and manifest requests
   use the signed fetch adapter. Cover blobs have bounded caching and object-URL
   cleanup. PIN fetch behavior is unchanged.
+- A successful explicit PIN/certificate login clears the prior SSO document
+  context before identity renewal; a reproduced stale context previously blocked
+  WebSocket tickets despite successful PIN credentials. Provider failure itself
+  never changes authentication methods.
 - Private keys remain non-exportable. Possession checks do not claim to protect
   an already compromised browser or stolen identity-provider credentials.
 
@@ -75,7 +79,8 @@ credentials/tokens never reach browser code.
 - Full backend Linux reference: 17,003/17,008; only the five pre-existing Windows
   Steam-path assertions fail. Final CI/backend counts are recorded in the PR.
 - Frontend reference: 1,659 tests in 160 files, scoped line coverage 93.4%.
-- Chromium in French covers fresh OIDC on reload/history, retained keys and other
+- Chromium in French covers fresh OIDC on reload/history and a persisted
+  `pageshow` event, retained keys and other
   page authority, cookie-copy refusal, successful subprotocol negotiation, scoped
   WS shutdown, provider logout/discovery outage and no redirect loop/PIN fallback.
 - PR #6 remains covered: stale identity renewal after PIN/SSO, storage failures,
