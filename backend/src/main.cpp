@@ -83,6 +83,7 @@
 #include "server/SingleSessionHosts.h"
 #include "server/StreamActivity.h"
 #include "server/routes/AuthRoutes.h"
+#include "server/routes/AdminUserRoutes.h"
 #include "server/routes/HostRoutes.h"
 #include "server/routes/HostAppRoutes.h"
 #include "server/routes/ShareRoutes.h"
@@ -2576,10 +2577,10 @@ int main(int argc, char* argv[])
     // re-entrant safe (stop() guards, deleteLater is idempotent) and a double
     // Sunshine /cancel is harmless.
     QObject::connect(
-        &authManager, &AuthManager::streamingSessionRevoked, qApp,
+        &authManager, &AuthManager::sessionDestroyed, qApp,
         [&computerManager, &g_ActiveRelay, &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay,
-         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_Pool]() {
-            qInfo() << "[main] Streaming session revoked — tearing down active stream";
+         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_Pool, &authManager]() {
+            // Revocation is scoped by the session, even during a launch or standby handoff.
             bool relayStopped = false;
 
             // Worker-mode sessions: notify + teardown each slot's child. The
@@ -2587,12 +2588,18 @@ int main(int argc, char* argv[])
             // the streaming flag.
             for (int i = 0; i < g_Pool.size(); ++i) {
                 auto* w = g_Pool.workerAs<StreamWorkerHost>(i);
-                if (!w) continue;
+                if (!w || g_Pool.at(i).sessionToken.isEmpty() ||
+                    authManager.validateSession(g_Pool.at(i).sessionToken))
+                    continue;
                 qInfo() << "[main] Revoke teardown: stopping stream worker (uid="
                         << g_Pool.at(i).clientUniqueId << ")";
                 w->notifyRevoked();
                 relayStopped = true;
             }
+
+            if (g_Pool.at(0).worker || g_Pool.at(0).sessionToken.isEmpty() ||
+                authManager.validateSession(g_Pool.at(0).sessionToken))
+                return;
 
             if (g_ActiveRelay) {
                 DataChannelRelay* relay = g_ActiveRelay;
@@ -2647,6 +2654,8 @@ int main(int argc, char* argv[])
             }
             g_ActiveClientUniqueId.clear();
             g_ActiveHostUuid.clear();
+            g_Pool.at(0).sessionToken.clear();
+            g_Pool.at(0).hostUuid.clear();
         });
 
     InternetAccessManager internetAccess(&appSettings);
@@ -2909,6 +2918,7 @@ int main(int argc, char* argv[])
 
     registerHostRoutes(server, computerManager);
     installUserHostAccess(server, authManager, computerManager, g_Pool);
+    registerAdminUserRoutes(server, authManager, computerManager, g_Pool);
     registerHostAppRoutes(server, appSettings);
     // The game launchers installed on this PC get a card each, the first start
     // after an install or an update (as Sunshine's installer gives Steam one).
@@ -3532,13 +3542,15 @@ int main(int argc, char* argv[])
             QObject::connect(
                 s, &StreamSession::streamRelayCreated,
                 [&g_ActiveStreamRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                 &g_ActiveHostUuid, &computerManager, &authManager, sessionToken, host,
+                 &g_ActiveHostUuid, &g_Pool, &computerManager, &authManager, sessionToken, host,
                  quitUid](StreamRelay* r) {
                     qInfo() << "[main] streamRelayCreated, relay=" << r;
                     g_ActiveStreamRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
                     g_ActiveHostUuid = host->uuid;
+                    g_Pool.at(0).hostUuid = host->uuid;
+                    g_Pool.at(0).sessionToken = sessionToken;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp so the lambda runs on the main thread: the relay
@@ -3546,8 +3558,8 @@ int main(int argc, char* argv[])
                     // touches the shared QNAM that lives on the main thread.
                     QObject::connect(
                         r, &StreamRelay::sessionEnded, qApp,
-                        [r, &g_ActiveStreamRelay, &computerManager, &authManager, sessionToken,
-                         host, quitUid]() {
+                        [r, &g_ActiveStreamRelay, &g_Pool, &computerManager, &authManager,
+                         sessionToken, host, quitUid]() {
                             qInfo() << "[main] StreamRelay sessionEnded";
                             authManager.setSessionStreaming(sessionToken, false);
                             if (host->takesHostCancel()) {
@@ -3570,7 +3582,14 @@ int main(int argc, char* argv[])
                             if (r->mediaEngine()) r->mediaEngine()->stopConnection();
                             r->stop();
                             r->deleteLater();
-                            if (g_ActiveStreamRelay == r) g_ActiveStreamRelay = nullptr;
+                            if (g_ActiveStreamRelay == r) {
+                                g_ActiveStreamRelay = nullptr;
+                                if (!g_Pool.at(0).worker &&
+                                    g_Pool.at(0).sessionToken == sessionToken) {
+                                    g_Pool.at(0).sessionToken.clear();
+                                    g_Pool.at(0).hostUuid.clear();
+                                }
+                            }
                         });
                 });
 
@@ -3578,19 +3597,22 @@ int main(int argc, char* argv[])
             QObject::connect(
                 s, &StreamSession::relayCreated,
                 [&g_ActiveRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &g_ActiveHostUuid,
-                 &computerManager, &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
+                 &g_Pool, &computerManager, &authManager, sessionToken, host,
+                 quitUid](DataChannelRelay* r) {
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
                     g_ActiveHostUuid = host->uuid;
+                    g_Pool.at(0).hostUuid = host->uuid;
+                    g_Pool.at(0).sessionToken = sessionToken;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(
                         r, &DataChannelRelay::sessionEnded, qApp,
-                        [r, &g_ActiveRelay, &computerManager, &authManager, sessionToken, host,
-                         quitUid]() {
+                        [r, &g_ActiveRelay, &g_Pool, &computerManager, &authManager, sessionToken,
+                         host, quitUid]() {
                             qInfo() << "[main] sessionEnded fired, relay=" << r;
                             authManager.setSessionStreaming(sessionToken, false);
                             if (host->takesHostCancel()) {
@@ -3615,6 +3637,11 @@ int main(int argc, char* argv[])
                             r->deleteLater();
                             if (g_ActiveRelay == r) {
                                 g_ActiveRelay = nullptr;
+                                if (!g_Pool.at(0).worker &&
+                                    g_Pool.at(0).sessionToken == sessionToken) {
+                                    g_Pool.at(0).sessionToken.clear();
+                                    g_Pool.at(0).hostUuid.clear();
+                                }
                             }
                         });
                 });
@@ -3623,20 +3650,22 @@ int main(int argc, char* argv[])
             QObject::connect(
                 s, &StreamSession::mediaTrackRelayCreated,
                 [&g_ActiveMediaTrackRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                 &g_ActiveHostUuid, &computerManager, &authManager, sessionToken, host,
+                 &g_ActiveHostUuid, &g_Pool, &computerManager, &authManager, sessionToken, host,
                  quitUid](MediaTrackRelay* r) {
                     qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
                     g_ActiveMediaTrackRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
                     g_ActiveHostUuid = host->uuid;
+                    g_Pool.at(0).hostUuid = host->uuid;
+                    g_Pool.at(0).sessionToken = sessionToken;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(
                         r, &MediaTrackRelay::sessionEnded, qApp,
-                        [r, &g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken,
-                         host, quitUid]() {
+                        [r, &g_ActiveMediaTrackRelay, &g_Pool, &computerManager, &authManager,
+                         sessionToken, host, quitUid]() {
                             qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << r;
                             authManager.setSessionStreaming(sessionToken, false);
                             if (host->takesHostCancel()) {
@@ -3659,7 +3688,14 @@ int main(int argc, char* argv[])
                             if (r->mediaEngine()) r->mediaEngine()->stopConnection();
                             r->stop();
                             r->deleteLater();
-                            if (g_ActiveMediaTrackRelay == r) g_ActiveMediaTrackRelay = nullptr;
+                            if (g_ActiveMediaTrackRelay == r) {
+                                g_ActiveMediaTrackRelay = nullptr;
+                                if (!g_Pool.at(0).worker &&
+                                    g_Pool.at(0).sessionToken == sessionToken) {
+                                    g_Pool.at(0).sessionToken.clear();
+                                    g_Pool.at(0).hostUuid.clear();
+                                }
+                            }
                         });
                 });
         };
@@ -4270,7 +4306,12 @@ int main(int argc, char* argv[])
                                        NativeHostBackend::usesVirtualDisplay(appId);
             auto startWorker = [worker, respond, standby, reqSlot, appId, &g_Pool,
                                 &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken,
-                                virtualStream](QJsonObject cfg) {
+                                virtualStream, &authManager](QJsonObject cfg) {
+                if (!sessionToken.isEmpty() && !authManager.validateSession(sessionToken)) {
+                    worker->deleteLater();
+                    respond(HttpResponse::error(401, "Session revoked while starting the stream"));
+                    return;
+                }
                 // On our virtual display: the display it took the primary role
                 // from, which turning it on (below) has just recorded in this
                 // settings file — a SYSTEM worker does not read it.

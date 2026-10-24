@@ -382,3 +382,35 @@
 .admin-logs-status:empty {
     display: none;
 }
+
+/* Authentication and account forms share the administration page's controls. */
+#admin-section-login .settings-field,
+#admin-section-users .settings-field {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+}
+#admin-section-login .settings-field > label:first-child,
+#admin-section-users .settings-field > label:first-child {
+    flex-basis: 100%;
+}
+#admin-section-login code {
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+#admin-section-users .settings-select {
+    max-width: 100%;
+    min-width: 0;
+}
+#admin-section-users button,
+#admin-section-login button {
+    margin: var(--space-1) 0;
+}
+#admin-section-users [data-account-pin]:not(:empty) {
+    padding: var(--space-3);
+    color: var(--text-1);
+    font-family: var(--font-mono);
+    user-select: all;
+    background: var(--accent-soft);
+}

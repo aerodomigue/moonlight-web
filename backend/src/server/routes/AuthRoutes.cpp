@@ -392,6 +392,10 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             return HttpResponse::json(obj);
         }
 
+        if (req.userId != UserStore::localId() &&
+            !authManager.userAdministrator(authManager.users().get(req.userId)))
+            return HttpResponse::error(403, "Account is not an administrator");
+
         // The LAN's door by default: the password is a convenience for the
         // machines in the same house, and a front door on the internet only
         // when the owner opened that side, through the rendezvous or a trusted proxy.
@@ -560,6 +564,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             }
         }
 
+        obj["user_admin_enabled"] = true;
         obj["pin_enabled"] = authManager.config().pin;
         obj["sso_enabled"] = authManager.config().sso;
         obj["sso_origin"] = authManager.config().sso ? authManager.config().publicUrl : QString();
@@ -577,6 +582,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // button never appears where the unlock would be refused.
         obj["admin_unlock_available"] =
             !isLocal && !req.adminLocked && obj["authenticated"].toBool() &&
+            (req.userId == UserStore::localId() ||
+             authManager.userAdministrator(authManager.users().get(req.userId))) &&
             authManager.remoteAdminEnabled() && authManager.adminPasswordSet() &&
             AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
                                         authManager.remoteAdminInternet(), req.viaProxy);

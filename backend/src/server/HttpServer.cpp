@@ -16,6 +16,7 @@
  */
 
 #include "HttpServer.h"
+#include <QPointer>
 #include "HttpParser.h"
 #include "ProxyHeaders.h"
 #include "PortFallback.h"
@@ -1572,6 +1573,18 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
     // Target socket: connects to the local WebSocket server (signaling or stream relay).
     QTcpSocket* target = new QTcpSocket(this);
+    if (m_AuthManager && !playerSlot) {
+        const auto id = m_AuthManager->sessionIdForToken(sessionTokenFromRequest(up));
+        if (!id.isEmpty()) {
+            connect(m_AuthManager, &AuthManager::sessionDestroyed, clientSocket,
+                    [client = QPointer<QTcpSocket>(clientSocket),
+                     peer = QPointer<QTcpSocket>(target), id](const QString& revoked) {
+                        if (revoked != id) return;
+                        if (client) client->abort();
+                        if (peer) peer->abort();
+                    });
+        }
+    }
 
     // Guard flag: cleanup is called at most once, regardless of which signal
     // fires first (client disconnect, target disconnect, target error). A

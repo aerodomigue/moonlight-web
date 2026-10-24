@@ -49,6 +49,11 @@ OidcClient::OidcClient(AuthManager& auth, HttpServer& server)
                               [this](const HttpRequest& req, ResponseCallback respond) {
                                   callback(req, std::move(respond));
                               });
+    registerAdminRoutes();
+    connect(&auth, &AuthManager::authConfigChanged, this, [this]() {
+        m_pending.clear();
+        m_links.clear();
+    });
     auto timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &OidcClient::purge);
     timer->start(60000);
@@ -73,6 +78,12 @@ QString OidcClient::digest(const QString& value)
 void OidcClient::purge()
 {
     const qint64 now = QDateTime::currentSecsSinceEpoch();
+    for (auto it = m_links.begin(); it != m_links.end();) {
+        if (now - it->issued >= 300)
+            it = m_links.erase(it);
+        else
+            ++it;
+    }
     for (auto it = m_pending.begin(); it != m_pending.end();) {
         if (now - it->issued >= 300)
             it = m_pending.erase(it);
@@ -81,14 +92,13 @@ void OidcClient::purge()
     }
 }
 
-void OidcClient::requestJson(const QUrl& url, const QByteArray& body, const QByteArray& basic,
-                             bool post, JsonCallback callback)
+void OidcClient::requestJson(const AuthConfig& config, const QUrl& url, const QByteArray& body,
+                             const QByteArray& basic, bool post, JsonCallback callback)
 {
     QNetworkRequest request(url);
-    if (!m_auth.config().caFile.isEmpty()) {
+    if (!config.caFile.isEmpty()) {
         auto ssl = QSslConfiguration::defaultConfiguration();
-        ssl.setCaCertificates(ssl.caCertificates() +
-                              QSslCertificate::fromPath(m_auth.config().caFile));
+        ssl.setCaCertificates(ssl.caCertificates() + QSslCertificate::fromPath(config.caFile));
         request.setSslConfiguration(ssl);
     }
     request.setTransferTimeout(10000);
@@ -131,6 +141,16 @@ void OidcClient::prepare(const HttpRequest& req, ResponseCallback respond)
     }
     const auto body = QJsonDocument::fromJson(req.body).object();
     Pending pending;
+    pending.config = config;
+    pending.revision = m_auth.configRevision();
+    if (req.path.startsWith("/api/admin/")) {
+        if (!adminAllowed(req) || !m_auth.users().active(req.pathParams.value("id"))) {
+            respond(HttpResponse::error(403,
+                                        "Administrator access and an active account are required"));
+            return;
+        }
+        pending.targetUser = req.pathParams.value("id");
+    }
     pending.publicKey = QByteArray::fromBase64(body["public_key"].toString().toLatin1());
     if (!pending.publicKey.isEmpty() && !PairingCrypto::isValidP256Spki(pending.publicKey)) {
         respond(HttpResponse::error(400, "Invalid browser pairing key"));
@@ -150,11 +170,12 @@ void OidcClient::prepare(const HttpRequest& req, ResponseCallback respond)
     QString discovery = config.issuer;
     if (!discovery.endsWith('/')) discovery += '/';
     discovery += ".well-known/openid-configuration";
-    requestJson(QUrl(discovery), {}, {}, false,
+    requestJson(config, QUrl(discovery), {}, {}, false,
                 [this, state, cookie, respond](bool ok, const QJsonObject& metadata) {
                     const auto& c = m_auth.config();
                     auto it = m_pending.find(state);
-                    if (!ok || it == m_pending.end() || metadata["issuer"].toString() != c.issuer ||
+                    if (!ok || it == m_pending.end() || it->revision != m_auth.configRevision() ||
+                        metadata["issuer"].toString() != c.issuer ||
                         !httpsEndpoint(metadata["authorization_endpoint"].toString()) ||
                         !httpsEndpoint(metadata["token_endpoint"].toString()) ||
                         !httpsEndpoint(metadata["jwks_uri"].toString()) ||
@@ -172,6 +193,7 @@ void OidcClient::prepare(const HttpRequest& req, ResponseCallback respond)
                     query.addQueryItem("client_id", c.clientId);
                     query.addQueryItem("redirect_uri", c.callbackUrl());
                     query.addQueryItem("scope", "openid profile");
+                    if (!it->targetUser.isEmpty()) query.addQueryItem("prompt", "select_account");
                     query.addQueryItem("state", state);
                     query.addQueryItem("nonce", it->nonce);
                     query.addQueryItem("code_challenge", digest(it->verifier));
@@ -214,7 +236,11 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
         respond(redirect("/?auth_error=sso"));
         return;
     }
-    const auto& config = m_auth.config();
+    const auto config = pending.config;
+    if (pending.revision != m_auth.configRevision()) {
+        respond(redirect("/?auth_error=sso"));
+        return;
+    }
     QUrlQuery form;
     form.addQueryItem("grant_type", "authorization_code");
     form.addQueryItem("code", code);
@@ -239,29 +265,69 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
     }
     const QByteArray encoded = form.query(QUrl::FullyEncoded).toUtf8().replace("+", "%2B");
     requestJson(
-        QUrl(pending.metadata["token_endpoint"].toString()), encoded, basic, true,
+        config, QUrl(pending.metadata["token_endpoint"].toString()), encoded, basic, true,
         [this, pending, req, respond](bool ok, const QJsonObject& tokens) {
-            if (!ok || tokens["id_token"].toString().isEmpty()) {
+            if (pending.revision != m_auth.configRevision() || !ok ||
+                tokens["id_token"].toString().isEmpty()) {
                 respond(redirect("/?auth_error=sso"));
                 return;
             }
             const QByteArray jwt = tokens["id_token"].toString().toLatin1();
             requestJson(
-                QUrl(pending.metadata["jwks_uri"].toString()), {}, {}, false,
+                pending.config, QUrl(pending.metadata["jwks_uri"].toString()), {}, {}, false,
                 [this, pending, req, respond, jwt](bool keysOk, const QJsonObject& keys) {
                     const auto claims =
-                        keysOk ? OidcToken::verify(jwt, keys, m_auth.config(), pending.nonce,
-                                                   QDateTime::currentSecsSinceEpoch())
-                               : std::nullopt;
+                        keysOk && pending.revision == m_auth.configRevision()
+                            ? OidcToken::verify(jwt, keys, pending.config, pending.nonce,
+                                                QDateTime::currentSecsSinceEpoch())
+                            : std::nullopt;
                     if (!claims) {
                         respond(redirect("/?auth_error=sso"));
                         return;
                     }
                     try {
-                        const auto user = m_auth.users().upsert(
-                            m_auth.config().issuer, (*claims)["sub"].toString(),
+                        if (!pending.targetUser.isEmpty()) {
+                            if (!m_auth.users().active(pending.targetUser)) {
+                                respond(redirect("/admin?oidc_link=error"));
+                                return;
+                            }
+                            const auto existing = m_auth.users().findIdentity(
+                                pending.config.issuer, (*claims)["sub"].toString());
+                            if (!existing.id.isEmpty() && existing.id != pending.targetUser) {
+                                respond(redirect("/admin?oidc_link=conflict"));
+                                return;
+                            }
+                            purge();
+                            if (m_links.size() >= 256) {
+                                respond(redirect("/admin?oidc_link=error"));
+                                return;
+                            }
+                            const auto grant = random();
+                            m_links[grant] = {pending.targetUser,
+                                              pending.config.issuer,
+                                              (*claims)["sub"].toString(),
+                                              (*claims)["name"].toString(),
+                                              digest(pending.previousToken),
+                                              pending.config.signature(),
+                                              pending.revision,
+                                              QDateTime::currentSecsSinceEpoch()};
+                            auto response = redirect("/admin?oidc_link=ready");
+                            response.headers["Set-Cookie"] =
+                                "__Host-mw_oidc_link=" + grant +
+                                "; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=300";
+                            respond(response);
+                            return;
+                        }
+                        auto user = m_auth.users().upsert(
+                            pending.config.issuer, (*claims)["sub"].toString(),
                             (*claims)["name"].toString(
                                 (*claims)["preferred_username"].toString("User")));
+                        if (!m_auth.users().active(user.id)) {
+                            respond(redirect("/?auth_error=sso"));
+                            return;
+                        }
+                        user.verifiedConfig = pending.config.signature();
+                        m_auth.users().update(user);
                         const QString token =
                             m_auth.createSession(req.clientAddress, pending.machine, false,
                                                  !pending.remember, false, user.id, "sso");
@@ -287,4 +353,164 @@ void OidcClient::callback(const HttpRequest& req, ResponseCallback respond)
                     }
                 });
         });
+}
+
+bool OidcClient::adminAllowed(const HttpRequest& req) const
+{
+    if (!req.isLocal) return false;
+    const auto token = HttpServer::sessionTokenFromRequest(req);
+    if (token.isEmpty()) return req.isHostMachine;
+    return m_auth.isHostSession(token) || m_auth.isAdminSession(token) || m_auth.isSsoAdmin(token);
+}
+
+void OidcClient::testProvider(const AuthConfig& candidate, std::function<void(bool)> done)
+{
+    auto config = candidate;
+    config.sso = true;
+    if (!config.error().isEmpty()) {
+        done(false);
+        return;
+    }
+    auto discovery = config.issuer;
+    if (!discovery.endsWith('/')) discovery += '/';
+    requestJson(config, QUrl(discovery + ".well-known/openid-configuration"), {}, {}, false,
+                [this, config, done](bool ok, const QJsonObject& metadata) {
+                    if (!ok || metadata["issuer"].toString() != config.issuer ||
+                        !httpsEndpoint(metadata["authorization_endpoint"].toString()) ||
+                        !httpsEndpoint(metadata["token_endpoint"].toString()) ||
+                        !httpsEndpoint(metadata["jwks_uri"].toString()) ||
+                        !metadata["code_challenge_methods_supported"].toArray().contains(
+                            QStringLiteral("S256"))) {
+                        done(false);
+                        return;
+                    }
+                    requestJson(config, QUrl(metadata["jwks_uri"].toString()), {}, {}, false,
+                                [done](bool keysOk, const QJsonObject& keys) {
+                                    bool supported = false;
+                                    for (const auto& value : keys["keys"].toArray()) {
+                                        const auto k = value.toObject();
+                                        supported |=
+                                            (k["kty"] == "RSA" && !k["n"].toString().isEmpty() &&
+                                             !k["e"].toString().isEmpty()) ||
+                                            (k["kty"] == "EC" && k["crv"] == "P-256" &&
+                                             !k["x"].toString().isEmpty() &&
+                                             !k["y"].toString().isEmpty());
+                                    }
+                                    done(keysOk && supported);
+                                });
+                });
+}
+
+void OidcClient::registerAdminRoutes()
+{
+    m_server.router()->get("/api/admin/auth-config", [this](const HttpRequest& req) {
+        if (!adminAllowed(req)) return HttpResponse::error(403, "Administrator access required");
+        auto o = m_auth.config().json();
+        o["sso_only_ready"] = m_auth.verifiedSsoAdministrator(m_auth.config());
+        return HttpResponse::json(o);
+    });
+    m_server.router()->postAsync(
+        "/api/admin/auth-config/test", [this](const HttpRequest& req, ResponseCallback respond) {
+            if (!adminAllowed(req)) {
+                respond(HttpResponse::error(403, "Administrator access required"));
+                return;
+            }
+            try {
+                auto config =
+                    AuthConfig::edited(m_auth.config(), QJsonDocument::fromJson(req.body).object());
+                testProvider(config, [respond](bool ok) {
+                    respond(HttpResponse::json({{"ok", ok}, {"secret_verified", false}},
+                                               ok ? 200 : 502));
+                });
+            } catch (const std::exception& e) {
+                respond(HttpResponse::error(400, e.what()));
+            }
+        });
+    m_server.router()->postAsync(
+        "/api/admin/auth-config", [this](const HttpRequest& req, ResponseCallback respond) {
+            if (!adminAllowed(req)) {
+                respond(HttpResponse::error(403, "Administrator access required"));
+                return;
+            }
+            try {
+                const auto config =
+                    AuthConfig::edited(m_auth.config(), QJsonDocument::fromJson(req.body).object());
+                const auto revision = m_auth.configRevision();
+                auto apply = [this, config, req, respond, revision](bool ok) {
+                    if (!ok) {
+                        respond(HttpResponse::error(
+                            502, "OIDC discovery, TLS or signing keys could not be verified"));
+                        return;
+                    }
+                    if (revision != m_auth.configRevision() || !adminAllowed(req)) {
+                        respond(HttpResponse::error(
+                            409, "Authentication configuration changed; reload before saving"));
+                        return;
+                    }
+                    try {
+                        m_auth.applyConfig(config);
+                        auto o = config.json();
+                        o["sso_only_ready"] = m_auth.verifiedSsoAdministrator(config);
+                        respond(HttpResponse::json(o));
+                    } catch (const std::exception& e) {
+                        respond(HttpResponse::error(400, e.what()));
+                    }
+                };
+                if (config.sso)
+                    testProvider(config, apply);
+                else
+                    apply(true);
+            } catch (const std::exception& e) {
+                respond(HttpResponse::error(400, e.what()));
+            }
+        });
+    m_server.router()->postAsync("/api/admin/users/:id/sso/prepare",
+                                 [this](const HttpRequest& req, ResponseCallback respond) {
+                                     prepare(req, std::move(respond));
+                                 });
+    auto grantFor = [this](const HttpRequest& req) -> QString {
+        purge();
+        if (!adminAllowed(req)) return {};
+        const auto cookie = HttpServer::cookieFromRequest(req, "__Host-mw_oidc_link");
+        auto it = m_links.constFind(cookie);
+        if (it == m_links.cend() || it->revision != m_auth.configRevision() ||
+            it->adminToken != digest(HttpServer::sessionTokenFromRequest(req)))
+            return {};
+        return cookie;
+    };
+    m_server.router()->get("/api/admin/users/sso/pending",
+                           [this, grantFor](const HttpRequest& req) {
+                               if (!adminAllowed(req))
+                                   return HttpResponse::error(403, "Administrator access required");
+                               const auto key = grantFor(req);
+                               if (key.isEmpty()) return HttpResponse::json({{"pending", false}});
+                               const auto grant = m_links.value(key);
+                               return HttpResponse::json({{"pending", true},
+                                                          {"user_id", grant.user},
+                                                          {"issuer", grant.issuer},
+                                                          {"subject", grant.subject},
+                                                          {"name", grant.name}});
+                           });
+    m_server.router()->post("/api/admin/users/:id/sso/confirm", [this,
+                                                                 grantFor](const HttpRequest& req) {
+        const auto key = grantFor(req);
+        if (key.isEmpty())
+            return HttpResponse::error(403, "Verified identity or administrator session missing");
+        const auto grant = m_links.take(key);
+        if (grant.user != req.pathParams.value("id") || !m_auth.users().active(grant.user))
+            return HttpResponse::error(409, "Account changed during SSO verification");
+        const auto user = m_auth.users().get(grant.user);
+        if (!user.issuer.isEmpty() &&
+            (user.issuer != grant.issuer || user.subject != grant.subject))
+            return HttpResponse::error(409, "Account already has a different SSO identity");
+        try {
+            m_auth.users().bind(grant.user, grant.issuer, grant.subject, grant.signature);
+            auto response = HttpResponse::json({{"status", "ok"}});
+            response.headers["Set-Cookie"] =
+                "__Host-mw_oidc_link=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
+            return response;
+        } catch (const std::exception&) {
+            return HttpResponse::error(409, "OIDC identity is already assigned");
+        }
+    });
 }

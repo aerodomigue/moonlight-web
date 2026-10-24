@@ -111,7 +111,7 @@ public:
     /// @param settings Optional AppSettings for HMAC key persistence.
     ///                 If null, a random HMAC key is generated each time.
     explicit AuthManager(AppSettings* settings = nullptr, QObject* parent = nullptr,
-                         AuthConfig config = AuthConfig::fromEnvironment());
+                         AuthConfig config = AuthConfig::forApplication());
     ~AuthManager() override = default;
 
     // ── PIN management ─────────────────────────────────────────────────────
@@ -143,7 +143,13 @@ public:
     const AuthConfig& config() const { return m_config; }
     UserStore& users() { return m_users; }
     const UserStore& users() const { return m_users; }
+    // Historical name: account roles also apply to local PIN sessions.
     bool isSsoAdmin(const QString& token) const;
+    bool userAdministrator(const UserAccount& user) const;
+    bool verifiedSsoAdministrator(const AuthConfig& config) const;
+    void applyConfig(const AuthConfig& config);
+    quint64 configRevision() const { return m_configRevision; }
+    void revokeUserSessions(const QString& userId);
 
     // ── Remote admin password ──────────────────────────────────────────────
     // Second door into admin access, for a LAN machine that is not the host.
@@ -428,7 +434,7 @@ public:
 
     // ── Session persistence ───────────────────────────────────────────────────
     /** Save active sessions to disk (app data directory). */
-    void saveSessions();
+    bool saveSessions();
     /** Load active sessions from disk, discarding expired (>24h). */
     void loadSessions();
 
@@ -440,12 +446,12 @@ signals:
     void pinChanged(const QString& newPin);
     void sessionCreated(const QString& ip, const QString& machineName);
     void sessionDestroyed(const QString& token);
-    /** Emitted when a destroyed session was actively streaming. The stream
-     *  lifecycle owner (main.cpp) must tear the live relay down so a revoked
-     *  device stops receiving the stream immediately. */
+    /** Compatibility notification for streaming state. Stream teardown and
+     *  socket closure use sessionDestroyed, including during a pending launch. */
     void streamingSessionRevoked();
     /** Emitted when session list changes (created or destroyed) */
     void sessionsChanged();
+    void authConfigChanged();
 
 private:
     struct RateLimitEntry
@@ -456,6 +462,7 @@ private:
     };
 
     AuthConfig m_config;
+    quint64 m_configRevision = 0;
     UserStore m_users;
     QHash<QString, QString> m_userPins;
     QHash<QString, qint64> m_userPinExpiry;

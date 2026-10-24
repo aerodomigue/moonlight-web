@@ -116,6 +116,10 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 gate.wait(timeout=10)
             self.reply(b'<root status_code="200"><cancel>1</cancel></root>', content_type="application/xml")
         elif self.path.startswith("/serverinfo"):
+            gate = getattr(self.server, "info_gate", None)
+            if gate is not None:
+                self.server.info_entered.set()
+                gate.wait(timeout=10)
             self.server.fetch_marker = self.headers.get("X-MW-Internal-Fetch")
             xml = ('<root status_code="200"><hostname>Fixture PC</hostname>'
                    '<uniqueid>fixture-physical-pc</uniqueid><appversion>7.1.431.0</appversion>'
@@ -141,6 +145,10 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 or b64(hashlib.sha256(form.get("code_verifier", [""])[0].encode()).digest()) != grant["challenge"]):
             self.reply({"error": "invalid_grant"}, 400)
             return
+        gate = getattr(self.server, "token_gate", None)
+        if gate is not None:
+            self.server.token_entered.set()
+            gate.wait(timeout=10)
         claims = {
             "iss": self.server.issuer, "sub": grant["subject"], "name": grant["subject"],
             "aud": "fixture-client", "nonce": grant["nonce"],
@@ -265,8 +273,8 @@ class OidcIsolation(unittest.TestCase):
             time.sleep(0.1)
         self.fail("Isolated server did not become healthy")
 
-    def prepare(self, browser, subject="alice-sub", claims=None, remember=True):
-        status, body, _ = browser.request("/api/auth/oidc/prepare", {"remember": remember})
+    def prepare(self, browser, subject="alice-sub", claims=None, remember=True, path="/api/auth/oidc/prepare", headers=None):
+        status, body, _ = browser.request(path, {"remember": remember}, extra_headers=headers)
         self.assertEqual(status, 200, "Local HTTPS issuer discovery failed")
         params = urllib.parse.parse_qs(urllib.parse.urlparse(body["authorization_url"]).query)
         self.assertEqual(params["code_challenge_method"], ["S256"])
@@ -386,6 +394,266 @@ class OidcIsolation(unittest.TestCase):
         self.assertFalse(status["authenticated"])
         self.assertFalse(status["is_localhost"])
 
+    def administrator(self):
+        browser = Browser(self.base)
+        self.login(browser, "admin-subject")
+        key = browser.request("/api/admin/token")[1]["token"]
+        return browser, {"X-MW-Admin-Key": key}
+
+    def test_admin_accounts_roles_and_machine_reassignment(self):
+        self.start()
+        admin, headers = self.administrator()
+        make = lambda name, role="user": admin.request("/api/admin/users", {"name": name, "role": role}, extra_headers=headers)[1]["user"]
+        alice = make("Local Alice")
+        bob = make("Local Bob")
+        root = make("Local administrator", "admin")
+        self.assertTrue(alice["id"].startswith("local-"))
+        self.assertEqual(admin.request("/api/admin/users", {"name": "No CSRF"})[0], 403)
+        path = "/api/admin/users/" + alice["id"]
+        code, body, _ = admin.request(path + "/pin", {}, extra_headers=headers)
+        self.assertEqual(code, 200)
+        self.assertEqual(body["expires_in"], 300)
+        visitor = Browser(self.base)
+        self.assertEqual(visitor.request("/api/auth/validate", {"pin": body["pin"], "remember": True})[0], 200)
+        self.assertEqual(visitor.request("/api/auth/status")[1]["user"]["id"], alice["id"])
+        self.assertEqual(visitor.request("/api/admin/users")[0], 403)
+        self.assertEqual(visitor.request("/api/admin/auth-config")[0], 403)
+        self.assertEqual(visitor.request("/api/auth/admin-unlock", {"password": "irrelevant"})[0], 403)
+        self.assertEqual(visitor.request("/api/admin/users", {"name": "Privilege escalation"})[0], 403)
+        self.assertEqual(visitor.request(path, method="DELETE")[0], 403)
+        address = "127.0.0.1:" + str(self.pc.server_port)
+        source = visitor.request("/api/hosts/manual", {"address": address})[1]["hosts"][0]["uuid"]
+        self.assertEqual(admin.request(path + "/hosts")[1]["hosts"][0]["uuid"], source)
+        self.assertEqual(visitor.request("/api/hosts/" + source + "/pair/start", {})[0], 200)
+        for _ in range(100):
+            code, body, _ = admin.request("/api/admin/hosts/" + source + "/duplicate", {"user_id": bob["id"]}, extra_headers=headers)
+            if code != 409:
+                break
+            time.sleep(.03)
+        self.assertEqual(code, 200)
+        copied = body["host"]["uuid"]
+        self.assertNotEqual(source, copied)
+        self.assertEqual(admin.request("/api/admin/hosts/" + source + "/duplicate", {"user_id": bob["id"]}, extra_headers=headers)[0], 409)
+        self.assertEqual(visitor.request("/api/hosts/" + copied, method="DELETE")[0], 404)
+        code, body, _ = admin.request("/api/admin/hosts/" + source + "/transfer", {"user_id": root["id"]}, extra_headers=headers)
+        self.assertEqual(code, 200)
+        moved = body["host"]["uuid"]
+        self.assertEqual(visitor.request("/api/hosts")[1]["hosts"], [])
+        self.assertEqual(visitor.request("/api/hosts/" + moved + "/apps")[0], 404)
+        self.assertEqual(len(admin.request("/api/admin/users/" + bob["id"] + "/hosts")[1]["hosts"]), 1)
+        # Both copies keep the same seat identity, including across a transfer.
+        import configparser
+        ini = configparser.ConfigParser(interpolation=None)
+        ini.optionxform = str
+        config = self.state / "config/MoonlightWeb/MoonlightWeb.conf"
+        ini.read(config)
+        entries = {}
+        for section in ini.sections():
+            for key, value in ini[section].items():
+                if key.endswith("\\uuid"):
+                    prefix = key[:-4]
+                    entries[value] = ini[section].get(prefix + "identitySeat", "")
+        self.assertEqual(entries[copied], entries[moved])
+        self.assertEqual(entries[copied], source)
+        self.assertEqual(admin.request("/api/admin/hosts/" + moved, method="DELETE", extra_headers=headers)[0], 200)
+        self.assertEqual(len(admin.request("/api/admin/users/" + bob["id"] + "/hosts")[1]["hosts"]), 1)
+        # A local administrator obtains the same role through PIN.
+        pin = admin.request("/api/admin/users/" + root["id"] + "/pin", {}, extra_headers=headers)[1]["pin"]
+        local_admin = Browser(self.base)
+        self.assertEqual(local_admin.request("/api/auth/validate", {"pin": pin})[0], 200)
+        self.assertTrue(local_admin.request("/api/admin/token")[1]["token"])
+        self.assertTrue(local_admin.request("/api/auth/status")[1]["is_localhost"])
+        self.assertEqual(admin.request(path, {"enabled": False}, extra_headers=headers)[0], 200)
+        self.assertFalse(visitor.request("/api/auth/status")[1]["authenticated"])
+        self.assertEqual(admin.request(path + "/pin", {}, extra_headers=headers)[0], 409)
+        self.assertEqual(admin.request("/api/admin/users/local-owner", {"enabled": False}, extra_headers=headers)[0], 403)
+        self.assertEqual(admin.request("/api/admin/users/local-owner", method="DELETE", extra_headers=headers)[0], 403)
+        self.assertEqual(admin.request("/api/admin/users/" + bob["id"], method="DELETE", extra_headers=headers)[0], 200)
+        self.assertEqual(admin.request("/api/admin/users/" + bob["id"] + "/hosts")[0], 404)
+        self.assertEqual(local_admin.request("/api/admin/users")[0], 200)
+        self.start()
+        local_admin.base = self.base
+        self.assertTrue(local_admin.request("/api/auth/status")[1]["is_localhost"])
+
+    def test_admin_auth_configuration_runtime_and_persistence(self):
+        browser = self.start()
+        self.login(browser)
+        admin, headers = self.administrator()
+        config = admin.request("/api/admin/auth-config")[1]
+        self.assertTrue(config["secret_configured"])
+        self.assertNotIn("client_secret", config)
+        self.assertEqual(admin.request("/api/admin/auth-config", {"pin": False, "sso": False}, extra_headers=headers)[0], 400)
+        self.assertEqual(admin.request("/api/admin/auth-config/test", {}, extra_headers=headers)[0], 200)
+        self.assertEqual(admin.request("/api/admin/auth-config/test", {"issuer": "http://not-https.invalid"}, extra_headers=headers)[0], 400)
+        prepare = self.prepare(browser)
+        self.assertEqual(admin.request("/api/admin/auth-config", {"client_secret": ""}, extra_headers=headers)[0], 200)
+        self.assertEqual(browser.request(prepare, cross_site=True)[2]["Location"], "/?auth_error=sso")
+        # Successful SSO of an administrator permits SSO-only without a restart.
+        self.login(admin, "admin-subject")
+        self.assertEqual(admin.request("/api/admin/auth-config", {"pin": False}, extra_headers=headers)[0], 200)
+        self.assertFalse(browser.request("/api/auth/status")[1]["pin_enabled"])
+        admin_id = admin.request("/api/auth/status")[1]["user"]["id"]
+        operator_headers = {**headers, "Host": "localhost"}
+        self.assertEqual(admin.request("/api/admin/users/" + admin_id, {"enabled": False}, local=True, extra_headers=operator_headers)[0], 409)
+        self.assertEqual(admin.request("/api/admin/auth-config", {"pin": True}, extra_headers=headers)[0], 200)
+        local = admin.request("/api/admin/users", {"name": "Remembered local account"}, extra_headers=headers)[1]["user"]
+        pin = admin.request("/api/admin/users/" + local["id"] + "/pin", {}, extra_headers=headers)[1]["pin"]
+        pin_browser = Browser(self.base)
+        self.assertEqual(pin_browser.request("/api/auth/validate", {"pin": pin})[0], 200)
+        self.assertEqual(admin.request("/api/admin/auth-config", {"pin": True, "sso": False}, extra_headers=headers)[0], 200)
+        self.assertFalse(browser.request("/api/auth/status")[1]["sso_enabled"])
+        self.assertFalse(admin.request("/api/auth/status")[1]["authenticated"])
+        self.assertTrue(pin_browser.request("/api/auth/status")[1]["authenticated"])
+        managed = self.state / "data/MoonlightWeb/MoonlightWeb/auth-config.json"
+        self.assertEqual(managed.stat().st_mode & 0o777, 0o600)
+        self.start("pin,sso")  # Saved configuration wins over conflicting environment bootstrap.
+        pin_browser.base = self.base
+        status = pin_browser.request("/api/auth/status")[1]
+        self.assertFalse(status["sso_enabled"])
+        self.assertTrue(status["authenticated"])
+
+    def test_explicit_sso_linking_preserves_the_local_account(self):
+        self.start()
+        admin, headers = self.administrator()
+        user = admin.request("/api/admin/users", {"name": "Linked local"}, extra_headers=headers)[1]["user"]
+        path = "/api/admin/users/" + user["id"]
+        pin = admin.request(path + "/pin", {}, extra_headers=headers)[1]["pin"]
+        local = Browser(self.base)
+        self.assertEqual(local.request("/api/auth/validate", {"pin": pin})[0], 200)
+        pc = local.request("/api/hosts/manual", {"address": "127.0.0.1:" + str(self.pc.server_port)})[1]["hosts"][0]["uuid"]
+        original_cookie = next(c.value for c in admin.cookies if c.name == "__Host-mw_session")
+        callback = self.prepare(admin, "linked-local-sub", path=path + "/sso/prepare", headers=headers)
+        self.assertEqual(admin.request(callback, cross_site=True)[2]["Location"], "/admin?oidc_link=ready")
+        self.assertEqual(next(c.value for c in admin.cookies if c.name == "__Host-mw_session"), original_cookie)
+        pending = admin.request("/api/admin/users/sso/pending")[1]
+        self.assertEqual(pending["user_id"], user["id"])
+        self.assertEqual(pending["subject"], "linked-local-sub")
+        self.assertEqual(admin.request(path + "/sso/confirm", {})[0], 403)
+        self.assertEqual(admin.request(path + "/sso/confirm", {}, extra_headers=headers)[0], 200)
+        self.assertEqual(admin.request(path + "/sso/confirm", {}, extra_headers=headers)[0], 403)
+        sso = Browser(self.base)
+        self.assertEqual(self.login(sso, "linked-local-sub")["user"]["id"], user["id"])
+        self.assertEqual(sso.request("/api/hosts")[1]["hosts"][0]["uuid"], pc)
+        self.assertEqual(local.request("/api/auth/status")[1]["user"]["id"], user["id"])
+        other = admin.request("/api/admin/users", {"name": "Other local"}, extra_headers=headers)[1]["user"]
+        callback = self.prepare(admin, "linked-local-sub", path="/api/admin/users/" + other["id"] + "/sso/prepare", headers=headers)
+        self.assertEqual(admin.request(callback, cross_site=True)[2]["Location"], "/admin?oidc_link=conflict")
+        self.assertEqual(admin.request(path, {"enabled": False}, extra_headers=headers)[0], 200)
+        self.assertFalse(sso.request("/api/auth/status")[1]["authenticated"])
+        self.assertFalse(local.request("/api/auth/status")[1]["authenticated"])
+        callback = self.prepare(sso, "linked-local-sub")
+        self.assertEqual(sso.request(callback, cross_site=True)[2]["Location"], "/?auth_error=sso")
+        rows = admin.request("/api/admin/users")[1]["users"]
+        row = next(u for u in rows if u["id"] == user["id"])
+        self.assertFalse(row["enabled"])
+        self.assertEqual(row["name"], "Linked local")
+
+    def test_interrupted_account_deletion_resumes_without_affecting_copies(self):
+        self.start()
+        admin, headers = self.administrator()
+        alice = Browser(self.base)
+        user_id = self.login(alice)["user"]["id"]
+        source = alice.request("/api/hosts/manual", {"address": "127.0.0.1:" + str(self.pc.server_port)})[1]["hosts"][0]["uuid"]
+        bob = admin.request("/api/admin/users", {"name": "Surviving copy"}, extra_headers=headers)[1]["user"]
+        self.assertEqual(admin.request("/api/admin/hosts/" + source + "/duplicate", {"user_id": bob["id"]}, extra_headers=headers)[0], 200)
+        self.stop()
+        users_file = self.state / "data/MoonlightWeb/MoonlightWeb/users.json"
+        data = json.loads(users_file.read_text())
+        for user in data["users"]:
+            if user["id"] == user_id:
+                user.update({"enabled": False, "deleting": True})
+        users_file.write_text(json.dumps(data))
+        self.start()
+        admin.base = alice.base = self.base
+        self.assertFalse(alice.request("/api/auth/status")[1]["authenticated"])
+        rows = admin.request("/api/admin/users")[1]["users"]
+        self.assertNotIn(user_id, [u["id"] for u in rows])
+        self.assertEqual(len(admin.request("/api/admin/users/" + bob["id"] + "/hosts")[1]["hosts"]), 1)
+        self.assertEqual(admin.request("/api/admin/users/" + user_id + "/hosts")[0], 404)
+
+    def test_deleted_account_cannot_complete_an_inflight_machine_add(self):
+        self.start()
+        admin, headers = self.administrator()
+        user = admin.request("/api/admin/users", {"name": "Pending add"}, extra_headers=headers)[1]["user"]
+        path = "/api/admin/users/" + user["id"]
+        pin = admin.request(path + "/pin", {}, extra_headers=headers)[1]["pin"]
+        browser = Browser(self.base)
+        self.assertEqual(browser.request("/api/auth/validate", {"pin": pin})[0], 200)
+        self.pc.info_gate = threading.Event()
+        self.pc.info_entered = threading.Event()
+        results = []
+        thread = threading.Thread(target=lambda: results.append(browser.request("/api/hosts/manual", {"address": "127.0.0.1:" + str(self.pc.server_port)})[0]))
+        thread.start()
+        try:
+            self.assertTrue(self.pc.info_entered.wait(timeout=3))
+            self.assertEqual(admin.request(path, method="DELETE", extra_headers=headers)[0], 200)
+        finally:
+            self.pc.info_gate.set()
+            thread.join(timeout=10)
+            del self.pc.info_gate
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results, [409])
+        self.assertEqual(admin.request(path + "/hosts")[0], 404)
+        self.assertFalse(browser.request("/api/auth/status")[1]["authenticated"])
+
+    def test_oidc_callback_is_rejected_after_configuration_changes_mid_exchange(self):
+        alice = self.start()
+        admin, headers = self.administrator()
+        callback = self.prepare(alice, "stale-identity")
+        self.issuer_server.token_gate = threading.Event()
+        self.issuer_server.token_entered = threading.Event()
+        replies = []
+        thread = threading.Thread(target=lambda: replies.append(alice.request(callback, cross_site=True)))
+        thread.start()
+        try:
+            self.assertTrue(self.issuer_server.token_entered.wait(timeout=3))
+            self.assertEqual(admin.request("/api/admin/auth-config", {"sso": False, "pin": True}, extra_headers=headers)[0], 200)
+        finally:
+            self.issuer_server.token_gate.set()
+            thread.join(timeout=10)
+            del self.issuer_server.token_gate
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(replies[0][2]["Location"], "/?auth_error=sso")
+        self.assertFalse(alice.request("/api/auth/status")[1]["authenticated"])
+        self.assertFalse(any(c.name == "__Host-mw_session" for c in alice.cookies))
+
+    def test_revoking_one_administrator_closes_only_its_websocket(self):
+        self.start()
+        admin, headers = self.administrator()
+        user = admin.request("/api/admin/users", {"name": "Other administrator", "role": "admin"}, extra_headers=headers)[1]["user"]
+        path = "/api/admin/users/" + user["id"]
+        pin = admin.request(path + "/pin", {}, extra_headers=headers)[1]["pin"]
+        other = Browser(self.base)
+        self.assertEqual(other.request("/api/auth/validate", {"pin": pin})[0], 200)
+        def websocket(browser):
+            port = int(self.base.rsplit(":", 1)[1])
+            conn = ssl._create_unverified_context().wrap_socket(socket.create_connection(("127.0.0.1", port), timeout=3), server_hostname="127.0.0.1")
+            cookie = next(c.value for c in browser.cookies if c.name == "__Host-mw_session")
+            headers = {"Host": "127.0.0.1:" + str(port), "Origin": self.base, "Upgrade": "websocket", "Connection": "Upgrade", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": base64.b64encode(secrets.token_bytes(16)).decode(), "Cookie": "__Host-mw_session=" + cookie, "X-Forwarded-For": "203.0.113.20", "X-Forwarded-Proto": "https"}
+            request = "GET /ws/control HTTP/1.1\r\n" + "".join(k + ": " + v + "\r\n" for k, v in headers.items()) + "\r\n"
+            conn.sendall(request.encode())
+            response = b""
+            while b"\r\n\r\n" not in response:
+                response += conn.recv(4096)
+            self.assertTrue(response.startswith(b"HTTP/1.1 101"))
+            return conn
+        first, second = websocket(admin), websocket(other)
+        try:
+            self.assertEqual(admin.request(path, {"enabled": False}, extra_headers=headers)[0], 200)
+            second.settimeout(3)
+            while second.recv(4096):
+                pass
+            self.assertTrue(admin.request("/api/auth/status")[1]["authenticated"])
+            first.sendall(b"\x89\x80" + secrets.token_bytes(4))
+            first.settimeout(2)
+            try:
+                self.assertNotEqual(first.recv(4096), b"")
+            except socket.timeout:
+                pass
+        finally:
+            first.close()
+            second.close()
+
     def test_state_cookie_replay_and_invalid_token(self):
         alice = self.start()
         callback = self.prepare(alice)
@@ -429,6 +697,8 @@ class OidcIsolation(unittest.TestCase):
         address = "127.0.0.1:" + str(self.pc.server_port)
         alice_pc = alice.request("/api/hosts/manual", {"address": address})[1]["hosts"][0]["uuid"]
         bob_pc = bob.request("/api/hosts/manual", {"address": address})[1]["hosts"][0]["uuid"]
+        admin, headers = self.administrator()
+        alice_user = alice.request("/api/auth/status")[1]["user"]["id"]
         self.issuer_server.cancel_gate = threading.Event()
         self.issuer_server.cancel_entered = threading.Event()
         try:
@@ -437,6 +707,10 @@ class OidcIsolation(unittest.TestCase):
                 self.assertTrue(self.issuer_server.cancel_entered.wait(timeout=5))
                 self.assertEqual(bob.request("/api/hosts/" + bob_pc + "/start", {"appId": 1})[0], 409)
                 self.assertEqual(alice.request("/api/hosts/" + alice_pc, method="DELETE")[0], 409)
+                for operation in ("transfer", "duplicate"):
+                    self.assertEqual(admin.request("/api/admin/hosts/" + alice_pc + "/" + operation, {"user_id": "local-owner"}, extra_headers=headers)[0], 409)
+                self.assertEqual(admin.request("/api/admin/hosts/" + alice_pc, method="DELETE", extra_headers=headers)[0], 409)
+                self.assertEqual(admin.request("/api/admin/users/" + alice_user, method="DELETE", extra_headers=headers)[0], 409)
                 self.issuer_server.cancel_gate.set()
                 self.assertEqual(stopped.result(timeout=10)[0], 200)
             # The async callback must release its lease rather than leak a cycle.

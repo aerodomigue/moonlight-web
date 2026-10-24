@@ -2,8 +2,10 @@
 
 #include <QString>
 #include <QStringList>
+#include <QJsonObject>
 
-// Read once at startup. Authentication never trusts identity headers from a proxy.
+// Persisted configuration overrides environment bootstrap settings. Authentication never trusts
+// identity headers from a proxy.
 struct AuthConfig
 {
     bool pin = true;
@@ -16,6 +18,12 @@ struct AuthConfig
     QStringList adminSubjects;
 
     static AuthConfig fromEnvironment();
+    static AuthConfig forApplication();
+    static AuthConfig load(const QString& path, const AuthConfig& bootstrap);
+    static AuthConfig edited(const AuthConfig& current, const QJsonObject& json);
+    void save(const QString& path) const;
+    QJsonObject json(bool includeSecret = false) const;
+    QString signature() const;
     QString error() const;
     QString callbackUrl() const { return publicUrl + QStringLiteral("/api/auth/oidc/callback"); }
     bool administrator(const QString& subject) const { return adminSubjects.contains(subject); }
