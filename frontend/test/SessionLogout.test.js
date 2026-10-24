@@ -33,6 +33,7 @@ vi.mock('../js/i18n/i18n.js', () => ({
 import { LoginView } from '../js/ui/LoginView.js';
 import { SettingsView } from '../js/ui/SettingsView.js';
 import { BackendClient } from '../js/api/BackendClient.js';
+import { Toast } from '../js/ui/Toast.js';
 
 describe('LoginView "remember me"', () => {
     let view;
@@ -216,14 +217,17 @@ describe('SettingsView log out', () => {
         expect(replace).toHaveBeenCalledWith('/');
     });
 
-    it('reloads even when the logout call fails, so a stale cookie cannot strand the user', async () => {
+    it('keeps the page and allows retry when durable logout fails', async () => {
         build(true);
         vi.stubGlobal(
             'confirm',
             vi.fn(() => true),
         );
-        BackendClient.logout.mockRejectedValueOnce(new Error('gone'));
-        await view._logout(container.querySelector('#btn-settings-logout'));
-        expect(replace).toHaveBeenCalledWith('/');
+        BackendClient.logout.mockRejectedValueOnce(new Error('Storage unavailable'));
+        const button = container.querySelector('#btn-settings-logout');
+        await view._logout(button);
+        expect(replace).not.toHaveBeenCalled();
+        expect(button.disabled).toBe(false);
+        expect(Toast.error).toHaveBeenCalledWith('Storage unavailable');
     });
 });
