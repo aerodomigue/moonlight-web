@@ -15,17 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-/**
- * ConfirmDialog — an "are you sure?" that a TV browser does not swallow.
- *
- * TV Bro blocks window.confirm(): no dialog shows, a "Popup dialog blocked"
- * notice does, and confirm() answers false within a few milliseconds
- * (measured 01/10/2026). Quitting a running app, stopping a session or
- * logging out could then never be done from a TV. On a TV (RemoteNav) the
- * question is asked in a dialog of the page's own, Cancel focused — the
- * remote's OK must not end anything by accident; everywhere else it is still
- * the browser's own confirm, unchanged.
- */
+/** Page-owned confirmation for TV browsers and actions opting into the app UI.
+ * Destructive actions start with Cancel focused and restore the caller's focus. */
 
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
@@ -33,30 +24,53 @@ import * as RemoteNav from './RemoteNav.js';
 
 /**
  * @param {string} message
- * @param {{ confirmLabel?: string, danger?: boolean }} [opts]
+ * @param {{ confirmLabel?: string, danger?: boolean, inApp?: boolean, title?: string }} [opts]
  * @returns {Promise<boolean>} whether the user confirmed
  */
 export function confirmAction(message, opts = {}) {
-    if (!RemoteNav.isActive()) return Promise.resolve(window.confirm(message));
+    if (document.querySelector('.mw-confirm-overlay')) return Promise.resolve(false);
+    if (!opts.inApp && !RemoteNav.isActive()) return Promise.resolve(window.confirm(message));
     return new Promise((resolve) => {
+        const previousFocus = document.activeElement;
         const el = document.createElement('div');
         el.className = 'share-popin-overlay mw-confirm-overlay';
         const label = escapeHtml(opts.confirmLabel || t('common.confirm'));
         el.innerHTML = `
-            <div class="share-popin" role="alertdialog" aria-modal="true">
-                <p>${escapeHtml(message)}</p>
+            <div class="share-popin" role="alertdialog" aria-modal="true" aria-labelledby="mw-confirm-title" aria-describedby="mw-confirm-message">
+                <h3 id="mw-confirm-title">${escapeHtml(opts.title || t('common.confirm'))}</h3>
+                <p id="mw-confirm-message">${escapeHtml(message)}</p>
                 <div class="share-popin-actions">
                     <button type="button" class="btn btn-secondary" data-answer="no" data-nav-initial>${escapeHtml(t('common.cancel'))}</button>
                     <button type="button" class="btn${opts.danger ? ' btn-danger' : ''}" data-answer="yes">${label}</button>
                 </div>
             </div>
         `;
+        const cancel = /** @type {HTMLButtonElement} */ (el.querySelector('[data-answer="no"]'));
+        const confirm = /** @type {HTMLButtonElement} */ (el.querySelector('[data-answer="yes"]'));
+        let settled = false;
         const done = (answer) => {
+            if (settled) return;
+            settled = true;
             document.removeEventListener('keydown', onKey, true);
             el.remove();
+            if (previousFocus instanceof HTMLElement && previousFocus.isConnected)
+                previousFocus.focus();
             resolve(answer);
         };
         const onKey = (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                e.stopPropagation();
+                const next = e.shiftKey
+                    ? document.activeElement === confirm
+                        ? cancel
+                        : confirm
+                    : document.activeElement === cancel
+                      ? confirm
+                      : cancel;
+                next.focus();
+                return;
+            }
             if (e.key !== 'Escape') return;
             e.preventDefault();
             e.stopPropagation();
@@ -73,5 +87,6 @@ export function confirmAction(message, opts = {}) {
         });
         document.addEventListener('keydown', onKey, true);
         document.body.appendChild(el);
+        cancel.focus();
     });
 }

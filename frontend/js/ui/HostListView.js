@@ -299,9 +299,20 @@ export class HostListView {
             const stopSessionBtn = e.target.closest('.btn-stop-session');
             if (stopSessionBtn) {
                 const uuid = stopSessionBtn.dataset.uuid;
+                const menuTrigger = stopSessionBtn
+                    .closest('.host-card')
+                    ?.querySelector('.btn-host-menu');
+                this._closeAllMenus();
+                // Return keyboard focus to a visible control when the dialog closes.
+                if (menuTrigger instanceof HTMLElement) menuTrigger.focus();
                 // This closes the game for everyone, including any invited
                 // player — worth one confirmation.
-                confirmAction(t('hosts.stopSessionConfirm'), { danger: true }).then((yes) => {
+                confirmAction(t('hosts.stopSessionConfirm'), {
+                    danger: true,
+                    inApp: true,
+                    title: t('apps.quitTitle'),
+                    confirmLabel: t('apps.quit'),
+                }).then((yes) => {
                     if (!yes) return;
                     stopSessionBtn.disabled = true;
                     stopSessionBtn.textContent = t('hosts.stopSessionWorking');
@@ -412,7 +423,12 @@ export class HostListView {
                 const name = app ? app.displayName : '';
                 // Closes the game on the host, for everyone on it: one
                 // confirmation, as Moonlight asks.
-                confirmAction(t('apps.quitConfirm', { name }), { danger: true }).then((yes) => {
+                confirmAction(t('apps.quitConfirm', { name }), {
+                    danger: true,
+                    inApp: true,
+                    title: t('apps.quitTitle'),
+                    confirmLabel: t('apps.quit'),
+                }).then((yes) => {
                     if (!yes) return;
                     quitAppBtn.disabled = true;
                     quitAppBtn.textContent = t('apps.quitting');
