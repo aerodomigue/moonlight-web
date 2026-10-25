@@ -22,6 +22,7 @@
  * decodes them via WebCodecs VideoDecoder, and renders to a <canvas> element.
  * Captures keyboard/mouse events and sends them back as JSON over the input DC.
  */
+import { ExclusiveInput, exclusiveSettings } from '../stream/ExclusiveInput.js';
 import { WebRtcDataChannel } from '../api/WebRtcDataChannel.js';
 import { WebRtcMedia } from '../api/WebRtcMedia.js';
 import { BackendClient } from '../api/BackendClient.js';
@@ -134,6 +135,7 @@ import { VdGpuApartWatch, takeVdGpuApartNotice } from '../util/vdGpuApartNotice.
 import { escapeHtml } from '../util/escapeHtml.js';
 import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { Icons } from './icons.js';
+import { ApolloClipboard } from '../stream/ApolloClipboard.js';
 import { ShareMenu } from './ShareMenu.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
@@ -325,20 +327,7 @@ const CLIENT_CURSOR_ARROW_SVG =
  * damage signal is less exact than DXGI's, that floor rises over there and no
  * client has to learn about it.
  *
- * ── Why gaming mode asks for 30 ─────────────────────────────────────────────
- *
- * There the pointer is drawn INTO the picture, so frames are the only channel
- * anything reaches the viewer through — and a still screen does not mean an
- * idle session, it means a paused game, a menu, a loading screen. A picture
- * refreshing twice a second under a hand that is moving reads as a connection
- * that dropped. The host clamps this to the frame rate the viewer chose, so
- * someone who set 20 fps still gets 20.
- *
- * A phone or tablet never reaches it: gaming mode is forced off on a touch
- * device (see the constructor), so they always ask for nothing — which is also
- * what a metered link and a battery would have asked for.
  */
-const FRAME_FLOOR_GAMING_FPS = 30;
 
 // Which MultiSeat hosts have already had their input notice this page, by uuid.
 //
@@ -611,11 +600,16 @@ export class StreamView {
         this.videoCodec = videoCodec || 'auto';
         this._transport = transport;
         this._transportMode = transportMode || transport;
-        this._gamingMode = gamingMode;
+        this._exclusiveOptions =
+            opts.exclusiveInput || exclusiveSettings({ gaming_mode: gamingMode });
+        this._exclusive = null;
+        this._gamingMode =
+            this._exclusiveOptions.enabled && this._exclusiveOptions.mode !== 'keyboard';
         // Force gaming mode off where there is no mouse to capture (a phone, a
         // tablet without a trackpad). A touchscreen PC with one keeps it.
         if (!supportsGamingMode()) {
             this._gamingMode = false;
+            this._exclusiveOptions.enabled = false;
         }
         this._upnpEnabled = upnpEnabled;
         this._upnpAvailable = upnpAvailable;
@@ -1078,10 +1072,6 @@ export class StreamView {
         // only for a rate left to Auto — see _noteHostCadence. Off on a TV.
         this._autostep = opts.fpsAuto === true && autostepEnabled(IS_TV);
         this._stepper = null;
-        // Native host: mouse motion goes out on `pointerrawupdate` — every
-        // report the device makes, not the one-per-display-frame sum that
-        // `mousemove` delivers. Decided in _bindPointerRaw; while it is on, the
-        // mousemove handlers keep their cursor bookkeeping and stop sending.
         this._nativeHost = opts.nativeHost === true;
         // The virtual display and the apps opened before the stream on two
         // GPUs (util/vdGpuApartNotice.js): watched only when the host says so.
@@ -1146,8 +1136,6 @@ export class StreamView {
         } catch (e) {
             /* storage unavailable */
         }
-        this._rawPointer = false;
-        this._lastRawPointerMs = 0; // last pointerrawupdate seen — see _rawPointerLive
         this._mediaRectWarned = false; // one line when the media rect fell back
         this.pointerLocked = false;
         // One-shot keydown listener waiting to ask for the mouse — see
@@ -1554,6 +1542,8 @@ export class StreamView {
         // Enabled by a backend 'clipboardcaps' message, sent only when the
         // streamed host is the backend machine (shared clipboard).
         this._clipboardEnabled = false;
+        this._apolloClipboard = null;
+        this._clipboardCopyButton = null;
         // Swallowed Ctrl/Cmd+V keydown waiting for its native 'paste' event
         // ({ code, keydownMsg, injectCtrl, timer }).
         this._pendingPasteKey = null;
@@ -1575,7 +1565,10 @@ export class StreamView {
         this._deadPending = false;
         this._composedKey = null;
         this._onPaste = (e) => this.handlePaste(e);
-        this._onPointerDownFlush = () => this._flushPendingClipboard();
+        this._onPointerDownFlush = () => {
+            this._flushPendingClipboard();
+            this._apolloClipboard?.copyPending();
+        };
         this._onWindowBlur = () => this._releaseAllPhysKeys();
         // Regaining window focus (Alt-Tab back from another app) may leave the
         // pointer over the streamed picture without a mousemove — re-apply the
@@ -4099,7 +4092,7 @@ export class StreamView {
         // its input layer is removed; grab it the moment it is released.
         // Chromium usually honors the relock (sticky activation from earlier
         // gameplay clicks); if it refuses, the "click to capture" hint covers.
-        if (this._gamingMode && this.inputEl) {
+        if (this._exclusive?.enabled && this.inputEl) {
             if (!document.pointerLockElement) {
                 this._autoCapturePointer();
             } else {
@@ -4227,7 +4220,13 @@ export class StreamView {
      * appears.
      */
     _mountShareMenu() {
-        if (this._playerMode || this._shareMenu || !this._rootEl) return;
+        if (
+            BackendClient.canManageShares !== true ||
+            this._playerMode ||
+            this._shareMenu ||
+            !this._rootEl
+        )
+            return;
         const header = /** @type {HTMLElement} */ (this._rootEl.querySelector('.stream-header'));
         const quitBtn = /** @type {HTMLElement} */ (this._rootEl.querySelector('#btn-stream-quit'));
         if (!header || !quitBtn) return;
@@ -6064,8 +6063,7 @@ export class StreamView {
 
     /**
      * Build the gaming-mode overlay content: the platform-correct exit combo
-     * plus a one-line reminder of what it does (free the mouse + leave
-     * fullscreen). Built once — the combo never changes during a session.
+     * plus a reminder of capture/release without leaving fullscreen. Built once — the combo never changes during a session.
      * No × any more (issue #28): in the header it covers nothing, and over the
      * picture it leaves by itself.
      */
@@ -6075,8 +6073,8 @@ export class StreamView {
         const modA = isMac ? 'Cmd' : 'Ctrl';
         const modB = isMac ? 'Option' : 'Alt';
         const modC = isMac ? 'Ctrl' : 'Shift';
-        // Win order: Shift + Ctrl + Alt + Z — Mac: Ctrl + Option + Cmd + Z
-        const keys = isMac ? [modC, modB, modA, 'Z'] : [modC, modA, modB, 'Z'];
+        // Same capture/release shortcut on both platforms.
+        const keys = isMac ? [modC, modB, modA, 'M'] : [modC, modA, modB, 'M'];
         let html = '<span class="gm-keys">';
         for (let i = 0; i < keys.length; i++) {
             if (i > 0) html += '<span class="gm-plus">+</span>';
@@ -6103,7 +6101,8 @@ export class StreamView {
         // Visible whenever gaming mode is on (after the first frame), NOT only
         // while the mouse is captured: a captured (pointer-locked) cursor cannot
         // be moved onto the card to drag it, so it must be reachable pre-capture.
-        const show = !!el && this._gamingMode && this._firstFrameRendered;
+        const show =
+            !!el && (this._exclusive?.enabled ?? this._gamingMode) && this._firstFrameRendered;
         if (el) el.classList.toggle('visible', show);
         const docked = this._positionGamingOverlay();
         this._setGamingOverlayFloating(show && !docked);
@@ -7287,6 +7286,23 @@ export class StreamView {
             this._clientCursorHostSaid(msg);
             return;
         }
+        if (msg.type === 'clipboardcaps' && msg.remote === true) {
+            if (!this._apolloClipboard) {
+                this._apolloClipboard = new ApolloClipboard({
+                    send: (message) => this.webrtc.send(message),
+                    pending: (visible) => this._showClipboardCopy(visible),
+                    error: (reason) => Toast.warning(t(`stream.clipboard_${reason}`)),
+                });
+            }
+            this._clipboardEnabled = msg.write === true;
+            this._apolloClipboard.handle(msg);
+            this._showClipboardCapabilities(msg);
+            return;
+        }
+        if (msg.type === 'clipboardchunk' || msg.type === 'clipboarderror') {
+            this._apolloClipboard?.handle(msg);
+            return;
+        }
         if (msg.type === 'clipboardcaps') {
             // Backend advertises clipboard sync (streamed host == backend
             // machine). Until this arrives, Ctrl+V is forwarded as a plain
@@ -8124,7 +8140,6 @@ export class StreamView {
         // write that was denied for lack of transient activation.
         document.addEventListener('pointerdown', this._onPointerDownFlush, true);
         this.inputEl.addEventListener('wheel', this._onWheel, { passive: false });
-        this._bindPointerRaw();
         this.streamEl.addEventListener('contextmenu', this._onContextMenu);
         // Touch events (mobile): bound to the WHOLE overlay so the entire
         // screen acts as a laptop trackpad, not just the canvas rectangle.
@@ -8145,6 +8160,16 @@ export class StreamView {
             this._bindGamingEvents();
         } else {
             this._setupNormalMouse();
+        }
+        if (supportsGamingMode()) {
+            this._exclusive = new ExclusiveInput({
+                element: this.inputEl,
+                ...this._exclusiveOptions,
+                releaseInputs: () => this._releaseAllPhysKeys(),
+                change: (state) => this._applyExclusiveState(state),
+            });
+            this._createExclusiveControls();
+            this._applyExclusiveState(this._exclusive);
         }
     }
 
@@ -8290,9 +8315,6 @@ export class StreamView {
         // relative movement via pointer lock deltas when focused.
         this._onGamingMouseMove = (e) => {
             if (this._mouseFocused) {
-                // Raw mode: every report already went out from _onPointerRaw;
-                // this is the same motion summed up, a frame late.
-                if (this._rawPointerLive()) return;
                 this._sendRelativeMouse(e.movementX, e.movementY);
                 this._noteMouseSent(e);
             } else {
@@ -9023,15 +9045,9 @@ export class StreamView {
         el.hidden = false;
     }
 
-    /**
-     * The still-screen frame floor this session should be asking for.
-     *
-     * Only the mouse mode decides. Desktop mode asks for nothing on every device
-     * there is, because the host's own reaction to a change is already faster
-     * than a floor — see FRAME_FLOOR_GAMING_FPS for the whole argument.
-     */
+    // Capture choice never changes the video cadence.
     _frameFloorFps() {
-        return this._gamingMode ? FRAME_FLOOR_GAMING_FPS : 0;
+        return 0;
     }
 
     /**
@@ -9109,11 +9125,6 @@ export class StreamView {
             // where it is — the client cursor is off the stream surface.
             if (!inside) return;
 
-            // Raw mode: the position already went out from _onPointerRaw, at
-            // the device's own rate. Only the cursor bookkeeping above is ours.
-            // Only while raw reports actually arrive — see _rawPointerLive.
-            if (this._rawPointerLive()) return;
-
             // Send absolute position. LiSendMousePositionEvent() on the backend
             // will scale (x, y) from the reference plane to host screen coords.
             const msg = this._absoluteMouseMessage(e.clientX, e.clientY);
@@ -9170,6 +9181,16 @@ export class StreamView {
     }
 
     unbindEvents() {
+        if (this._exclusive) {
+            this._exclusiveOptions = {
+                mode: this._exclusive.mode,
+                enabled: this._exclusive.enabled,
+            };
+            this._exclusive.destroy();
+            this._exclusive = null;
+        }
+        this._exclusiveControls?.remove();
+        this._exclusiveControls = null;
         if (this._gamepadManager) this._gamepadManager.stop();
         if (this._hidPassthrough) {
             this._hidPassthrough.stop();
@@ -9219,11 +9240,6 @@ export class StreamView {
         }
         if (this.inputEl) {
             this.inputEl.removeEventListener('wheel', this._onWheel);
-            if (this._onPointerRaw) {
-                this.inputEl.removeEventListener('pointerrawupdate', this._onPointerRaw);
-                this._onPointerRaw = null;
-                this._rawPointer = false;
-            }
 
             // Mode-specific listeners
             if (this._gamingMode) {
@@ -9267,6 +9283,7 @@ export class StreamView {
         this._mouseAllowed = allowed;
         console.log(`[StreamView] Mouse ${allowed ? 'given to' : 'taken from'} this viewer`);
         if (allowed) return;
+        this._exclusive?.disable();
         if (document.pointerLockElement === this.inputEl) document.exitPointerLock();
         if (this.inputEl) this.inputEl.style.cursor = 'default';
     }
@@ -9288,85 +9305,19 @@ export class StreamView {
      * for the retiring view to let go (see activate()).
      */
     _autoCapturePointer() {
-        if (!this._gamingMode || !this.inputEl || this.pointerLocked || !this._mouseAllowed) return;
-        if (document.pointerLockElement && document.pointerLockElement !== this.inputEl) return;
-        try {
-            const p = this._lockPointer();
-            if (p && typeof p.catch === 'function') p.catch(() => this._armPointerCapture());
-            else if (!p) this._armPointerCapture();
-        } catch (e) {
-            this._armPointerCapture();
-        }
-    }
-
-    /**
-     * The mouse was refused at the first picture: take it at the first thing
-     * the viewer does instead.
-     *
-     * A browser may want a gesture of its own for the lock, and the one that
-     * started the session is minutes old by the time a stream is up. A key —
-     * the first W of the game — is such a gesture, and asking on it is the
-     * difference between "gaming mode took the mouse" and "gaming mode took the
-     * mouse once I remembered to click the picture". Clicks over the picture
-     * already capture (see the gaming click handler), which is why only the
-     * keyboard is listened for here; one shot, and gone as soon as it fires or
-     * the lock arrives by any other road.
-     */
-    _armPointerCapture() {
-        if (this._pointerCaptureArmed || !this._gamingMode) return;
-        this._pointerCaptureArmed = () => {
-            this._disarmPointerCapture();
-            this._autoCapturePointer();
-        };
-        document.addEventListener('keydown', this._pointerCaptureArmed, true);
+        this._exclusive?.attempt();
     }
 
     _disarmPointerCapture() {
-        if (!this._pointerCaptureArmed) return;
-        document.removeEventListener('keydown', this._pointerCaptureArmed, true);
-        this._pointerCaptureArmed = null;
+        if (this._pointerCaptureArmed) {
+            document.removeEventListener('keydown', this._pointerCaptureArmed, true);
+            this._pointerCaptureArmed = null;
+        }
     }
 
-    /**
-     * Take the pointer, asking for the mouse's own counts.
-     *
-     * Without `unadjustedMovement`, movementX/Y is what the viewer's OS made
-     * of the motion: pointer speed, "enhance pointer precision" and display
-     * scaling all applied. The host then injects that as a relative move and
-     * its own pointer settings apply a second time — and a game reading the
-     * cursor (Counter-Strike with m_rawinput 0) gets both. Measured on a
-     * 125 % Windows client on 18/09/2026: 2000 counts injected at ~1 kHz
-     * arrived as 6529 with the default lock, with a 553-pixel single event
-     * and a phantom vertical component from the cursor warp; as exactly 2000,
-     * 20 per event, with unadjusted movement. Slow moves looked fine both
-     * ways, which is why the desktop felt right and aiming did not.
-     *
-     * The option is Chromium-only (Windows, macOS, Linux, ChromeOS). Where it
-     * is refused the promise rejects with NotSupportedError and the plain lock
-     * is asked for instead; Firefox and Safari ignore the argument and return
-     * undefined, so nothing to retry there. The caller's pointerlockchange
-     * handler sees the outcome either way.
-     */
     _lockPointer() {
-        const el = this.inputEl;
-        if (!el || !this._mouseAllowed) return null;
-        let p = null;
-        try {
-            p = el.requestPointerLock({ unadjustedMovement: true });
-        } catch (e) {
-            // An old engine that takes no argument object and throws on one.
-            return el.requestPointerLock();
-        }
-        if (!p || typeof p.catch !== 'function') return p;
-        return p.catch((err) => {
-            if (err && err.name === 'NotSupportedError') {
-                console.log(
-                    '[StreamView] Mouse: unadjusted movement unsupported here, plain pointer lock',
-                );
-                return el.requestPointerLock();
-            }
-            throw err;
-        });
+        if (!this.inputEl || !this._mouseAllowed) return null;
+        return this._exclusive ? this._exclusive.attempt() : this.inputEl.requestPointerLock();
     }
 
     // Filler kept in the hidden capture <textarea> so Backspace always has
@@ -9849,6 +9800,23 @@ export class StreamView {
             return;
         }
 
+        // Apollo's copy/cut chord uses the host's modifier, never the client's
+        // Meta-as-Windows mapping. Release modifiers before the async operation.
+        const localCopyModifier = this._appleKeyboard ? e.metaKey && !e.ctrlKey : e.ctrlKey;
+        if (
+            this._apolloClipboard?.read &&
+            localCopyModifier &&
+            !e.altKey &&
+            !e.shiftKey &&
+            ['c', 'x'].includes(e.key.toLowerCase())
+        ) {
+            e.preventDefault();
+            this._releaseHeldModifiers();
+            this._suppressPasteKeyUpCode = e.code;
+            this.webrtc.send({ type: 'clipboardcopy', cut: e.key.toLowerCase() === 'x' });
+            return;
+        }
+
         // ── Ctrl/Cmd+V: local→host clipboard paste ─────────────────────────
         // When the backend shares the host clipboard, neither forward nor
         // preventDefault the paste chord: letting the browser run its default
@@ -9910,6 +9878,7 @@ export class StreamView {
         // intercept it here so the key is forwarded to the host session as
         // a normal VK_ESCAPE keypress instead.
         if (e.key === 'Escape') {
+            if (this._exclusive && !this._exclusive.enabled) return;
             e.preventDefault();
             // In native fullscreen, Escape stays inside the host (Keyboard Lock
             // keeps it from exiting). Remind the user how to actually leave
@@ -9955,18 +9924,16 @@ export class StreamView {
                 this.toggleFullscreen();
                 return;
             }
-            // Exit gaming mode: Ctrl+Alt+Shift+Z (Win) / Cmd+Option+Ctrl+Z (Mac)
-            // Frees the mouse, releases the full keyboard lock and leaves
-            // fullscreen — the single combo advertised by the overlay.
+            // Legacy capture release: fullscreen stays unchanged.
             if (chk('z', 'KeyZ')) {
                 e.preventDefault();
-                this._exitGamingMode();
+                if (!e.repeat) this._exitGamingMode();
                 return;
             }
-            // Mouse mode toggle: Ctrl+Alt+Shift+M (Win) / Cmd+Option+Ctrl+M (Mac)
+            // Exclusive capture: Ctrl+Alt+Shift+M (Win) / Cmd+Option+Ctrl+M (Mac)
             if (chk('m', 'KeyM')) {
                 e.preventDefault();
-                this.toggleMouseMode();
+                if (!e.repeat) this.toggleMouseMode();
                 return;
             }
 
@@ -10330,7 +10297,7 @@ export class StreamView {
     ]);
 
     _holdsThroughStall(code) {
-        return !!this._gamingMode && StreamView.HOLD_THROUGH_STALL_CODES.has(code);
+        return StreamView.HOLD_THROUGH_STALL_CODES.has(code);
     }
 
     /**
@@ -10740,8 +10707,8 @@ export class StreamView {
         const msg = {
             type: down ? 'mousedown' : 'mouseup',
             button,
-            // Aim/fire in gaming mode is a genuine hold, not a drag.
-            hold: down && !!this._gamingMode,
+            // Use the same stuck-button protection for every capture choice.
+            hold: false,
         };
         // A measured click (the latency probe): the host answers with when it
         // arrived. Nothing else sets it.
@@ -10811,9 +10778,8 @@ export class StreamView {
             type: 'inputstate',
             keys,
             buttons,
-            // A held mouse button in gaming mode is aim/fire, not a drag: give
-            // it the long grace period like the movement keys.
-            buttonsHold: !!this._gamingMode,
+            // Capture selection does not change the button watchdog.
+            buttonsHold: false,
         });
     }
 
@@ -10829,68 +10795,6 @@ export class StreamView {
     }
 
     /**
-     * Mouse motion at the device's own report rate, towards every host.
-     *
-     * `mousemove` is dispatched once per display frame with the motion since
-     * the previous one summed up: a 1000 Hz mouse on a 60 Hz screen reaches
-     * the host as 60 messages a second, each up to 16 ms after the hand moved.
-     * `pointerrawupdate` (Chromium) fires for every report instead, off the
-     * frame clock. The native host injects each event on the thread that
-     * receives it (no per-frame batching anywhere downstream), so there the
-     * extra messages buy the delay back. Sunshine, Wolf, Apollo and MultiSeat
-     * get it too since 13/10/2026: moonlight-common-c sums the motions and
-     * sends them at most every millisecond, so the host is not flooded, and
-     * an A/B in game showed no difference either way — the rate meant to be
-     * fastest won.
-     *
-     * The mousemove handlers stay bound for what only they know how to do
-     * (cursor styling, the pre-focus click-to-capture position) and skip the
-     * send while this is active.
-     */
-    _bindPointerRaw() {
-        this._rawPointer = false;
-        if (!this.inputEl) return;
-        if (!('onpointerrawupdate' in window)) return;
-        // Diagnostics, read once here: mw_raw_pointer = '0' goes back to the
-        // coalesced mousemove cadence. Not a setting, same family as mw_pacing.
-        let key = null;
-        try {
-            key = localStorage.getItem('mw_raw_pointer');
-        } catch (e) {}
-        if (key === '0') {
-            console.log('[StreamView] Mouse: raw report rate held off (mw_raw_pointer=0)');
-            return;
-        }
-        this._onPointerRaw = (e) => {
-            if (e.pointerType !== 'mouse') return;
-            this._lastRawPointerMs = performance.now();
-            if (this._gamingMode) {
-                // Pre-focus, the pointer is free: the mousemove path places the
-                // host cursor and handles the capture click.
-                if (!this._mouseFocused) return;
-                if (e.movementX || e.movementY) {
-                    this._sendRelativeMouse(e.movementX, e.movementY);
-                    this._noteMouseSent(e);
-                }
-                return;
-            }
-            this._lastClientMoveMs = performance.now();
-            const msg = this._absoluteMouseMessage(e.clientX, e.clientY);
-            if (msg) {
-                this._sendToHost(msg);
-                this._noteMouseSent(e);
-            }
-        };
-        this.inputEl.addEventListener('pointerrawupdate', this._onPointerRaw);
-        this._rawPointer = true;
-        console.log(
-            this._nativeHost
-                ? '[StreamView] Mouse: raw report rate (pointerrawupdate, native host)'
-                : '[StreamView] Mouse: raw report rate (pointerrawupdate, GameStream host)',
-        );
-    }
-
-    /**
      * Diagnostics (mw_perf_diag): a mouse motion went out for @p e — how old
      * its report was, for the [perf] line's mouse part. A null check otherwise.
      */
@@ -10898,23 +10802,6 @@ export class StreamView {
         if (this._mainThreadProbe) {
             this._mainThreadProbe.noteMouseSend(performance.now() - e.timeStamp);
         }
-    }
-
-    /**
-     * Whether the raw path is actually delivering right now — not merely
-     * whether the browser has the API.
-     *
-     * The mousemove handlers stand down while raw reports flow, so that the
-     * same motion is not sent twice. They used to stand down on the mere
-     * existence of `onpointerrawupdate`, a promise the browser does not always
-     * keep (the event is gated on document focus, among other things) — and
-     * when it did not, no position went out at all, silently. A report seen
-     * within the last quarter second is the only evidence worth acting on;
-     * past that the ordinary handlers send, a duplicate position being
-     * harmless where a missing one is not.
-     */
-    _rawPointerLive() {
-        return this._rawPointer && performance.now() - this._lastRawPointerMs < 250;
     }
 
     /**
@@ -10961,6 +10848,13 @@ export class StreamView {
         } catch (err) {
             /* clipboardData unavailable — fall back to a plain keystroke */
         }
+        if (this._apolloClipboard && !text) {
+            clearTimeout(pending.timer);
+            this._pendingPasteKey = null;
+            this._suppressPasteKeyUpCode = pending.code;
+            Toast.warning(t('stream.clipboard_textOnly'));
+            return;
+        }
         if (!text) {
             // Non-text local clipboard (image/files): forward the swallowed
             // keydown so the host pastes its own clipboard content instead.
@@ -10975,6 +10869,11 @@ export class StreamView {
         if (pending.injectCtrl) this._releaseHeldMeta();
         // The backend injects the complete V down+up — swallow the real keyup.
         this._suppressPasteKeyUpCode = pending.code;
+        if (this._apolloClipboard) {
+            this._releaseHeldModifiers();
+            this._apolloClipboard.paste(text);
+            return;
+        }
         this.webrtc.send({
             type: 'clipboardpaste',
             text:
@@ -11017,6 +10916,17 @@ export class StreamView {
      *  Ctrl+V it does for a real paste, with no text — an empty payload leaves
      *  the host clipboard untouched and only replays the chord. */
     _sendPendingPasteKey() {
+        if (this._apolloClipboard) {
+            const pending = this._pendingPasteKey;
+            if (pending) {
+                clearTimeout(pending.timer);
+                this._suppressPasteKeyUpCode = pending.code;
+                this._pendingPasteKey = null;
+                Toast.warning(t('stream.clipboard_textOnly'));
+            }
+            return;
+        }
+
         const pending = this._pendingPasteKey;
         if (!pending) return;
         clearTimeout(pending.timer);
@@ -11035,6 +10945,41 @@ export class StreamView {
      *  may reject the write outside a user gesture (Safari always, Firefox
      *  when the last gesture is >5s old) — keep the text pending and retry
      *  on the next keystroke/pointer gesture. */
+    _showClipboardCapabilities(msg) {
+        const header = this._rootEl?.querySelector('.stream-header');
+        if (!header) return;
+        if (!this._clipboardStatus) {
+            this._clipboardStatus = document.createElement('span');
+            this._clipboardStatus.className = 'clipboard-capabilities';
+            this._clipboardStatus.setAttribute('role', 'status');
+            header.appendChild(this._clipboardStatus);
+        }
+        const key =
+            msg.read && msg.write ? 'both' : msg.read ? 'read' : msg.write ? 'write' : 'none';
+        this._clipboardStatus.textContent = t(`stream.clipboard_cap_${key}`);
+    }
+
+    _showClipboardCopy(visible) {
+        if (!visible) {
+            this._clipboardCopyButton?.remove();
+            this._clipboardCopyButton = null;
+            return;
+        }
+        if (this._clipboardCopyButton || !this.streamEl) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn clipboard-copy-action';
+        button.textContent = t('stream.clipboard_copyLocal');
+        button.style.cssText =
+            'position:absolute;top:60px;right:16px;z-index:100;pointer-events:auto';
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._apolloClipboard?.copyPending();
+        });
+        this.streamEl.appendChild(button);
+        this._clipboardCopyButton = button;
+    }
+
     _applyHostClipboard(text) {
         if (!text) return;
         this._pendingClipboardWrite = text;
@@ -11080,7 +11025,6 @@ export class StreamView {
 
     handleMouseMove(e) {
         if (!this.pointerLocked) return;
-        if (this._rawPointer) return; // already sent per report by _onPointerRaw
         this._sendRelativeMouse(e.movementX, e.movementY);
     }
 
@@ -11173,9 +11117,7 @@ export class StreamView {
         if (this.hintEl) {
             this.hintEl.style.display = this._gamingMode && !this.pointerLocked ? 'flex' : 'none';
         }
-        // Capturing/releasing the mouse drives both the full keyboard lock and
-        // the gaming-mode exit-reminder overlay.
-        this._syncKeyboardLock();
+        // Refresh the capture reminder independently of Keyboard Lock.
         this._updateGamingOverlay();
         // …and who draws the mouse pointer. Under pointer lock the browser has
         // taken the real one away, so only the host can draw one.
@@ -11212,6 +11154,24 @@ export class StreamView {
      * Re-binds mouse event handlers for the new mode.
      */
     toggleMouseMode() {
+        this._exclusive?.toggle();
+        this._saveExclusiveChoice();
+    }
+
+    _saveExclusiveChoice() {
+        if (!this._exclusive) return;
+        try {
+            const settings = JSON.parse(localStorage.getItem('mw-streaming-settings') || '{}');
+            settings.exclusive_mode = this._exclusive.mode;
+            settings.exclusive_enabled = this._exclusive.enabled;
+            localStorage.setItem('mw-streaming-settings', JSON.stringify(settings));
+        } catch (_) {
+            /* Capture remains usable when browser storage is unavailable. */
+        }
+    }
+
+    _setExclusiveMouse(enabled) {
+        if (this._gamingMode === enabled || !this.inputEl) return;
         // ── Remove current mouse event listeners ─────────────────────────
         if (this._gamingMode) {
             if (this._onGamingMouseMove)
@@ -11234,51 +11194,74 @@ export class StreamView {
                 this.inputEl.removeEventListener('mouseleave', this._onNormalMouseLeave);
         }
 
-        // ── Exit pointer lock if leaving gaming mode ────────────────────
-        if (this._gamingMode && document.pointerLockElement === this.inputEl) {
-            document.exitPointerLock();
+        this._gamingMode = enabled;
+        if (enabled) this._bindGamingEvents();
+        else this._setupNormalMouse();
+    }
+
+    _applyExclusiveState(state) {
+        this._setExclusiveMouse(state.wantsMouse && this._mouseAllowed);
+        this.handlePointerLockChange();
+        if (this.hintEl) {
+            this.hintEl.textContent = t('stream.exclusiveResume');
+            this.hintEl.style.display =
+                state.enabled && state.wantsMouse && !state.pointerLocked && !state.suspended
+                    ? 'flex'
+                    : 'none';
         }
-        // Whichever way it is going, a capture that was waiting for a keystroke
-        // belongs to the mode being left.
-        this._disarmPointerCapture();
-
-        // ── Toggle mode ─────────────────────────────────────────────────
-        this._gamingMode = !this._gamingMode;
-
-        // ── Bind new mode's event handlers ──────────────────────────────
-        if (this._gamingMode) {
-            this._bindGamingEvents();
-            // Show hint so user knows to click to capture
-            if (this.hintEl) this.hintEl.style.display = 'flex';
-            // …though it should not be needed: switching mode is itself the
-            // gesture, so the mouse can be taken right now. The hint stays up
-            // if the browser refuses, and goes as soon as the lock lands.
-            this._autoCapturePointer();
-        } else {
-            this._setupNormalMouse();
-            // Hide hint — no pointer lock in desktop mode
-            if (this.hintEl) this.hintEl.style.display = 'none';
+        if (this._exclusiveToggle) {
+            this._exclusiveToggle.textContent = t(
+                state.enabled && (state.needsGesture || state.suspended)
+                    ? 'stream.exclusiveResume'
+                    : state.enabled
+                      ? 'stream.exclusiveRelease'
+                      : 'stream.exclusiveCapture',
+            );
+            this._exclusiveToggle.setAttribute('aria-pressed', String(state.enabled));
+            this._exclusiveToggle.title = state.keyboardUnavailable
+                ? t('stream.exclusiveKeyboardUnavailable')
+                : '';
         }
-
-        // Leaving gaming mode hides the exit reminder and drops the full
-        // keyboard lock; entering it keeps the overlay hidden until capture.
+        if (this._exclusiveStatus) {
+            this._exclusiveStatus.textContent = state.keyboardUnavailable
+                ? t('stream.exclusiveKeyboardUnavailable')
+                : state.needsGesture
+                  ? t('stream.exclusiveResume')
+                  : '';
+        }
+        if (this._exclusiveSelect) this._exclusiveSelect.value = state.mode;
         this._updateGamingOverlay();
-        this._syncKeyboardLock();
-        // What a still screen is worth changed with the mode. The input beat
-        // would carry it within 100 ms anyway; sending it here means the mode
-        // the viewer just chose is the mode the next frame is paced for.
-        this._sendFrameFloor();
+    }
 
-        console.log(
-            '[StreamView] Mouse mode toggled: ' +
-                (this._gamingMode ? 'gaming (relative+lock)' : 'desktop (absolute)'),
-        );
-
-        Toast.info(
-            t('stream.mouseMode', {
-                mode: this._gamingMode ? t('stream.mouseModeGaming') : t('stream.mouseModeDesktop'),
-            }),
-        );
+    _createExclusiveControls() {
+        const header = this._rootEl?.querySelector('.stream-header');
+        if (!header || this._exclusiveControls) return;
+        const controls = document.createElement('div');
+        controls.className = 'exclusive-controls';
+        const select = document.createElement('select');
+        select.setAttribute('aria-label', t('settings.exclusiveTarget'));
+        for (const mode of ['mouse', 'keyboard', 'both']) {
+            const option = document.createElement('option');
+            option.value = mode;
+            option.textContent = t(`settings.exclusive_${mode}`);
+            select.appendChild(option);
+        }
+        select.addEventListener('change', () => {
+            this._exclusive?.select(select.value);
+            this._saveExclusiveChoice();
+        });
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn';
+        button.addEventListener('click', () => this.toggleMouseMode());
+        const status = document.createElement('span');
+        status.setAttribute('role', 'status');
+        controls.append(select, button, status);
+        header.appendChild(controls);
+        this._exclusiveControls = controls;
+        this._exclusiveSelect = select;
+        this._exclusiveToggle = button;
+        this._exclusiveStatus = status;
     }
 
     // =========================================================================
@@ -12588,6 +12571,14 @@ export class StreamView {
             this._mainThreadProbe = null;
         }
 
+        this._apolloClipboard?.destroy();
+        this._apolloClipboard = null;
+        this._clipboardStatus?.remove();
+        this._clipboardStatus = null;
+        this._showClipboardCopy(false);
+        this._pendingClipboardWrite = null;
+        if (this._pendingPasteKey) clearTimeout(this._pendingPasteKey.timer);
+        this._pendingPasteKey = null;
         if (this._shareMenu) {
             this._shareMenu.destroy();
             this._shareMenu = null;

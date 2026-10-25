@@ -27,6 +27,7 @@
  *   - Advanced section: video enhancement, codec, mute host, tearing,
  *     performance stats, gaming mode
  */
+import { exclusiveSettings } from '../stream/ExclusiveInput.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
@@ -138,6 +139,7 @@ export class SettingsView {
 
         this._videoCodec = 'hevc';
         this._gamingMode = true;
+        this._exclusiveMode = 'mouse';
         this._showPerformanceStats = false;
         this._streamBitrateMbps = 20;
         this._streamHeight = 1080;
@@ -568,7 +570,9 @@ export class SettingsView {
     _applySettings(data) {
         this._videoCodec = data.video_codec || 'hevc';
         this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
-        this._gamingMode = data.gaming_mode !== false;
+        const exclusive = exclusiveSettings(data);
+        this._gamingMode = exclusive.enabled;
+        this._exclusiveMode = exclusive.mode;
         this._showPerformanceStats = data.show_performance_stats === true;
         const kbps = data.stream_bitrate || 20000;
         this._streamBitrateMbps = Math.round(kbps / 1000);
@@ -732,6 +736,8 @@ export class SettingsView {
         const settings = {
             video_codec: this._videoCodec,
             gaming_mode: this._gamingMode,
+            exclusive_mode: this._exclusiveMode,
+            exclusive_enabled: this._gamingMode,
             show_performance_stats: this._showPerformanceStats,
             stream_bitrate: this._streamBitrateMbps * 1000,
             stream_bitrate_auto: this._bitrateAuto,
@@ -1226,6 +1232,9 @@ export class SettingsView {
             // Update internal state
             this._videoCodec = codec;
             this._gamingMode = gamingMode;
+            this._exclusiveMode =
+                this.container.querySelector('#settings-exclusive-mode')?.value ||
+                this._exclusiveMode;
             this._showPerformanceStats = showPerf;
             this._streamBitrateMbps = bitrateMbps;
             this._streamHeight = isNaN(height) ? this._streamHeight : height;
@@ -1255,8 +1264,8 @@ export class SettingsView {
     /** Reset all streaming preferences to their default values. */
     async _resetDefaults() {
         this._videoCodec = 'hevc';
-        // Default preset leaves mouse gaming mode OFF (opt-in per user request).
-        this._gamingMode = false;
+        this._gamingMode = true;
+        this._exclusiveMode = 'mouse';
         this._showPerformanceStats = false;
         this._streamHeight = 1080;
         this._streamResolution = 'auto';
@@ -1883,6 +1892,9 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.gamingModeDesc')}</span>
+                        <select id="settings-exclusive-mode" aria-label="${t('settings.exclusiveTarget')}">
+                            ${['mouse', 'keyboard', 'both'].map((mode) => `<option value="${mode}" ${this._exclusiveMode === mode ? 'selected' : ''}>${t(`settings.exclusive_${mode}`)}</option>`).join('')}
+                        </select>
                     </div>
 
                     <div class="settings-field">
@@ -2277,6 +2289,9 @@ export class SettingsView {
                 if (bitrateSlider) bitrateSlider.focus();
             });
 
+        this.container
+            .querySelector('#settings-exclusive-mode')
+            ?.addEventListener('change', () => this._autoSave());
         const gamingCheck = this.container.querySelector('#settings-gaming-mode');
         if (gamingCheck) gamingCheck.addEventListener('change', () => this._autoSave());
 

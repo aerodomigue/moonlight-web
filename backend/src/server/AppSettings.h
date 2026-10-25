@@ -72,6 +72,9 @@ public:
     // When disabled (default), absolute mouse position tracking is used instead.
     // Stored as JSON bool "gaming_mode", default false.
 
+    QString exclusiveMode() const;
+    bool exclusiveEnabled() const;
+    void setExclusiveInput(const QString& mode, bool enabled);
     bool gamingMode() const;
     void setGamingMode(bool enabled);
 

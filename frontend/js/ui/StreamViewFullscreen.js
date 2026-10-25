@@ -433,56 +433,17 @@ export class StreamViewFullscreen {
         setTimeout(dismiss, 4000);
     }
 
-    /**
-     * Sync the Escape Keyboard Lock with the current fullscreen state.
-     * In fullscreen, lock Escape so it reaches the host (instead of exiting);
-     * out of fullscreen, release it. Chrome/Edge only — no-op elsewhere.
-     * @this {StreamViewInstance}
-     */
+    /** Synchronize the selected keyboard capture, independently of the mouse.
+     * @this {StreamViewInstance} */
     _syncKeyboardLock() {
-        const kb = navigator.keyboard;
-        if (!kb || typeof kb.lock !== 'function') return;
-        if (this._gamingMode && this._mouseFocused) {
-            // Mouse gaming mode with the mouse captured: grab EVERY system key
-            // (Meta/Windows, Alt+Tab, Escape…) so they reach the host. Only the
-            // exit combo stays client-side. Effective in fullscreen (browser
-            // limitation); a no-op call otherwise. lock() with no args = all keys.
-            kb.lock().catch(() => {});
-            this._keyboardLocked = true;
-        } else if (document.fullscreenElement) {
-            // Plain fullscreen (no gaming mode): only keep Escape inside the host.
-            kb.lock(['Escape']).catch(() => {});
-            this._keyboardLocked = true;
-        } else if (this._keyboardLocked) {
-            try {
-                kb.unlock();
-            } catch (e) {}
-            this._keyboardLocked = false;
-        }
+        this._exclusive?.syncKeyboard();
     }
 
-    /**
-     * Single "give me back control" action bound to the gaming-mode exit combo.
-     * Releases the mouse pointer lock, drops the full keyboard lock and leaves
-     * fullscreen (standard or CSS fallback) — whichever are currently active.
-     * @this {StreamViewInstance}
-     */
+    /** Legacy release shortcut; fullscreen is controlled separately.
+     * @this {StreamViewInstance} */
     _exitGamingMode() {
-        if (document.pointerLockElement === this.inputEl) {
-            document.exitPointerLock();
-        }
-        const kb = navigator.keyboard;
-        if (this._keyboardLocked && kb && typeof kb.unlock === 'function') {
-            try {
-                kb.unlock();
-            } catch (e) {}
-            this._keyboardLocked = false;
-        }
-        if (document.fullscreenElement) {
-            document.exitFullscreen().catch(() => {});
-        } else if (this._cssFullscreen) {
-            this._exitCssFallbackFullscreen();
-        }
+        this._exclusive?.disable();
+        this._saveExclusiveChoice();
     }
 
     /**

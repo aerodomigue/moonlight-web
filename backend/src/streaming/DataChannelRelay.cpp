@@ -691,6 +691,32 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     connect(m_StatsTimer, &QTimer::timeout, this, &DataChannelRelay::onStatsTimerTick);
 }
 
+void DataChannelRelay::setApolloClipboard(const ApolloClipboard::Config& config)
+{
+    m_ApolloClipboard = new ApolloClipboard(config, this);
+    connect(m_ApolloClipboard, &ApolloClipboard::message, this, [this](const QJsonObject& msg) {
+        if (m_Stopping.load() || !m_Connected || !m_InputDc || !m_InputDc->isOpen() ||
+            !m_InputPolicy.unrestricted())
+            return;
+        const auto bytes = QJsonDocument(msg).toJson(QJsonDocument::Compact);
+        try {
+            m_InputDc->send(std::string(bytes.constData(), bytes.size()));
+        } catch (const std::exception&) {}
+    });
+    connect(m_ApolloClipboard, &ApolloClipboard::chord, this,
+            [this, apple = config.appleHost](int key) {
+                if (m_Stopping.load() || !m_Connected || !m_InputDc || !m_InputDc->isOpen() ||
+                    !m_InputPolicy.unrestricted() || !m_Shim)
+                    return;
+                const short modifier = apple ? 0x5B : 0x11;
+                const char mask = apple ? 0x08 : 0x02;
+                m_Shim->sendKeyEvent(modifier, true, mask, 0);
+                m_Shim->sendKeyEvent(static_cast<short>(key), true, mask, 0);
+                m_Shim->sendKeyEvent(static_cast<short>(key), false, mask, 0);
+                m_Shim->sendKeyEvent(modifier, false, 0, 0);
+            });
+}
+
 void DataChannelRelay::setClipboardEnabled(bool enabled)
 {
     m_ClipboardEnabled = enabled;
@@ -1303,6 +1329,7 @@ void DataChannelRelay::createDataChannels()
                 } catch (const std::exception&) {}
                 ClipboardBridge::instance()->requestAnnounce();
             }
+            if (m_ApolloClipboard) m_ApolloClipboard->start();
 
             // Whether this host recreates WebHID devices: the page sends the
             // devices it was asked to from this answer.
@@ -1831,6 +1858,10 @@ void DataChannelRelay::onInputMessage(const std::string& message, int64_t recvUs
 
     // An invited player only gets what the owner ticked. Dropped in silence.
     if (!InputMsg::allowed(type, m_InputPolicy)) return;
+    if (m_ApolloClipboard && type.startsWith(QLatin1String("clipboard"))) {
+        if (m_InputPolicy.unrestricted()) m_ApolloClipboard->receive(msg);
+        return;
+    }
 
     // A message the client stamped (the click → flag probe, the uplink bench)
     // is answered once handled, whatever its type: when it arrived, and, by the
@@ -2911,6 +2942,7 @@ void DataChannelRelay::onHidPolicyChanged()
 
 void DataChannelRelay::stop()
 {
+    if (m_ApolloClipboard) m_ApolloClipboard->stop();
     // The relay lives on its own session thread. If stop() is called from another
     // thread (main: /quit, Session::quit, auto-fallback), marshal it onto the
     // relay thread so timers/DC/PC teardown happen on the owning thread. Queued

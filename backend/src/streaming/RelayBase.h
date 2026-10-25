@@ -114,7 +114,7 @@ public:
     /// the relay starts, from the share activation the player joined with (the
     /// owner's own sessions leave it unrestricted), and again whenever the
     /// owner moves the player's boxes on the sharing board.
-    void setInputPolicy(const InputMsg::Policy& policy)
+    virtual void setInputPolicy(const InputMsg::Policy& policy)
     {
         const bool hidMoved = m_InputPolicy.hid != policy.hid;
         const bool keyboardMouseMoved = m_InputPolicy.keyboardMouse != policy.keyboardMouse;

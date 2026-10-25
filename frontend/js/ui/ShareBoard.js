@@ -126,6 +126,10 @@ export class ShareBoard {
          */
         this._pendingTtl = new Map();
         this._pollTimer = null;
+        this._closed = false;
+        this._refreshing = false;
+        this._retryMs = POLL_MS;
+        this._request = new AbortController();
         this.overlay = null;
         this._secrets = new Map(); // slot → {url, pin, local_only} | {available:false}
         /**
@@ -167,7 +171,12 @@ export class ShareBoard {
         try {
             await this._load();
         } catch (err) {
-            if (err && err.statusCode === 404) return false;
+            if ([401, 403, 404].includes(err?.statusCode)) {
+                this._pendingTtl.clear();
+                this.close();
+                return false;
+            }
+            if (this._closed) return false;
             console.warn('[ShareBoard] initial status failed:', err);
         }
 
@@ -185,6 +194,7 @@ export class ShareBoard {
             }
         }
 
+        if (this._closed) return false;
         this.overlay = document.createElement('div');
         this.overlay.className = 'share-board-overlay';
         this.overlay.innerHTML = `<div class="share-board" role="dialog" aria-modal="true"
@@ -210,6 +220,9 @@ export class ShareBoard {
     }
 
     close() {
+        if (this._closed) return;
+        this._closed = true;
+        this._request.abort();
         this._stopPolling();
         document.removeEventListener('keydown', this._onKey, true);
         if (this.overlay) this.overlay.remove();
@@ -247,7 +260,10 @@ export class ShareBoard {
     // ── State ───────────────────────────────────────────────────────────────
 
     async _load() {
-        const data = await BackendClient.getShareStatus(this.ctx.hostUuid);
+        const data = await BackendClient.getShareStatus(this.ctx.hostUuid, {
+            signal: this._request.signal,
+        });
+        if (this._closed) return;
         this.slots = Array.isArray(data.slots) ? data.slots : [];
         this._remoteReachable = data.remote_reachable !== false;
         if (FEED_HEIGHTS.includes(Number(data.feed_height))) {
@@ -305,10 +321,12 @@ export class ShareBoard {
         // A write is in flight: its answer is newer than anything this poll can
         // return, and repainting from the older one would put the owner's own
         // click back where it was.
-        if (this._writes > 0) return;
+        if (this._closed || this._writes > 0 || this._refreshing) return;
+        this._refreshing = true;
         try {
             await this._load();
-            if (this._writes > 0) return;
+            this._retryMs = POLL_MS;
+            if (this._closed || this._writes > 0) return;
             const signature = this._signature();
             if (signature === this._painted) {
                 // Nothing moved. The one thing that still ages on its own is the
@@ -318,9 +336,16 @@ export class ShareBoard {
             }
             this._paint();
         } catch (err) {
-            // A status that cannot be read is not worth tearing the board down
-            // for: keep the last known rows and try again on the next tick.
-            console.warn('[ShareBoard] status failed:', err);
+            if (this._closed) return;
+            if ([401, 403, 404].includes(err?.statusCode)) {
+                this._pendingTtl.clear();
+                this.close();
+                return;
+            }
+            this._retryMs = Math.min(this._retryMs * 2, 60000);
+        } finally {
+            this._refreshing = false;
+            this._startPolling();
         }
     }
 
@@ -360,17 +385,16 @@ export class ShareBoard {
 
     _startPolling() {
         this._stopPolling();
-        this._pollTimer = setInterval(() => {
-            if (document.hidden) return;
-            // Never repaint under a field the owner is typing in: it would eat
-            // the caret mid-name.
-            if (this.board?.querySelector('.share-name-input:focus')) return;
-            this.refresh();
-        }, POLL_MS);
+        if (this._closed) return;
+        this._pollTimer = setTimeout(async () => {
+            if (!document.hidden && !this.board?.querySelector('.share-name-input:focus'))
+                await this.refresh();
+            this._startPolling();
+        }, this._retryMs);
     }
 
     _stopPolling() {
-        if (this._pollTimer) clearInterval(this._pollTimer);
+        if (this._pollTimer) clearTimeout(this._pollTimer);
         this._pollTimer = null;
     }
 

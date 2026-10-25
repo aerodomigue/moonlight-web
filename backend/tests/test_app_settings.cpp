@@ -85,6 +85,23 @@ void run_app_settings_tests()
     s.setVideoCodec(VideoCodec::HEVC);
     CHECK(s.videoCodec() == VideoCodec::HEVC);
 
+    // Exclusive capture migrates legacy choices without coupling video/input policy.
+    CHECK_EQ(s.exclusiveMode(), QString("mouse"));
+    CHECK(s.exclusiveEnabled());
+    s.setGamingMode(false);
+    CHECK(!s.exclusiveEnabled());
+    s.setGamingMode(true);
+    CHECK_EQ(s.exclusiveMode(), QString("both"));
+    s.setExclusiveInput("keyboard", true);
+    CHECK_EQ(s.exclusiveMode(), QString("keyboard"));
+    CHECK(s.exclusiveEnabled());
+    CHECK(!s.gamingMode());
+    s.setExclusiveInput("invalid", false);
+    CHECK_EQ(s.exclusiveMode(), QString("keyboard"));
+    CHECK(s.exclusiveEnabled());
+    s.setExclusiveInput("mouse", false);
+    CHECK(!s.exclusiveEnabled());
+
     // Boolean round-trips.
     s.setGamingMode(true);
     CHECK_EQ(s.gamingMode(), true);

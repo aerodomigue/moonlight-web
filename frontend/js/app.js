@@ -47,6 +47,7 @@
  */
 // First, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
+import { exclusiveSettings } from './stream/ExclusiveInput.js';
 import { SsoSession, authenticatedFetch } from './api/SsoSession.js';
 import { refreshClientLog } from './util/ClientLog.js';
 import { HostListView } from './ui/HostListView.js';
@@ -3337,6 +3338,7 @@ export const MoonlightApp = {
         const gamepadProfile = streamingSettings.gamepad_profile || 'auto';
         const opts = {
             ...viewOpts,
+            exclusiveInput: exclusiveSettings(streamingSettings),
             intraRefresh: result.intra_refresh === true,
             gamepadProfile,
             // Multiplier on relative mouse motion (pointer lock). The host never

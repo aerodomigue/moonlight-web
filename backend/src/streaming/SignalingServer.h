@@ -18,6 +18,8 @@
 #pragma once
 
 #include "server/NetClassify.h"
+#include "ApolloClipboard.h"
+#include "InputPolicy.h"
 
 #include <QObject>
 #include <QWebSocketServer>
@@ -79,6 +81,11 @@ public:
     /// When ICE times out, video/audio data is sent over the signaling WebSocket
     /// instead of WebRTC DataChannels, using the same fragmentation format.
     void setMediaEngine(IMediaEngine* engine) { m_Shim = engine; }
+    void setApolloClipboard(const ApolloClipboard::Config& config);
+    void setInputPolicy(const InputMsg::Policy& policy)
+    {
+        if (!policy.unrestricted() && m_ApolloClipboard) m_ApolloClipboard->stop();
+    }
 
     /// Set the STUN server URL to use for ICE configuration.
     /// Default: no STUN; Session supplies the explicit AppSettings policy.
@@ -166,6 +173,7 @@ private:
 
     RelayBase* m_Relay;
     IMediaEngine* m_Shim = nullptr;
+    ApolloClipboard* m_ApolloClipboard = nullptr;
 
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;

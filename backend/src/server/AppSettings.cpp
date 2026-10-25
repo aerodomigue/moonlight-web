@@ -183,6 +183,31 @@ void AppSettings::setVideoCodec(VideoCodec codec)
 
 // ── Gaming mode ────────────────────────────────────────────────────────────────
 
+QString AppSettings::exclusiveMode() const
+{
+    const auto obj = readAll();
+    const QString mode = obj.value("exclusive_mode").toString();
+    if (mode == "mouse" || mode == "keyboard" || mode == "both") return mode;
+    return obj.value("gaming_mode").toBool() ? "both" : "mouse";
+}
+
+bool AppSettings::exclusiveEnabled() const
+{
+    const auto obj = readAll();
+    if (obj.value("exclusive_enabled").isBool()) return obj.value("exclusive_enabled").toBool();
+    return obj.contains("gaming_mode") ? obj.value("gaming_mode").toBool() : true;
+}
+
+void AppSettings::setExclusiveInput(const QString& mode, bool enabled)
+{
+    if (mode != "mouse" && mode != "keyboard" && mode != "both") return;
+    auto obj = readAll();
+    obj["exclusive_mode"] = mode;
+    obj["exclusive_enabled"] = enabled;
+    obj["gaming_mode"] = enabled && mode != "keyboard"; // compatibility for older clients
+    writeAll(obj);
+}
+
 bool AppSettings::gamingMode() const
 {
     QJsonObject obj = readAll();
@@ -193,6 +218,8 @@ void AppSettings::setGamingMode(bool enabled)
 {
     QJsonObject obj = readAll();
     obj["gaming_mode"] = enabled;
+    obj["exclusive_enabled"] = enabled;
+    obj["exclusive_mode"] = enabled ? "both" : "mouse";
     writeAll(obj);
 }
 

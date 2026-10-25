@@ -40,6 +40,43 @@ Le serveur Moonlight-Web local reste nécessaire pour joindre Apollo/Sunshine
 et adapter leur flux au navigateur. L'hôte natif et le partage de session hérités
 du projet amont restent disponibles selon les capacités du matériel et du navigateur.
 
+## Partage, presse-papiers et capture des entrées
+
+Le partage de session est réservé au propriétaire local. Les autres comptes,
+y compris les administrateurs SSO, n’affichent pas le menu Partage. Un refus
+permanent arrête les rafraîchissements du menu.
+
+Avec **Apollo distant**, le presse-papiers texte est bidirectionnel (Unicode,
+multilignes, maximum **256 Kio en UTF-8**). Les permissions Apollo de lecture,
+d’écriture et de clavier s’appliquent séparément au certificat déjà appairé.
+Le statut du presse-papiers apparaît dans l’en-tête du flux. Le collage attend
+l’écriture réussie sur Apollo avant d’envoyer le raccourci ; un échec ne colle
+pas l’ancien contenu. La lecture ne s’effectue que pendant un flux au premier
+plan, au maximum une fois par seconde. Si le navigateur refuse l’écriture
+locale, utilisez **« Copier sur cet appareil »**. Les images/fichiers, les invités
+restreints et Sunshine sans cette extension ne sont pas pris en charge par cet
+adaptateur. Le presse-papiers de la capture locale reste disponible.
+
+Le **Mode exclusif** propose **Souris**, **Clavier** ou **Souris + clavier**,
+avec une activation indépendante du choix. Il utilise Pointer Lock standard,
+sans entrée souris brute. Keyboard Lock dépend du navigateur et nécessite le
+plein écran ; l’interface signale une capture indisponible ou partielle.
+
+| Action | Windows / Linux | macOS |
+| --- | --- | --- |
+| Activer, libérer ou reprendre la capture sélectionnée | Ctrl + Alt + Maj + M | Ctrl + Option + Cmd + M |
+| Libérer les captures (ancien raccourci) | Ctrl + Alt + Maj + Z | Ctrl + Option + Cmd + Z |
+| Basculer le plein écran, indépendamment de la capture | Ctrl + Alt + Maj + X | Ctrl + Option + Cmd + X |
+
+À la perte du focus, les touches et boutons distants sont relâchés. Au retour,
+une reprise est tentée une fois ; **« Reprendre la capture »** demande un geste
+si le navigateur l’exige. Échap ou une libération volontaire annulent cette
+reprise. Les raccourcis M et Z conservent le plein écran. La capture ne modifie
+ni les paramètres vidéo ni les protections contre les entrées bloquées.
+
+L’ancien réglage activé devient « Souris + clavier » ; désactivé, il conserve
+les captures désactivées. Sans historique, le choix initial est « Souris ».
+
 ## Démarrage avec Docker Compose
 
 Images publiées pour **Linux amd64 et arm64** :

@@ -747,6 +747,25 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // not a guest's to read.
     const bool hostIsSelf = ClipboardBridge::isSelfAddress(m_Host->activeAddress.address());
     const bool clipboardLocal = hostIsSelf && m_InputPolicy.unrestricted();
+    const auto configureApolloClipboard = [this, &media](auto* relay) {
+        if (!m_InputPolicy.unrestricted() || media.type != MediaType::GameStreamRtsp ||
+            !m_Backend || m_Backend->type() != QStringLiteral("gamestream") ||
+            m_Host->serverCertPem.isEmpty())
+            return;
+        const auto identity = IdentityManager::get()->identityForSeat(m_Host->identitySeat);
+        ApolloClipboard::Config config;
+        config.origin.setScheme("https");
+        config.origin.setHost(m_Host->activeAddress.address());
+        config.origin.setPort(m_Host->activeHttpsPort > 0 ? m_Host->activeHttpsPort
+                                                          : MW_HTTPS_PORT);
+        config.certificate = identity.certPem;
+        config.key = identity.keyPem;
+        config.serverCertificate = m_Host->serverCertPem;
+        config.uniqueId = effectiveUniqueId();
+        config.appleHost = m_Host->hostOs() == HostOsProbe::HostOs::MacOs;
+        relay->setApolloClipboard(config);
+    };
+
     qInfo() << "[Session] Clipboard sync" << (clipboardLocal ? "enabled" : "disabled")
             << "(host address:" << m_Host->activeAddress.address()
             << ", restricted:" << !m_InputPolicy.unrestricted() << ")";
@@ -809,6 +828,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         streamRelay->setHttpsPort(m_HttpsPort);
         streamRelay->setWsPath(m_WsPath);
         streamRelay->setClipboardEnabled(clipboardLocal);
+        if (!clipboardLocal) configureApolloClipboard(streamRelay);
         streamRelay->setInputPolicy(m_InputPolicy);
 
         connect(m_Engine, &IMediaEngine::connectionStarted, this,
@@ -855,6 +875,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // No QObject parent: it is moved onto a dedicated thread below.
         auto* relay = new MediaTrackRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
+        if (!clipboardLocal) configureApolloClipboard(relay);
         relay->setInputPolicy(m_InputPolicy);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
@@ -864,6 +885,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
+        if (!clipboardLocal && !m_AutoMode) configureApolloClipboard(signaling);
         signaling->setClientKind(m_ClientKind);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
@@ -922,6 +944,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // No QObject parent: it is moved onto a dedicated thread below.
         auto* relay = new DataChannelRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
+        if (!clipboardLocal) configureApolloClipboard(relay);
         relay->setInputPolicy(m_InputPolicy);
         relay->setStreamBitrateKbps(m_StreamBitrateKbps);
 
@@ -964,6 +987,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
+        if (!clipboardLocal && !m_AutoMode) configureApolloClipboard(signaling);
         signaling->setClientKind(m_ClientKind);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
@@ -1039,6 +1063,7 @@ void StreamSession::applyInputPolicy(const InputMsg::Policy& policy)
     push(m_Relay);
     push(m_MediaTrackRelay);
     push(m_StreamRelay);
+    push(m_Signaling);
 
     if (IMediaEngine* shim = m_Engine) {
         QMetaObject::invokeMethod(

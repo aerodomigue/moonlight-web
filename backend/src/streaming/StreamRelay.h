@@ -16,6 +16,7 @@
  */
 
 #pragma once
+#include "ApolloClipboard.h"
 
 #include "InputPolicy.h"
 
@@ -57,7 +58,11 @@ public:
     /// before start(), from the share activation the player joined with; the
     /// owner's own sessions leave it unrestricted. Mirrors RelayBase's, which
     /// this legacy relay does not inherit.
-    void setInputPolicy(const InputMsg::Policy& policy) { m_InputPolicy = policy; }
+    void setInputPolicy(const InputMsg::Policy& policy)
+    {
+        if (m_ApolloClipboard && !policy.unrestricted()) m_ApolloClipboard->stop();
+        m_InputPolicy = policy;
+    }
 
     void setServerHost(const QString& host) { m_ServerHost = host; }
     void setHttpsPort(quint16 port) { m_HttpsPort = port; }
@@ -80,6 +85,7 @@ public:
     /// clipboard) — see ClipboardBridge. Must be called before the relay is
     /// moved to its dedicated thread (Session does, right after creation).
     void setClipboardEnabled(bool enabled);
+    void setApolloClipboard(const ApolloClipboard::Config& config);
 
 signals:
     void sessionEnded();
@@ -141,6 +147,7 @@ private:
     // machine). Written once on the main thread before the relay moves to
     // its dedicated thread.
     bool m_ClipboardEnabled = false;
+    ApolloClipboard* m_ApolloClipboard = nullptr;
     // Same lifetime discipline as m_ClipboardEnabled: written before the move
     // to the relay thread, read-only afterwards.
     InputMsg::Policy m_InputPolicy;

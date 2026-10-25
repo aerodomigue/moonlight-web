@@ -16,6 +16,7 @@
  */
 
 #pragma once
+#include "ApolloClipboard.h"
 
 #include "RelayBase.h"
 #include "HostLagTracker.h"
@@ -105,14 +106,14 @@ public:
 
     void stop() override;
 
-    /// Hides RelayBase::setInputPolicy: in direct-input mode the policy is read
+    /// Overrides RelayBase::setInputPolicy: in direct-input mode the policy is read
     /// on a libdatachannel thread while the session pushes updates onto the
     /// relay thread, so the write goes under m_InputMutex. Same signature and
     /// meaning; callers hold a DataChannelRelay*, so they land here.
-    // cppcheck-suppress duplInheritedMember ; intentional non-virtual hide, see comment above
-    void setInputPolicy(const InputMsg::Policy& policy)
+    void setInputPolicy(const InputMsg::Policy& policy) override
     {
         std::lock_guard<std::mutex> lk(m_InputMutex);
+        if (m_ApolloClipboard && !policy.unrestricted()) m_ApolloClipboard->stop();
         RelayBase::setInputPolicy(policy);
     }
 
@@ -147,6 +148,7 @@ public:
     /// clipboard) — see ClipboardBridge. Must be called before the relay is
     /// moved to its dedicated thread (Session does, right after creation).
     void setClipboardEnabled(bool enabled);
+    void setApolloClipboard(const ApolloClipboard::Config& config);
 
     /// Stop answering every gap with a keyframe request, and let the picture
     /// repair itself instead.
@@ -530,6 +532,7 @@ private:
     // machine). Written once on the main thread before the relay moves to its
     // dedicated thread, read from relay/libdatachannel threads afterwards.
     bool m_ClipboardEnabled = false;
+    ApolloClipboard* m_ApolloClipboard = nullptr;
     /// See setRideOutLoss. Written once before the thread move, read on the
     /// relay thread afterwards.
     bool m_RideOutLoss = false;

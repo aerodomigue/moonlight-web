@@ -189,8 +189,36 @@ bool SignalingServer::start()
     return true;
 }
 
+void SignalingServer::setApolloClipboard(const ApolloClipboard::Config& config)
+{
+    // A separate, initially idle adapter: the WebRTC relay is stopped when
+    // switching to signaling WSS. Its terminal cancellation must stay terminal.
+    m_ApolloClipboard = new ApolloClipboard(config, this);
+    const auto permitted = [this] {
+        return !m_Stopping.load() && m_WsFallbackActive && m_WsClient && m_WsClient->isValid() &&
+               m_Relay && m_Relay->inputPolicy().unrestricted();
+    };
+    connect(m_ApolloClipboard, &ApolloClipboard::message, this,
+            [this, permitted](const QJsonObject& msg) {
+                if (permitted())
+                    m_WsClient->sendTextMessage(
+                        QString::fromUtf8(QJsonDocument(msg).toJson(QJsonDocument::Compact)));
+            });
+    connect(m_ApolloClipboard, &ApolloClipboard::chord, this,
+            [this, permitted, apple = config.appleHost](int key) {
+                if (!permitted() || !m_Shim) return;
+                const short modifier = apple ? 0x5B : 0x11;
+                const char mask = apple ? 0x08 : 0x02;
+                m_Shim->sendKeyEvent(modifier, true, mask, 0);
+                m_Shim->sendKeyEvent(static_cast<short>(key), true, mask, 0);
+                m_Shim->sendKeyEvent(static_cast<short>(key), false, mask, 0);
+                m_Shim->sendKeyEvent(modifier, false, 0, 0);
+            });
+}
+
 void SignalingServer::stop()
 {
+    if (m_ApolloClipboard) m_ApolloClipboard->stop();
     // Marshal onto the signaling thread when called cross-thread (main:
     // Session::quit). The QWebSocketServer/QWebSocket are bound to this thread.
     if (QThread::currentThread() != this->thread()) {
@@ -542,6 +570,7 @@ void SignalingServer::onWsTextMessage(const QString& message)
 
 void SignalingServer::onWsDisconnected()
 {
+    if (m_ApolloClipboard) m_ApolloClipboard->stop();
     QString closeReasonStr;
     QWebSocketProtocol::CloseCode closeCode = QWebSocketProtocol::CloseCodeNormal;
     if (m_WsClient) {
@@ -679,6 +708,7 @@ void SignalingServer::startWsFallback()
     QJsonDocument doc(fallbackMsg);
     m_WsClient->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
     qInfo() << "[SignalingServer] Sent fallback-ws notification to browser";
+    if (m_ApolloClipboard) m_ApolloClipboard->start();
 
     // Step 6: Emit dataChannelsOpen — signals StreamView that the transport
     // is ready (same as when WebRTC DataChannels open normally).
@@ -882,6 +912,11 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
     // The fallback path bypasses the relay's own switch, so it has to apply the
     // same policy — read from the relay so the two can never drift apart.
     if (m_Relay && !InputMsg::allowed(type, m_Relay->inputPolicy())) return;
+
+    if (m_ApolloClipboard && type.startsWith(QLatin1String("clipboard"))) {
+        if (m_Relay && m_Relay->inputPolicy().unrestricted()) m_ApolloClipboard->receive(msg);
+        return;
+    }
 
     // Same input handling as DataChannelRelay::onInputMessage
     if (type == "keydown" || type == "keyup") {

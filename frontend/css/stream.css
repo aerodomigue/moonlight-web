@@ -1875,3 +1875,22 @@ body.streaming-active::after {
     padding: 14px 18px;
     font-size: 1rem;
 }
+
+.exclusive-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.exclusive-controls select {
+    max-width: 150px;
+    color: inherit;
+    background: #202020;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 5px;
+}
+.exclusive-controls [role='status'] {
+    max-width: 220px;
+    font-size: 11px;
+}
