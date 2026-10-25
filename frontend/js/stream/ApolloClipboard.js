@@ -94,7 +94,7 @@ export class ApolloClipboard {
                 this.pending(false);
             }
         } catch (_) {
-            /* The visible copy action supplies a fresh gesture. */
+            /* Keep the text pending for the next existing user gesture. */
         }
     }
     async paste(text) {

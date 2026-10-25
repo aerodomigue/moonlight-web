@@ -521,9 +521,9 @@ body.streaming-active::after {
     transition: none;
 }
 
-/* ── Mouse-gaming-mode exit reminder (discreet, draggable, top-center) ───────
-   Shown only while gaming mode has the mouse captured. Reminds the single
-   combo that releases the mouse, the full keyboard lock and fullscreen. */
+/* ── Capture shortcut reminder (discreet, draggable, top-center) ───────────
+   Visible during the stream even with capture disabled. M toggles capture;
+   fullscreen remains independent. */
 .stream-gaming-overlay {
     position: fixed;
     top: max(10px, env(safe-area-inset-top));
@@ -535,7 +535,7 @@ body.streaming-active::after {
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
-    display: none; /* revealed via .visible when captured */
+    display: none; /* revealed via .visible once streaming */
     align-items: center;
     gap: 8px;
     border-radius: 8px;
@@ -951,7 +951,7 @@ body.streaming-active::after {
 .btn-stream-fs:active {
     transform: translate(-50%, -50%) scale(0.95);
 }
-/* Gaming mode: the fullscreen-toggle combo (…+X) shown on the button. */
+/* The fullscreen-toggle combo (…+X) remains visible with capture disabled. */
 .btn-stream-fs .fs-combo {
     display: inline-flex;
     align-items: center;
@@ -1874,23 +1874,4 @@ body.streaming-active::after {
     width: 100%;
     padding: 14px 18px;
     font-size: 1rem;
-}
-
-.exclusive-controls {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-.exclusive-controls select {
-    max-width: 150px;
-    color: inherit;
-    background: #202020;
-    border: 1px solid #555;
-    border-radius: 4px;
-    padding: 5px;
-}
-.exclusive-controls [role='status'] {
-    max-width: 220px;
-    font-size: 11px;
 }

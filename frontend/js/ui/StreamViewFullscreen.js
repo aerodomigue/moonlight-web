@@ -443,7 +443,6 @@ export class StreamViewFullscreen {
      * @this {StreamViewInstance} */
     _exitGamingMode() {
         this._exclusive?.disable();
-        this._saveExclusiveChoice();
     }
 
     /**

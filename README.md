@@ -49,18 +49,22 @@ permanent arrête les rafraîchissements du menu.
 Avec **Apollo distant**, le presse-papiers texte est bidirectionnel (Unicode,
 multilignes, maximum **256 Kio en UTF-8**). Les permissions Apollo de lecture,
 d’écriture et de clavier s’appliquent séparément au certificat déjà appairé.
-Le statut du presse-papiers apparaît dans l’en-tête du flux. Le collage attend
-l’écriture réussie sur Apollo avant d’envoyer le raccourci ; un échec ne colle
+Le presse-papiers fonctionne sans contrôle supplémentaire dans le flux. Le collage
+attend l’écriture réussie sur Apollo avant d’envoyer le raccourci ; un échec ne colle
 pas l’ancien contenu. La lecture ne s’effectue que pendant un flux au premier
 plan, au maximum une fois par seconde. Si le navigateur refuse l’écriture
-locale, utilisez **« Copier sur cet appareil »**. Les images/fichiers, les invités
+locale, le texte reste en mémoire et la copie est retentée lors des gestes utilisateur
+existants ; aucune action de secours n’est affichée. Les images/fichiers, les invités
 restreints et Sunshine sans cette extension ne sont pas pris en charge par cet
 adaptateur. Le presse-papiers de la capture locale reste disponible.
 
 Le **Mode exclusif** propose **Souris**, **Clavier** ou **Souris + clavier**,
-avec une activation indépendante du choix. Il utilise Pointer Lock standard,
-sans entrée souris brute. Keyboard Lock dépend du navigateur et nécessite le
-plein écran ; l’interface signale une capture indisponible ou partielle.
+avec une activation au démarrage indépendante du choix, dans les paramètres.
+Ces paramètres sont maîtres : M et Z ne modifient que le flux en cours ; chaque
+nouveau flux reprend la configuration enregistrée. Le rappel M reste visible
+dans le bandeau même lorsque la capture est désactivée. La capture utilise Pointer
+Lock standard, sans entrée souris brute. Keyboard Lock dépend du navigateur et nécessite le
+plein écran ; une indication ponctuelle signale une capture indisponible ou partielle.
 
 | Action | Windows / Linux | macOS |
 | --- | --- | --- |
