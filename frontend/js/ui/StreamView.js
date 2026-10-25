@@ -11088,7 +11088,7 @@ export class StreamView {
      */
     toggleFullscreen() {
         if (document.fullscreenElement) {
-            document.exitFullscreen().catch((err) => {
+            this._changeFullscreen(() => document.exitFullscreen()).catch((err) => {
                 console.warn('[StreamView] exitFullscreen failed:', err.message);
             });
         } else if (this._cssFullscreen) {

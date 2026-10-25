@@ -133,6 +133,26 @@ try {
             keys: ['keydown', 'keyup'],
             held: false,
         });
+        // Changing fullscreen must preserve runtime capture intent in both directions.
+        for (const fullscreen of [false, true, false, true]) {
+            await page.keyboard.press('Control+Alt+Shift+X');
+            await page.waitForFunction(
+                (expected) => !!document.fullscreenElement === expected,
+                fullscreen,
+            );
+            await page.waitForFunction(
+                ({ mode, fullscreen }) => {
+                    const capture = window.streamFixture._exclusive;
+                    return (
+                        capture.enabled &&
+                        capture.keyboardLocked === fullscreen &&
+                        (document.pointerLockElement === window.streamFixture.inputEl) ===
+                            (mode === 'both')
+                    );
+                },
+                { mode, fullscreen },
+            );
+        }
         await page.keyboard.press('Control+Alt+Shift+Z');
         await page.waitForFunction(
             () => !window.streamFixture._exclusive.enabled && !document.pointerLockElement,
@@ -165,6 +185,54 @@ try {
             preferences,
         );
         await page.evaluate(() => window.streamFixture.destroy());
+    }
+    for (const mode of ['mouse', 'keyboard', 'both']) {
+        await page.evaluate((mode) => {
+            window.sent = [];
+            localStorage.setItem(
+                'mw-streaming-settings',
+                JSON.stringify({ exclusive_mode: mode, exclusive_enabled: false }),
+            );
+        }, mode);
+        const preferences = await page.evaluate(() =>
+            localStorage.getItem('mw-streaming-settings'),
+        );
+        await page.evaluate(() => window.mountStreamFixture());
+        // Starting disabled must stay disabled through either transition.
+        for (const fullscreen of [true, false]) {
+            await page.keyboard.press('Control+Alt+Shift+X');
+            await page.waitForFunction(
+                (expected) => !!document.fullscreenElement === expected,
+                fullscreen,
+            );
+            assert.equal(await page.evaluate(() => window.streamFixture._exclusive.enabled), false);
+        }
+        await page.keyboard.press('Control+Alt+Shift+M');
+        for (const fullscreen of [true, false, true, false]) {
+            await page.keyboard.press('Control+Alt+Shift+X');
+            await page.waitForFunction(
+                ({ mode, fullscreen }) => {
+                    const capture = window.streamFixture._exclusive;
+                    return (
+                        !!document.fullscreenElement === fullscreen &&
+                        capture.enabled &&
+                        capture.keyboardLocked === (fullscreen && mode !== 'mouse') &&
+                        (document.pointerLockElement === window.streamFixture.inputEl) ===
+                            (mode !== 'keyboard')
+                    );
+                },
+                { mode, fullscreen },
+            );
+        }
+        await page.keyboard.press('Control+Alt+Shift+Z');
+        assert.equal(
+            await page.evaluate(() => localStorage.getItem('mw-streaming-settings')),
+            preferences,
+        );
+        await page.evaluate(() => window.streamFixture.destroy());
+        console.log(
+            `PASS: fullscreen round trips preserve ${mode} capture, disabled intent and saved preferences.`,
+        );
     }
     assert.deepEqual(errors, []);
     console.log(

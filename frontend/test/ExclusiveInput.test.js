@@ -178,6 +178,120 @@ describe('exclusive input lifecycle', () => {
         await tick();
         expect(element.requestPointerLock).toHaveBeenCalledOnce();
     });
+    it.each(['mouse', 'keyboard', 'both'])(
+        'preserves %s capture through browser lock loss on fullscreen round trips',
+        async (mode) => {
+            capture.mode = mode;
+            await capture.attempt();
+            await tick();
+            for (const fullscreen of [false, true, false, true]) {
+                await capture.transitionFullscreen(async () => {
+                    // Native fullscreen transitions may drop pointer lock before
+                    // or after fullscreenchange, independently of user intent.
+                    doc.pointerLockElement = null;
+                    doc.dispatchEvent(new Event('pointerlockchange'));
+                    await vi.advanceTimersByTimeAsync(0);
+                    doc.fullscreenElement = fullscreen ? {} : null;
+                    doc.dispatchEvent(new Event('fullscreenchange'));
+                });
+                await tick();
+                expect(capture.enabled).toBe(true);
+                expect(capture.mode).toBe(mode);
+                expect(doc.pointerLockElement).toBe(mode === 'keyboard' ? null : element);
+                expect(capture.keyboardLocked).toBe(fullscreen && mode !== 'mouse');
+            }
+        },
+    );
+    it.each(['disable', 'toggle', 'destroy', 'suspend'])(
+        'respects %s while a fullscreen request is pending',
+        async (action) => {
+            await capture.attempt();
+            let finish;
+            const transition = capture.transitionFullscreen(
+                () =>
+                    new Promise((r) => {
+                        finish = r;
+                    }),
+            );
+            capture[action]();
+            finish();
+            await transition;
+            await tick();
+            expect(doc.pointerLockElement).toBe(null);
+            expect(capture.keyboardLocked).toBe(false);
+            expect(element.requestPointerLock).toHaveBeenCalledOnce();
+        },
+    );
+    it('does not enable disabled capture and ignores overlapping fullscreen requests', async () => {
+        capture.disable();
+        let finish;
+        const operation = vi.fn(
+            () =>
+                new Promise((r) => {
+                    finish = r;
+                }),
+        );
+        const first = capture.transitionFullscreen(operation);
+        await capture.transitionFullscreen(operation);
+        expect(operation).toHaveBeenCalledOnce();
+        finish();
+        await first;
+        expect(capture.enabled).toBe(false);
+        expect(element.requestPointerLock).not.toHaveBeenCalled();
+    });
+    it('restores capture after a rejected fullscreen request without retrying fullscreen', async () => {
+        await capture.attempt();
+        const operation = vi.fn().mockRejectedValue(new Error('Fullscreen denied'));
+        await expect(capture.transitionFullscreen(operation)).rejects.toThrow('Fullscreen denied');
+        await tick();
+        expect(operation).toHaveBeenCalledOnce();
+        expect(capture.enabled).toBe(true);
+        expect(doc.pointerLockElement).toBe(element);
+        expect(capture.keyboardLocked).toBe(true);
+    });
+    it('attempts recapture only once if the browser refuses it after fullscreen', async () => {
+        await capture.attempt();
+        element.requestPointerLock.mockRejectedValue(new Error('NotAllowedError'));
+        await capture.transitionFullscreen(async () => {});
+        await tick();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(element.requestPointerLock).toHaveBeenCalledTimes(2);
+        expect(capture.enabled).toBe(true);
+        expect(capture.needsGesture).toBe(true);
+    });
+    it('discards a pointer grant started before fullscreen and restores the current intent', async () => {
+        let grant;
+        element.requestPointerLock.mockImplementationOnce(
+            () =>
+                new Promise((r) => {
+                    grant = () => {
+                        doc.pointerLockElement = element;
+                        doc.dispatchEvent(new Event('pointerlockchange'));
+                        r();
+                    };
+                }),
+        );
+        const pending = capture.attempt();
+        await capture.transitionFullscreen(async () => {});
+        grant();
+        await pending;
+        await tick();
+        expect(capture.enabled).toBe(true);
+        expect(doc.pointerLockElement).toBe(element);
+        expect(element.requestPointerLock).toHaveBeenCalledTimes(2);
+    });
+    it('does not reacquire after Escape during a fullscreen transition', async () => {
+        await capture.attempt();
+        await capture.transitionFullscreen(async () => {
+            const event = new Event('keydown');
+            event.key = 'Escape';
+            doc.dispatchEvent(event);
+        });
+        await tick();
+        expect(capture.enabled).toBe(false);
+        expect(doc.pointerLockElement).toBe(null);
+        expect(element.requestPointerLock).toHaveBeenCalledOnce();
+    });
     it('migrates old settings while separating selection and activation', () => {
         expect(exclusiveSettings({ gaming_mode: true })).toEqual({ mode: 'both', enabled: true });
         expect(exclusiveSettings({ gaming_mode: false })).toEqual({
