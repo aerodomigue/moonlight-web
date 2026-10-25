@@ -1023,7 +1023,10 @@ export class HostListView {
                                 // Gated on the declared lobby capability, not
                                 // the product name — a co-op host manages its
                                 // own players in its own streamed UI.
-                                !booth && host.isAvailable && host.supportsLobbies !== true
+                                BackendClient.canManageShares === true &&
+                                !booth &&
+                                host.isAvailable &&
+                                host.supportsLobbies !== true
                                     ? `<button class="host-menu-item btn-share" data-uuid="${host.uuid}">${t('sharing.share')}</button>`
                                     : ''
                             }
@@ -1739,6 +1742,7 @@ export class HostListView {
      * spend their PIN is what starts it.
      */
     async _openShareBoard(host) {
+        if (BackendClient.canManageShares !== true) return;
         const board = new ShareBoard({
             hostUuid: host.uuid,
             hostName: host.displayName || host.name,

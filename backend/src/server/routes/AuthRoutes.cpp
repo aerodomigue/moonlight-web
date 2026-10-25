@@ -22,6 +22,7 @@
 #include "server/AuthManager.h"
 #include "server/OidcClient.h"
 #include "server/AppSettings.h"
+#include "server/ShareManager.h"
 #include "server/NetClassify.h"
 #include "network/GeoIpService.h"
 #include "common/Logger.h"
@@ -590,6 +591,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         const auto candidate = authManager.sessionForToken(currentToken);
         if (!candidate.token.isEmpty() && candidate.authMethod == "sso" && !req.ssoAuthorized) {
             auto response = HttpResponse::json({{"authenticated", false},
+                                                {"can_manage_shares", false},
                                                 {"is_localhost", false},
                                                 {"is_host_machine", false},
                                                 {"auth_method", "sso"},
@@ -667,6 +669,9 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                authManager.passwordUnlockEligible(currentToken))))
                 ? "admin"
                 : "user";
+        obj["can_manage_shares"] = obj["authenticated"].toBool() &&
+                                   req.userId == UserStore::localId() && !req.adminLocked &&
+                                   ShareManager::kSessionSharingEnabled;
         obj["admin_access"] = isLocal;
         obj["user_admin_enabled"] = true;
         obj["pin_enabled"] = authManager.config().pin;

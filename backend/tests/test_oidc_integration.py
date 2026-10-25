@@ -511,6 +511,26 @@ class OidcIsolation(unittest.TestCase):
         self.assertEqual(alice.request("/api/auth/status")[1]["user"]["id"], alice_status["user"]["id"])
         self.assertEqual(alice.request("/api/hosts")[1]["hosts"][0]["uuid"], alice_pc)
 
+    def test_sharing_capability_is_local_owner_only(self):
+        visitor = self.start()
+        self.assertFalse(visitor.request("/api/auth/status")[1]["can_manage_shares"])
+        admin, headers = self.administrator()
+        self.assertFalse(admin.request("/api/auth/status")[1]["can_manage_shares"])
+        self.assertEqual(admin.request("/api/share/status")[0], 403)
+        self.login(visitor)
+        self.assertFalse(visitor.request("/api/auth/status")[1]["can_manage_shares"])
+        pin = admin.request("/api/auth/pin", {"user_id": "local-owner"}, extra_headers=headers)[1]["pin"]
+        owner = Browser(self.base)
+        self.assertEqual(owner.request("/api/auth/validate", {"pin": pin})[0], 200)
+        self.assertTrue(owner.request("/api/auth/status")[1]["can_manage_shares"])
+        self.assertEqual(owner.request("/api/share/status")[0], 200)
+        local = admin.request("/api/admin/users", {"name": "Local sharing visitor"}, extra_headers=headers)[1]["user"]
+        pin = admin.request("/api/admin/users/" + local["id"] + "/pin", {}, extra_headers=headers)[1]["pin"]
+        ordinary = Browser(self.base)
+        self.assertEqual(ordinary.request("/api/auth/validate", {"pin": pin})[0], 200)
+        self.assertFalse(ordinary.request("/api/auth/status")[1]["can_manage_shares"])
+        self.assertEqual(ordinary.request("/api/share/status")[0], 403)
+
     def test_internal_host_fetch_does_not_inherit_loopback_admin(self):
         browser = self.start(trust_proxy=False)
         headers = {"Host": "localhost:" + self.base.rsplit(":", 1)[1]}

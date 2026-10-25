@@ -216,8 +216,8 @@ export class BackendClient {
         }
     }
 
-    static async get(path) {
-        const resp = await authenticatedFetch(path);
+    static async get(path, options) {
+        const resp = await authenticatedFetch(path, options);
         if (!resp.ok) return this._handleError(resp, path);
         return this._json(resp);
     }
@@ -492,8 +492,7 @@ export class BackendClient {
     }
 
     // ── Session sharing ────────────────────────────────────────────────────
-    // Owner side: the rows of the sharing board. Any authenticated user may
-    // share; no admin key involved.
+    // Owner side: only the local owner may manage sharing; no admin key involved.
 
     /**
      * The rows of the sharing board, and the guests' picture height for the
@@ -502,11 +501,12 @@ export class BackendClient {
      * one stream of it). Without a host, the one being streamed.
      * @param {string} [hostUuid]
      */
-    static async getShareStatus(hostUuid) {
+    static async getShareStatus(hostUuid, options) {
         return this.get(
             hostUuid
                 ? `/api/share/status?host=${encodeURIComponent(hostUuid)}`
                 : '/api/share/status',
+            options,
         );
     }
     /**
@@ -721,6 +721,7 @@ export class BackendClient {
             acceptAccount(status.user);
             this.currentUser = status.user;
         }
+        this.canManageShares = status.can_manage_shares === true;
         this.pinEnabled = status.pin_enabled !== false;
         if (status.authenticated && status.host_public_key) {
             try {

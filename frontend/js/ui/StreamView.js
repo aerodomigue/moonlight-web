@@ -4227,7 +4227,13 @@ export class StreamView {
      * appears.
      */
     _mountShareMenu() {
-        if (this._playerMode || this._shareMenu || !this._rootEl) return;
+        if (
+            BackendClient.canManageShares !== true ||
+            this._playerMode ||
+            this._shareMenu ||
+            !this._rootEl
+        )
+            return;
         const header = /** @type {HTMLElement} */ (this._rootEl.querySelector('.stream-header'));
         const quitBtn = /** @type {HTMLElement} */ (this._rootEl.querySelector('#btn-stream-quit'));
         if (!header || !quitBtn) return;
