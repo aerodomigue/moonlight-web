@@ -1543,7 +1543,6 @@ export class StreamView {
         // streamed host is the backend machine (shared clipboard).
         this._clipboardEnabled = false;
         this._apolloClipboard = null;
-        this._clipboardCopyButton = null;
         // Swallowed Ctrl/Cmd+V keydown waiting for its native 'paste' event
         // ({ code, keydownMsg, injectCtrl, timer }).
         this._pendingPasteKey = null;
@@ -2317,11 +2316,7 @@ export class StreamView {
         });
         this._bindLatencyDetailReveal(this._overlayEl);
 
-        // ── Mouse-gaming-mode exit reminder (top-center, draggable) ────────
-        // Discreet card that only appears once gaming mode has captured the
-        // mouse. It reminds the single combo that frees the cursor, releases
-        // the full keyboard lock and leaves fullscreen. Devices without a
-        // mouse never use gaming mode, so it is never built there.
+        // Discreet capture shortcut, beside Fullscreen, including when capture is off.
         if (supportsGamingMode()) {
             this._gamingOverlay = document.createElement('div');
             this._gamingOverlay.id = 'stream-gaming-overlay';
@@ -2421,7 +2416,7 @@ export class StreamView {
             '<span class="fs-label">' +
             t('stream.fullscreen') +
             '</span>' +
-            (this._gamingMode ? this._fsComboKeysHtml() : '');
+            (supportsGamingMode() ? this._fsComboKeysHtml() : '');
         this._mobileFsBtn.title = t('stream.enterFullscreen');
         this._mobileFsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -6081,13 +6076,13 @@ export class StreamView {
             html += '<kbd>' + keys[i] + '</kbd>';
         }
         html += '</span>';
-        html += '<span class="gm-text">' + t('stream.gamingExitTitle') + '</span>';
+        html += '<span class="gm-text">' + t('stream.scMouseMode') + '</span>';
         this._gamingOverlay.innerHTML = html;
-        this._gamingOverlay.title = t('stream.gamingExitTitle');
+        this._gamingOverlay.title = t('stream.scMouseMode');
     }
 
     /**
-     * Show the gaming-mode reminder while gaming mode is on, and decide how
+     * Show the capture shortcut throughout the stream, and decide how
      * long it stays.
      *
      * Docked in the header beside the Fullscreen button, it covers nothing and
@@ -6098,11 +6093,8 @@ export class StreamView {
      */
     _updateGamingOverlay() {
         const el = this._gamingOverlay;
-        // Visible whenever gaming mode is on (after the first frame), NOT only
-        // while the mouse is captured: a captured (pointer-locked) cursor cannot
-        // be moved onto the card to drag it, so it must be reachable pre-capture.
-        const show =
-            !!el && (this._exclusive?.enabled ?? this._gamingMode) && this._firstFrameRendered;
+        // Activation must be discoverable even when capture starts disabled.
+        const show = !!el && this._firstFrameRendered;
         if (el) el.classList.toggle('visible', show);
         const docked = this._positionGamingOverlay();
         this._setGamingOverlayFloating(show && !docked);
@@ -6146,7 +6138,7 @@ export class StreamView {
     }
 
     /**
-     * Lay out the middle of the header, and place the gaming-mode reminder.
+     * Lay out the middle of the header, and place the capture shortcut reminder.
      *  - Out of fullscreen (Fullscreen button laid out): the volume control on
      *    the button's left, the reminder on its right — outside the streamed
      *    image, so it never covers the game — and the group centred as one.
@@ -6162,6 +6154,8 @@ export class StreamView {
         // Default: button back to its CSS-centered position (cleared each pass so
         // the group-centering offset below is never left stale).
         if (fsBtn) fsBtn.style.transform = '';
+        const brand = this._rootEl?.querySelector('.stream-brand');
+        if (brand) brand.style.visibility = '';
         // Require a REAL on-screen rect: in native fullscreen the header (and its
         // button) is hidden via CSS, so style.display stays '' while the rect
         // collapses to 0. Docking off a 0-rect would slam the card to top-left
@@ -6192,6 +6186,11 @@ export class StreamView {
             const shift = (right - left) / 2;
             if (shift) fsBtn.style.transform = `translate(calc(-50% - ${shift}px), -50%)`;
             const rb = fsBtn.getBoundingClientRect();
+            // The brand is optional; never let it run beneath the wider shortcut
+            // group. Restore it automatically when the window has room again.
+            if (brand && brand.getBoundingClientRect().right + gap > rb.left - left) {
+                brand.style.visibility = 'hidden';
+            }
             if (vol && vol.parentElement) {
                 // Anchored by its right edge (translateX(-100%) in the CSS).
                 const hr = vol.parentElement.getBoundingClientRect();
@@ -6216,7 +6215,7 @@ export class StreamView {
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────
 
     _updateOverlay() {
-        // Refresh the gaming-mode exit reminder on the same 500ms tick so it
+        // Refresh the capture shortcut reminder on the same 500ms tick so it
         // appears once streaming starts, independent of the perf-stats setting.
         this._updateGamingOverlay();
 
@@ -7290,13 +7289,12 @@ export class StreamView {
             if (!this._apolloClipboard) {
                 this._apolloClipboard = new ApolloClipboard({
                     send: (message) => this.webrtc.send(message),
-                    pending: (visible) => this._showClipboardCopy(visible),
+                    pending: () => {}, // Retry on existing user gestures, without a copy action.
                     error: (reason) => Toast.warning(t(`stream.clipboard_${reason}`)),
                 });
             }
             this._clipboardEnabled = msg.write === true;
             this._apolloClipboard.handle(msg);
-            this._showClipboardCapabilities(msg);
             return;
         }
         if (msg.type === 'clipboardchunk' || msg.type === 'clipboarderror') {
@@ -8168,7 +8166,6 @@ export class StreamView {
                 releaseInputs: () => this._releaseAllPhysKeys(),
                 change: (state) => this._applyExclusiveState(state),
             });
-            this._createExclusiveControls();
             this._applyExclusiveState(this._exclusive);
         }
     }
@@ -9189,8 +9186,6 @@ export class StreamView {
             this._exclusive.destroy();
             this._exclusive = null;
         }
-        this._exclusiveControls?.remove();
-        this._exclusiveControls = null;
         if (this._gamepadManager) this._gamepadManager.stop();
         if (this._hidPassthrough) {
             this._hidPassthrough.stop();
@@ -10941,45 +10936,6 @@ export class StreamView {
         this._sendKeyEvent(pending.keydownMsg);
     }
 
-    /** Host clipboard changed: mirror it into the local clipboard. Browsers
-     *  may reject the write outside a user gesture (Safari always, Firefox
-     *  when the last gesture is >5s old) — keep the text pending and retry
-     *  on the next keystroke/pointer gesture. */
-    _showClipboardCapabilities(msg) {
-        const header = this._rootEl?.querySelector('.stream-header');
-        if (!header) return;
-        if (!this._clipboardStatus) {
-            this._clipboardStatus = document.createElement('span');
-            this._clipboardStatus.className = 'clipboard-capabilities';
-            this._clipboardStatus.setAttribute('role', 'status');
-            header.appendChild(this._clipboardStatus);
-        }
-        const key =
-            msg.read && msg.write ? 'both' : msg.read ? 'read' : msg.write ? 'write' : 'none';
-        this._clipboardStatus.textContent = t(`stream.clipboard_cap_${key}`);
-    }
-
-    _showClipboardCopy(visible) {
-        if (!visible) {
-            this._clipboardCopyButton?.remove();
-            this._clipboardCopyButton = null;
-            return;
-        }
-        if (this._clipboardCopyButton || !this.streamEl) return;
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn clipboard-copy-action';
-        button.textContent = t('stream.clipboard_copyLocal');
-        button.style.cssText =
-            'position:absolute;top:60px;right:16px;z-index:100;pointer-events:auto';
-        button.addEventListener('click', (event) => {
-            event.stopPropagation();
-            this._apolloClipboard?.copyPending();
-        });
-        this.streamEl.appendChild(button);
-        this._clipboardCopyButton = button;
-    }
-
     _applyHostClipboard(text) {
         if (!text) return;
         this._pendingClipboardWrite = text;
@@ -11111,11 +11067,9 @@ export class StreamView {
         // keystroke to ask for it has nothing left to do.
         if (this.pointerLocked) this._disarmPointerCapture();
         this._mouseFocused = this.pointerLocked;
-        // The hint asks for a click only gaming mode answers. Leaving gaming
-        // mode lets the lock go afterwards, asynchronously: shown again there,
-        // the hint stayed over the desktop-mode picture for good (12/10/2026).
+        // Refusals use a transient notice, never a permanent capture panel.
         if (this.hintEl) {
-            this.hintEl.style.display = this._gamingMode && !this.pointerLocked ? 'flex' : 'none';
+            this.hintEl.style.display = 'none';
         }
         // Refresh the capture reminder independently of Keyboard Lock.
         this._updateGamingOverlay();
@@ -11144,30 +11098,9 @@ export class StreamView {
         }
     }
 
-    /**
-     * Toggle mouse mode between gaming (relative, pointer lock) and
-     * desktop (absolute coordinates, no pointer lock).
-     *
-     * Gaming mode:   pointer-lock-based relative mouse, click to capture
-     * Desktop mode:  absolute mouse coordinates, cursor visible, no capture
-     *
-     * Re-binds mouse event handlers for the new mode.
-     */
+    /** Toggle capture for this stream only; saved settings govern the next launch. */
     toggleMouseMode() {
         this._exclusive?.toggle();
-        this._saveExclusiveChoice();
-    }
-
-    _saveExclusiveChoice() {
-        if (!this._exclusive) return;
-        try {
-            const settings = JSON.parse(localStorage.getItem('mw-streaming-settings') || '{}');
-            settings.exclusive_mode = this._exclusive.mode;
-            settings.exclusive_enabled = this._exclusive.enabled;
-            localStorage.setItem('mw-streaming-settings', JSON.stringify(settings));
-        } catch (_) {
-            /* Capture remains usable when browser storage is unavailable. */
-        }
     }
 
     _setExclusiveMouse(enabled) {
@@ -11202,66 +11135,18 @@ export class StreamView {
     _applyExclusiveState(state) {
         this._setExclusiveMouse(state.wantsMouse && this._mouseAllowed);
         this.handlePointerLockChange();
-        if (this.hintEl) {
-            this.hintEl.textContent = t('stream.exclusiveResume');
-            this.hintEl.style.display =
-                state.enabled && state.wantsMouse && !state.pointerLocked && !state.suspended
-                    ? 'flex'
-                    : 'none';
-        }
-        if (this._exclusiveToggle) {
-            this._exclusiveToggle.textContent = t(
-                state.enabled && (state.needsGesture || state.suspended)
-                    ? 'stream.exclusiveResume'
-                    : state.enabled
-                      ? 'stream.exclusiveRelease'
-                      : 'stream.exclusiveCapture',
-            );
-            this._exclusiveToggle.setAttribute('aria-pressed', String(state.enabled));
-            this._exclusiveToggle.title = state.keyboardUnavailable
-                ? t('stream.exclusiveKeyboardUnavailable')
-                : '';
-        }
-        if (this._exclusiveStatus) {
-            this._exclusiveStatus.textContent = state.keyboardUnavailable
-                ? t('stream.exclusiveKeyboardUnavailable')
-                : state.needsGesture
-                  ? t('stream.exclusiveResume')
-                  : '';
-        }
-        if (this._exclusiveSelect) this._exclusiveSelect.value = state.mode;
+        if (this.hintEl) this.hintEl.style.display = 'none';
+        const notice =
+            state.enabled && !state.suspended
+                ? state.keyboardUnavailable
+                    ? 'stream.exclusiveKeyboardUnavailable'
+                    : state.needsGesture
+                      ? 'stream.exclusiveResume'
+                      : null
+                : null;
+        if (notice && notice !== this._exclusiveNotice) this._showTransientHint(t(notice), 4000);
+        this._exclusiveNotice = notice;
         this._updateGamingOverlay();
-    }
-
-    _createExclusiveControls() {
-        const header = this._rootEl?.querySelector('.stream-header');
-        if (!header || this._exclusiveControls) return;
-        const controls = document.createElement('div');
-        controls.className = 'exclusive-controls';
-        const select = document.createElement('select');
-        select.setAttribute('aria-label', t('settings.exclusiveTarget'));
-        for (const mode of ['mouse', 'keyboard', 'both']) {
-            const option = document.createElement('option');
-            option.value = mode;
-            option.textContent = t(`settings.exclusive_${mode}`);
-            select.appendChild(option);
-        }
-        select.addEventListener('change', () => {
-            this._exclusive?.select(select.value);
-            this._saveExclusiveChoice();
-        });
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn';
-        button.addEventListener('click', () => this.toggleMouseMode());
-        const status = document.createElement('span');
-        status.setAttribute('role', 'status');
-        controls.append(select, button, status);
-        header.appendChild(controls);
-        this._exclusiveControls = controls;
-        this._exclusiveSelect = select;
-        this._exclusiveToggle = button;
-        this._exclusiveStatus = status;
     }
 
     // =========================================================================
@@ -12573,9 +12458,6 @@ export class StreamView {
 
         this._apolloClipboard?.destroy();
         this._apolloClipboard = null;
-        this._clipboardStatus?.remove();
-        this._clipboardStatus = null;
-        this._showClipboardCopy(false);
         this._pendingClipboardWrite = null;
         if (this._pendingPasteKey) clearTimeout(this._pendingPasteKey.timer);
         this._pendingPasteKey = null;

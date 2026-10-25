@@ -10,6 +10,7 @@ try {
         extraHTTPHeaders: { 'X-Forwarded-For': '203.0.113.20', 'X-Forwarded-Proto': 'https' },
     });
     const page = await context.newPage();
+    page.setDefaultTimeout(15000);
     page.on('pageerror', (e) => errors.push(e.message));
     await page.goto(process.argv[2], { waitUntil: 'networkidle' });
     await page.locator('#btn-login-sso').click();
@@ -65,57 +66,140 @@ try {
     });
     // Mount the real stream UI with a silent transport fixture. No PC launch.
     await page.evaluate(async () => {
-        const { StreamView } = await import('/js/ui/StreamView.js');
-        const patched = ['setupWebRtc', 'startRenderLoop', 'initAudioAsync'];
-        const originals = Object.fromEntries(patched.map((k) => [k, StreamView.prototype[k]]));
-        StreamView.prototype.setupWebRtc = function () {
-            this.webrtc = { send() {}, close() {} };
+        window.mountStreamFixture = async () => {
+            const { exclusiveSettings } = await import('/js/stream/ExclusiveInput.js');
+            const { StreamView } = await import('/js/ui/StreamView.js');
+            const patched = ['setupWebRtc', 'startRenderLoop', 'initAudioAsync'];
+            const originals = Object.fromEntries(patched.map((k) => [k, StreamView.prototype[k]]));
+            StreamView.prototype.setupWebRtc = function () {
+                this.webrtc = { send() {}, close() {} };
+            };
+            StreamView.prototype.startRenderLoop = function () {};
+            StreamView.prototype.initAudioAsync = async function () {};
+            const container = document.createElement('div');
+            document.body.append(container);
+            try {
+                window.streamFixture = new StreamView(
+                    container,
+                    'wss://fixture.invalid',
+                    { name: 'Apollo fixture', uuid: 'fixture' },
+                    'h264',
+                    false,
+                    false,
+                    false,
+                    'webrtc',
+                    undefined,
+                    false,
+                    false,
+                    2,
+                    false,
+                    'auto',
+                    'off',
+                    'auto',
+                    false,
+                    false,
+                    false,
+                    true,
+                    {
+                        exclusiveInput: exclusiveSettings(
+                            JSON.parse(localStorage.getItem('mw-streaming-settings')),
+                        ),
+                    },
+                );
+            } finally {
+                Object.assign(StreamView.prototype, originals);
+            }
+            window.streamFixture._firstFrameRendered = true;
+            window.streamFixture._hideStartupOverlay();
+            window.streamFixture._updateGamingOverlay();
+            window.streamFixture._handleStatsMessage({
+                type: 'clipboardcaps',
+                remote: true,
+                read: true,
+                write: true,
+            });
         };
-        StreamView.prototype.startRenderLoop = function () {};
-        StreamView.prototype.initAudioAsync = async function () {};
-        const container = document.createElement('div');
-        document.body.append(container);
-        try {
-            window.streamFixture = new StreamView(
-                container,
-                'wss://fixture.invalid',
-                { name: 'Apollo fixture', uuid: 'fixture' },
-                'h264',
-                false,
-                false,
-                false,
-                'webrtc',
-                undefined,
-                false,
-                false,
-                2,
-                false,
-                'auto',
-                'off',
-                'auto',
-                false,
-                false,
-                false,
-                true,
-                { exclusiveInput: { mode: 'mouse', enabled: false } },
-            );
-        } finally {
-            Object.assign(StreamView.prototype, originals);
-        }
     });
-    await page.locator('.exclusive-controls select').selectOption('keyboard');
-    await page.locator('.exclusive-controls select').selectOption('both');
-    await page.locator('.exclusive-controls select').selectOption('mouse');
-    await page.locator('.exclusive-controls button').click();
-    await page.waitForFunction(() => document.pointerLockElement === window.streamFixture.inputEl);
+    for (const mode of ['mouse', 'keyboard', 'both']) {
+        for (const enabled of [false, true]) {
+            console.log(`Checking stream capture: ${mode}, starts enabled=${enabled}`);
+            await page.locator('#btn-settings').click();
+            await page.locator('#settings-exclusive-mode').selectOption(mode);
+            await page.locator('#settings-gaming-mode').setChecked(enabled);
+            await page.waitForFunction(
+                ({ mode, enabled }) => {
+                    const s = JSON.parse(localStorage.getItem('mw-streaming-settings'));
+                    return s.exclusive_mode === mode && s.exclusive_enabled === enabled;
+                },
+                { mode, enabled },
+            );
+            await page.locator('#btn-settings-close').click();
+            const stored = await page.evaluate(() => localStorage.getItem('mw-streaming-settings'));
+            await page.evaluate(() => window.mountStreamFixture());
+            assert.equal(
+                await page
+                    .locator('.exclusive-controls, .clipboard-capabilities, .clipboard-copy-action')
+                    .count(),
+                0,
+            );
+            await page.waitForFunction(() =>
+                document.querySelector('#stream-gaming-overlay')?.classList.contains('visible'),
+            );
+            assert.match(
+                await page.locator('#stream-gaming-overlay').innerText(),
+                /Activer\/libérer la capture/,
+            );
+            assert.equal(
+                await page.evaluate(() => {
+                    const brand = document.querySelector('.stream-brand');
+                    const volume = document.querySelector('.stream-volume');
+                    return (
+                        getComputedStyle(brand).visibility === 'hidden' ||
+                        brand.getBoundingClientRect().right <= volume.getBoundingClientRect().left
+                    );
+                }),
+                true,
+                'brand must not overlap the shortcut group',
+            );
+            if (process.env.MW_UI_SCREENSHOT && mode === 'mouse' && !enabled)
+                await page.screenshot({
+                    path: process.env.MW_UI_SCREENSHOT,
+                    clip: { x: 0, y: 0, width: 1280, height: 160 },
+                });
+            await page.keyboard.press('Control+Alt+Shift+M');
+            await page.keyboard.press('Control+Alt+Shift+Z');
+            assert.equal(await page.evaluate(() => window.streamFixture._exclusive.enabled), false);
+            assert.equal(
+                await page.evaluate(() => localStorage.getItem('mw-streaming-settings')),
+                stored,
+            );
+            await page.evaluate(() => window.streamFixture.destroy());
+            await page.evaluate(() => window.mountStreamFixture());
+            assert.deepEqual(
+                await page.evaluate(() => ({
+                    mode: window.streamFixture._exclusive.mode,
+                    enabled: window.streamFixture._exclusive.enabled,
+                })),
+                { mode, enabled },
+            );
+            await page.evaluate(() => window.streamFixture.destroy());
+        }
+    }
+    // Real pointer capture with M; Z releases it without leaving fullscreen.
+    await page.locator('#btn-settings').click();
+    await page.locator('#settings-exclusive-mode').selectOption('mouse');
+    await page.locator('#settings-gaming-mode').setChecked(false);
+    await page.locator('#btn-settings-close').click();
+    await page.evaluate(() => window.mountStreamFixture());
     await page.keyboard.press('Control+Alt+Shift+M');
-    await page.waitForFunction(
-        () => !document.pointerLockElement && !window.streamFixture._exclusive.enabled,
-    );
-    await page.keyboard.press('Control+Alt+Shift+M');
     await page.waitForFunction(() => document.pointerLockElement === window.streamFixture.inputEl);
+    await page.keyboard.press('Control+Alt+Shift+X');
+    await page.waitForFunction(() => !!document.fullscreenElement);
+    await page.keyboard.press('Control+Alt+Shift+Z');
+    await page.waitForFunction(() => !document.pointerLockElement && !!document.fullscreenElement);
+    await page.keyboard.press('Control+Alt+Shift+X');
+    await page.waitForFunction(() => !document.fullscreenElement);
     await page.evaluate(() => window.streamFixture.destroy());
-    await page.waitForFunction(() => !document.pointerLockElement);
     const copied = await page.evaluate(async () => {
         const { ApolloClipboard } = await import('/js/stream/ApolloClipboard.js');
         const messages = [];
@@ -226,7 +310,7 @@ try {
     assert.ok(performance.before.requests >= 3);
     assert.deepEqual(errors, []);
     console.log(
-        'PASS: French settings persist all exclusive modes across SSO revalidation; real Chromium pointer capture/release and Unicode clipboard succeed.',
+        'PASS: French settings persist all exclusive modes across SSO revalidation; capture preferences remain authoritative across new streams; real Chromium M/Z/X and Unicode clipboard succeed.',
     );
     console.log(JSON.stringify(performance));
 } finally {
