@@ -555,3 +555,28 @@ describe('ShareBoard', () => {
         expect(document.querySelector('.share-board-feed')).toBeNull();
     });
 });
+
+describe('ShareBoard terminal authorization and close races', () => {
+    it.each([401, 403, 404])('does not open a refused board (%i)', async (statusCode) => {
+        BackendClient.getShareStatus.mockRejectedValueOnce({ statusCode });
+        const board = new ShareBoard({ streaming: true });
+        expect(await board.open()).toBe(false);
+        expect(board.overlay).toBeNull();
+        expect(board._pollTimer).toBeNull();
+    });
+    it('does not recreate a closed board after its pending request completes', async () => {
+        let finish;
+        BackendClient.getShareStatus.mockImplementationOnce(
+            () =>
+                new Promise((r) => {
+                    finish = r;
+                }),
+        );
+        const board = new ShareBoard({ streaming: true });
+        const opening = board.open();
+        board.close();
+        finish({ slots: [] });
+        expect(await opening).toBe(false);
+        expect(board.overlay).toBeNull();
+    });
+});
