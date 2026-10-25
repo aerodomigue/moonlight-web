@@ -12,11 +12,17 @@ try {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(process.argv[2], { waitUntil: 'networkidle' });
+    const assertNoCommunityLink = async () => {
+        assert.equal(await page.locator('#discord-fab, a[href*="discord.gg"]').count(), 0);
+    };
+    await assertNoCommunityLink();
     await page.locator('#btn-login-sso').click();
     await page.locator('#view-hosts').waitFor();
+    await assertNoCommunityLink();
     for (let visit = 0; visit < 2; visit++) {
         await page.locator('#btn-settings').click();
         await page.locator('#settings-exclusive-mode').waitFor();
+        await assertNoCommunityLink();
         assert.equal(
             await page
                 .locator(
@@ -37,7 +43,7 @@ try {
     }
     assert.deepEqual(errors, []);
     console.log(
-        'PASS: French Chromium settings open/reopen without privacy, update or donation sections; stream controls, capture and reset remain available.',
+        'PASS: French Chromium settings open/reopen without Discord link or privacy, update or donation sections; stream controls, capture and reset remain available.',
     );
 } finally {
     await browser.close();

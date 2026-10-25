@@ -60,7 +60,6 @@ import { SetupView } from './ui/SetupView.js';
 import { PlayerJoinView } from './ui/PlayerJoinView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
-import { DiscordLink } from './ui/DiscordLink.js';
 import * as RemoteNav from './ui/RemoteNav.js';
 import * as ViewHeaderScroll from './ui/ViewHeaderScroll.js';
 import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
@@ -4707,10 +4706,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     // markup (header buttons / footer) that exists in index.html.
     await i18nInit();
     applyDOM(document);
-    // The community button lives outside every view — drawn once here, after
-    // the catalogs are in so its label is not the English one for a French
-    // reader, and left alone from then on. The stream hides it in CSS.
-    DiscordLink.mount();
     // Arrows and pads get around the pages on a TV (nothing is attached
     // elsewhere). Before the app, so its listeners see the keys first.
     RemoteNav.init();
