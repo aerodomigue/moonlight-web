@@ -516,7 +516,9 @@ describe('ShareBoard', () => {
             owner_height: true,
             shared_feed: true,
         });
-        expect(BackendClient.getShareStatus).toHaveBeenCalledWith('h');
+        expect(BackendClient.getShareStatus).toHaveBeenCalledWith('h', {
+            signal: expect.any(AbortSignal),
+        });
         const buttons = document.querySelectorAll('.share-board-feed .share-feed-btn');
         expect([...buttons].map((b) => b.textContent)).toEqual(['720p', '1080p', '1440p']);
         expect(document.querySelector('.share-feed-btn.is-selected').textContent).toBe('1080p');
