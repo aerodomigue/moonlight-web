@@ -156,6 +156,31 @@ StreamRelay::~StreamRelay()
     stop();
 }
 
+void StreamRelay::setApolloClipboard(const ApolloClipboard::Config& config)
+{
+    m_ApolloClipboard = new ApolloClipboard(config, this);
+    connect(m_ApolloClipboard, &ApolloClipboard::message, this, [this](const QJsonObject& msg) {
+        if (m_Stopping || !m_WsClient || m_WsClient->state() != QAbstractSocket::ConnectedState ||
+            !m_InputPolicy.unrestricted())
+            return;
+        const auto bytes = QJsonDocument(msg).toJson(QJsonDocument::Compact);
+        m_WsClient->sendTextMessage(QString::fromUtf8(bytes));
+    });
+    connect(m_ApolloClipboard, &ApolloClipboard::chord, this,
+            [this, apple = config.appleHost](int key) {
+                if (m_Stopping || !m_WsClient ||
+                    m_WsClient->state() != QAbstractSocket::ConnectedState ||
+                    !m_InputPolicy.unrestricted() || !m_Shim)
+                    return;
+                const short modifier = apple ? 0x5B : 0x11;
+                const char mask = apple ? 0x08 : 0x02;
+                m_Shim->sendKeyEvent(modifier, true, mask, 0);
+                m_Shim->sendKeyEvent(static_cast<short>(key), true, mask, 0);
+                m_Shim->sendKeyEvent(static_cast<short>(key), false, mask, 0);
+                m_Shim->sendKeyEvent(modifier, false, 0, 0);
+            });
+}
+
 void StreamRelay::setClipboardEnabled(bool enabled)
 {
     m_ClipboardEnabled = enabled;
@@ -230,6 +255,7 @@ void StreamRelay::sendExitNotice(const char* type)
 
 void StreamRelay::stop()
 {
+    if (m_ApolloClipboard) m_ApolloClipboard->stop();
     // Marshal onto the relay's session thread when called cross-thread (main:
     // /quit, Session::quit). Queued (non-blocking) avoids deadlock; the WS
     // server/client teardown must run on the thread that owns those sockets.
@@ -599,6 +625,7 @@ void StreamRelay::onNewWsConnection()
             QStringLiteral("{\"type\":\"clipboardcaps\",\"available\":true}"));
         ClipboardBridge::instance()->requestAnnounce();
     }
+    if (m_ApolloClipboard) m_ApolloClipboard->start();
 
     emit clientConnected();
 }
@@ -648,6 +675,10 @@ void StreamRelay::onWsTextMessage(const QString& message)
 
     // An invited player only gets what the owner ticked. Dropped in silence.
     if (!InputMsg::allowed(type, m_InputPolicy)) return;
+    if (m_ApolloClipboard && type.startsWith(QLatin1String("clipboard"))) {
+        if (m_InputPolicy.unrestricted()) m_ApolloClipboard->receive(msg);
+        return;
+    }
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
@@ -788,6 +819,7 @@ void StreamRelay::onWsTextMessage(const QString& message)
 
 void StreamRelay::onWsDisconnected()
 {
+    if (m_ApolloClipboard) m_ApolloClipboard->stop();
     qInfo() << "[StreamRelay::onWsDisconnected] ENTER, m_Running=" << m_Running
             << "m_Stopping=" << m_Stopping << "m_StreamStarted=" << m_StreamStarted
             << "frames sent=" << m_FrameCount << "pending video=" << m_PendingVideoFrames.size()

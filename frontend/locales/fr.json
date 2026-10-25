@@ -923,7 +923,12 @@
         "rcBack": "Retour",
         "rcBackVal": "Touche de couleur (rouge, verte…)",
         "rcCursor": "Curseur du navigateur",
-        "rcCursorVal": "Retour maintenu"
+        "rcCursorVal": "Retour maintenu",
+        "clipboard_failed": "Échec du presse-papiers. Vérifiez les permissions du client dans Apollo.",
+        "clipboard_busy": "Un collage est déjà en cours.",
+        "clipboard_tooLarge": "Le texte dépasse la limite de 256 Kio du presse-papiers.",
+        "clipboard_copyLocal": "Copier sur cet appareil",
+        "clipboard_textOnly": "Seul le texte peut être collé. Copiez du texte puis réessayez."
     },
     "transport": {
         "webrtcDcUdp": "WebRTC DataChannel (UDP)",

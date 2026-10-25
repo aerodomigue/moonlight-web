@@ -923,7 +923,12 @@
         "rcBack": "Back",
         "rcBackVal": "A colour key (red, green…)",
         "rcCursor": "The browser's cursor",
-        "rcCursorVal": "Hold Back"
+        "rcCursorVal": "Hold Back",
+        "clipboard_failed": "Clipboard operation failed. Check the Apollo client permissions.",
+        "clipboard_busy": "A paste is already in progress.",
+        "clipboard_tooLarge": "Text exceeds the 256 KiB clipboard limit.",
+        "clipboard_copyLocal": "Copy on this device",
+        "clipboard_textOnly": "Only text can be pasted. Copy text and try again."
     },
     "transport": {
         "webrtcDcUdp": "WebRTC DataChannel (UDP)",

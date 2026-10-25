@@ -22,6 +22,8 @@ const VIEW_MESSAGES = new Set([
     'rumble',
     'clipboard',
     'clipboardcaps',
+    'clipboardchunk',
+    'clipboarderror',
     // The pointer, when the client draws it: its shape, and its position.
     'cursor',
     'cursorpos',

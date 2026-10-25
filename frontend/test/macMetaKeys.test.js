@@ -260,3 +260,31 @@ describe('everything else keeps the plain press/release path', () => {
         expect(v._heldPhysKeys.has('KeyC')).toBe(true);
     });
 });
+
+describe('Apollo clipboard shortcuts', () => {
+    it('maps Cmd+C to one remote copy after releasing held modifiers', () => {
+        const release = [];
+        const v = keySink({
+            _apolloClipboard: { read: true },
+            _releaseHeldModifiers: () => release.push(true),
+        });
+        v.handleKeyDown(ev('KeyC', 'c', { metaKey: true }));
+        expect(release).toEqual([true]);
+        expect(v.sent).toEqual([{ type: 'clipboardcopy', cut: false }]);
+        expect(v._suppressPasteKeyUpCode).toBe('KeyC');
+    });
+    it('sends Unicode to the Apollo bridge without truncation or a premature paste', () => {
+        const pasted = [];
+        const v = keySink({
+            _clipboardEnabled: true,
+            _apolloClipboard: { paste: (text) => pasted.push(text) },
+            _releaseHeldModifiers() {},
+            _releaseHeldMeta() {},
+        });
+        v._pendingPasteKey = { code: 'KeyV', injectCtrl: true };
+        const text = '🌙'.repeat(140000);
+        v.handlePaste(pasteEv(text));
+        expect(pasted).toEqual([text]);
+        expect(v.sent).toEqual([]);
+    });
+});

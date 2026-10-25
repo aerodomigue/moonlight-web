@@ -923,7 +923,12 @@
         "rcBack": "返回",
         "rcBackVal": "彩色键（红、绿……）",
         "rcCursor": "浏览器光标",
-        "rcCursorVal": "长按返回键"
+        "rcCursorVal": "长按返回键",
+        "clipboard_failed": "剪贴板操作失败，请检查 Apollo 客户端权限。",
+        "clipboard_busy": "正在粘贴，请稍候。",
+        "clipboard_tooLarge": "文本超过剪贴板的 256 KiB 限制。",
+        "clipboard_copyLocal": "复制到此设备",
+        "clipboard_textOnly": "仅支持文本，请复制文本后重试。"
     },
     "transport": {
         "webrtcDcUdp": "WebRTC 数据通道（UDP）",

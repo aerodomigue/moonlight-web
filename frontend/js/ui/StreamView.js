@@ -134,6 +134,7 @@ import { VdGpuApartWatch, takeVdGpuApartNotice } from '../util/vdGpuApartNotice.
 import { escapeHtml } from '../util/escapeHtml.js';
 import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { Icons } from './icons.js';
+import { ApolloClipboard } from '../stream/ApolloClipboard.js';
 import { ShareMenu } from './ShareMenu.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
@@ -1554,6 +1555,8 @@ export class StreamView {
         // Enabled by a backend 'clipboardcaps' message, sent only when the
         // streamed host is the backend machine (shared clipboard).
         this._clipboardEnabled = false;
+        this._apolloClipboard = null;
+        this._clipboardCopyButton = null;
         // Swallowed Ctrl/Cmd+V keydown waiting for its native 'paste' event
         // ({ code, keydownMsg, injectCtrl, timer }).
         this._pendingPasteKey = null;
@@ -1575,7 +1578,10 @@ export class StreamView {
         this._deadPending = false;
         this._composedKey = null;
         this._onPaste = (e) => this.handlePaste(e);
-        this._onPointerDownFlush = () => this._flushPendingClipboard();
+        this._onPointerDownFlush = () => {
+            this._flushPendingClipboard();
+            this._apolloClipboard?.copyPending();
+        };
         this._onWindowBlur = () => this._releaseAllPhysKeys();
         // Regaining window focus (Alt-Tab back from another app) may leave the
         // pointer over the streamed picture without a mousemove — re-apply the
@@ -7293,6 +7299,22 @@ export class StreamView {
             this._clientCursorHostSaid(msg);
             return;
         }
+        if (msg.type === 'clipboardcaps' && msg.remote === true) {
+            if (!this._apolloClipboard) {
+                this._apolloClipboard = new ApolloClipboard({
+                    send: (message) => this.webrtc.send(message),
+                    pending: (visible) => this._showClipboardCopy(visible),
+                    error: (reason) => Toast.warning(t(`stream.clipboard_${reason}`)),
+                });
+            }
+            this._clipboardEnabled = msg.write === true;
+            this._apolloClipboard.handle(msg);
+            return;
+        }
+        if (msg.type === 'clipboardchunk' || msg.type === 'clipboarderror') {
+            this._apolloClipboard?.handle(msg);
+            return;
+        }
         if (msg.type === 'clipboardcaps') {
             // Backend advertises clipboard sync (streamed host == backend
             // machine). Until this arrives, Ctrl+V is forwarded as a plain
@@ -9855,6 +9877,23 @@ export class StreamView {
             return;
         }
 
+        // Apollo's copy/cut chord uses the host's modifier, never the client's
+        // Meta-as-Windows mapping. Release modifiers before the async operation.
+        const localCopyModifier = this._appleKeyboard ? e.metaKey && !e.ctrlKey : e.ctrlKey;
+        if (
+            this._apolloClipboard?.read &&
+            localCopyModifier &&
+            !e.altKey &&
+            !e.shiftKey &&
+            ['c', 'x'].includes(e.key.toLowerCase())
+        ) {
+            e.preventDefault();
+            this._releaseHeldModifiers();
+            this._suppressPasteKeyUpCode = e.code;
+            this.webrtc.send({ type: 'clipboardcopy', cut: e.key.toLowerCase() === 'x' });
+            return;
+        }
+
         // ── Ctrl/Cmd+V: local→host clipboard paste ─────────────────────────
         // When the backend shares the host clipboard, neither forward nor
         // preventDefault the paste chord: letting the browser run its default
@@ -10967,6 +11006,13 @@ export class StreamView {
         } catch (err) {
             /* clipboardData unavailable — fall back to a plain keystroke */
         }
+        if (this._apolloClipboard && !text) {
+            clearTimeout(pending.timer);
+            this._pendingPasteKey = null;
+            this._suppressPasteKeyUpCode = pending.code;
+            Toast.warning(t('stream.clipboard_textOnly'));
+            return;
+        }
         if (!text) {
             // Non-text local clipboard (image/files): forward the swallowed
             // keydown so the host pastes its own clipboard content instead.
@@ -10981,6 +11027,11 @@ export class StreamView {
         if (pending.injectCtrl) this._releaseHeldMeta();
         // The backend injects the complete V down+up — swallow the real keyup.
         this._suppressPasteKeyUpCode = pending.code;
+        if (this._apolloClipboard) {
+            this._releaseHeldModifiers();
+            this._apolloClipboard.paste(text);
+            return;
+        }
         this.webrtc.send({
             type: 'clipboardpaste',
             text:
@@ -11023,6 +11074,17 @@ export class StreamView {
      *  Ctrl+V it does for a real paste, with no text — an empty payload leaves
      *  the host clipboard untouched and only replays the chord. */
     _sendPendingPasteKey() {
+        if (this._apolloClipboard) {
+            const pending = this._pendingPasteKey;
+            if (pending) {
+                clearTimeout(pending.timer);
+                this._suppressPasteKeyUpCode = pending.code;
+                this._pendingPasteKey = null;
+                Toast.warning(t('stream.clipboard_textOnly'));
+            }
+            return;
+        }
+
         const pending = this._pendingPasteKey;
         if (!pending) return;
         clearTimeout(pending.timer);
@@ -11041,6 +11103,27 @@ export class StreamView {
      *  may reject the write outside a user gesture (Safari always, Firefox
      *  when the last gesture is >5s old) — keep the text pending and retry
      *  on the next keystroke/pointer gesture. */
+    _showClipboardCopy(visible) {
+        if (!visible) {
+            this._clipboardCopyButton?.remove();
+            this._clipboardCopyButton = null;
+            return;
+        }
+        if (this._clipboardCopyButton || !this.streamEl) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn clipboard-copy-action';
+        button.textContent = t('stream.clipboard_copyLocal');
+        button.style.cssText =
+            'position:absolute;top:60px;right:16px;z-index:100;pointer-events:auto';
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._apolloClipboard?.copyPending();
+        });
+        this.streamEl.appendChild(button);
+        this._clipboardCopyButton = button;
+    }
+
     _applyHostClipboard(text) {
         if (!text) return;
         this._pendingClipboardWrite = text;
@@ -12594,6 +12677,12 @@ export class StreamView {
             this._mainThreadProbe = null;
         }
 
+        this._apolloClipboard?.destroy();
+        this._apolloClipboard = null;
+        this._showClipboardCopy(false);
+        this._pendingClipboardWrite = null;
+        if (this._pendingPasteKey) clearTimeout(this._pendingPasteKey.timer);
+        this._pendingPasteKey = null;
         if (this._shareMenu) {
             this._shareMenu.destroy();
             this._shareMenu = null;

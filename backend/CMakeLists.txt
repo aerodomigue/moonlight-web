@@ -370,6 +370,7 @@ add_executable(mw-server
     src/streaming/FeedSubscriber.cpp
     src/streaming/SharedFeed.cpp
     src/streaming/NativeBench.cpp
+    src/streaming/ApolloClipboard.cpp
     src/streaming/ClipboardBridge.cpp
     src/streaming/HostAudioSink.cpp
     src/streaming/StreamRelay.cpp
@@ -643,6 +644,11 @@ endif()
 # this point and gates its own test executable on the same option.
 if(MW_BUILD_TESTS)
     enable_testing()
+    add_executable(mw-apollo-clipboard-probe
+        tests/apollo_clipboard_probe.cpp src/streaming/ApolloClipboard.cpp)
+    set_target_properties(mw-apollo-clipboard-probe PROPERTIES AUTOMOC ON)
+    target_include_directories(mw-apollo-clipboard-probe PRIVATE src)
+    target_link_libraries(mw-apollo-clipboard-probe PRIVATE Qt6::Core Qt6::Network)
     add_executable(mw-security-tests
         tests/security_main.cpp
         tests/test_connection_guard.cpp
@@ -701,6 +707,10 @@ if(MW_BUILD_TESTS)
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_oidc_integration.py"
                     "$<TARGET_FILE:mw-server>")
         set_tests_properties(oidc-user-isolation PROPERTIES TIMEOUT 90 LABELS integration)
+        add_test(NAME apollo-clipboard
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_apollo_clipboard.py
+                    $<TARGET_FILE:mw-apollo-clipboard-probe>)
+        set_tests_properties(apollo-clipboard PROPERTIES TIMEOUT 90 LABELS integration)
         add_test(NAME gamestream-negotiation
             COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_stream_negotiation.py"

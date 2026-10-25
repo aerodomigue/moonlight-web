@@ -16,6 +16,7 @@
  */
 
 #pragma once
+#include "ApolloClipboard.h"
 
 #include "RelayBase.h"
 #include <QByteArray>
@@ -85,6 +86,12 @@ public:
     /// clipboard) — see ClipboardBridge. Must be called before the relay is
     /// moved to its dedicated thread (Session does, right after creation).
     void setClipboardEnabled(bool enabled);
+    void setApolloClipboard(const ApolloClipboard::Config& config);
+    void setInputPolicy(const InputMsg::Policy& policy)
+    {
+        if (m_ApolloClipboard && !policy.unrestricted()) m_ApolloClipboard->stop();
+        RelayBase::setInputPolicy(policy);
+    }
 
     // Signals inherited from RelayBase: signalingSdpReady, signalingIceCandidate,
     // dataChannelsOpen, sessionEnded.
@@ -171,6 +178,7 @@ private:
     // machine). Written once on the main thread before the relay moves to its
     // dedicated thread, read from relay/libdatachannel threads afterwards.
     bool m_ClipboardEnabled = false;
+    ApolloClipboard* m_ApolloClipboard = nullptr;
     int m_FrameCount = 0;
 
     // P2-B: when true, onVideoFrame runs on the capture thread (DirectConnection)

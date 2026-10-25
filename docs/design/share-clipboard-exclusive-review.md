@@ -22,3 +22,31 @@ when denied. The new UI makes zero for an unauthorized account. This eliminates
 unnecessary signing, network traffic and console errors; it does not yet prove
 that those requests caused the reported micro-freezes. Frame timing measurements
 and actual Apollo validation are tracked separately from unit-test results.
+
+## Apollo text clipboard
+
+The existing bridge explicitly enables only self-addressed hosts; therefore a
+remote Apollo never advertises clipboard capability. The new per-stream adapter
+uses Apollo's paired HTTPS API, pins the existing server certificate and presents
+the same identitySeat certificate as the stream. No credentials or clipboard
+contents are logged. Local QClipboard behavior is preserved.
+
+Review: setup is restricted to unrestricted GameStream sessions; every input and
+output rechecks the relay policy and lifecycle. Stop is terminal and immediately
+blocks callbacks, with network cleanup on the owning thread. One asynchronous
+request at a time, 3-second deadline, no redirects, connection pooling disabled.
+Discovery reads Apollo's explicit permission bits; write additionally requires
+keyboard input. POST failure never emits a paste chord. Read/write denial disables
+that direction. Maximum 256 KiB UTF-8, 4096-byte chunks, strict ordering, bounded
+assembly lifetime and completed-ID replay rejection. Paste cancels an outstanding
+read so an old read cannot race the newly copied local text. The browser polls
+only while focused/visible, at most once per second; only changes are returned.
+Copy/cut/paste release local modifiers and use the remote OS modifier.
+
+Validation: eight mutually authenticated HTTPS fixture tests cover certificate
+pinning/client rejection, independent permissions, Unicode chunks and replay,
+read deduplication/rate limits, delayed requests, unsuccessful writes and stopping
+a pending write. Twenty-two browser unit checks include existing macOS modifier
+regressions, clipboard permission refusal, foreground gating and oversized text.
+Native compilation and frontend formatting/lint/translations pass. Real Apollo
+permission configuration and OS clipboard behavior still require deployment tests.

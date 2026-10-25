@@ -205,6 +205,32 @@ MediaTrackRelay::MediaTrackRelay(IMediaEngine* engine, QObject* parent)
     connect(m_StatsTimer, &QTimer::timeout, this, &MediaTrackRelay::onStatsTimerTick);
 }
 
+void MediaTrackRelay::setApolloClipboard(const ApolloClipboard::Config& config)
+{
+    m_ApolloClipboard = new ApolloClipboard(config, this);
+    connect(m_ApolloClipboard, &ApolloClipboard::message, this, [this](const QJsonObject& msg) {
+        if (m_Stopping.load() || !m_Connected || !m_InputDc || !m_InputDc->isOpen() ||
+            !m_InputPolicy.unrestricted())
+            return;
+        const auto bytes = QJsonDocument(msg).toJson(QJsonDocument::Compact);
+        try {
+            m_InputDc->send(std::string(bytes.constData(), bytes.size()));
+        } catch (const std::exception&) {}
+    });
+    connect(m_ApolloClipboard, &ApolloClipboard::chord, this,
+            [this, apple = config.appleHost](int key) {
+                if (m_Stopping.load() || !m_Connected || !m_InputDc || !m_InputDc->isOpen() ||
+                    !m_InputPolicy.unrestricted() || !m_Shim)
+                    return;
+                const short modifier = apple ? 0x5B : 0x11;
+                const char mask = apple ? 0x08 : 0x02;
+                m_Shim->sendKeyEvent(modifier, true, mask, 0);
+                m_Shim->sendKeyEvent(static_cast<short>(key), true, mask, 0);
+                m_Shim->sendKeyEvent(static_cast<short>(key), false, mask, 0);
+                m_Shim->sendKeyEvent(modifier, false, 0, 0);
+            });
+}
+
 void MediaTrackRelay::setClipboardEnabled(bool enabled)
 {
     m_ClipboardEnabled = enabled;
@@ -483,6 +509,7 @@ void MediaTrackRelay::createTracksAndChannels()
                     } catch (const std::exception&) {}
                     ClipboardBridge::instance()->requestAnnounce();
                 }
+                if (m_ApolloClipboard) m_ApolloClipboard->start();
 
                 sendHidCaps();
                 sendInputCaps(); // see DataChannelRelay
@@ -816,6 +843,10 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
 
     // An invited player only gets what the owner ticked. Dropped in silence.
     if (!InputMsg::allowed(type, m_InputPolicy)) return;
+    if (m_ApolloClipboard && type.startsWith(QLatin1String("clipboard"))) {
+        if (m_InputPolicy.unrestricted()) m_ApolloClipboard->receive(msg);
+        return;
+    }
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
@@ -1144,6 +1175,7 @@ void MediaTrackRelay::onHidPolicyChanged()
 
 void MediaTrackRelay::stop()
 {
+    if (m_ApolloClipboard) m_ApolloClipboard->stop();
     // Marshal onto the relay's session thread when called cross-thread (main:
     // /quit, Session::quit, auto-fallback). Queued (non-blocking) avoids deadlock.
     if (QThread::currentThread() != this->thread()) {

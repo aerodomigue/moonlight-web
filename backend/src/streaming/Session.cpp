@@ -747,6 +747,25 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // not a guest's to read.
     const bool hostIsSelf = ClipboardBridge::isSelfAddress(m_Host->activeAddress.address());
     const bool clipboardLocal = hostIsSelf && m_InputPolicy.unrestricted();
+    const auto configureApolloClipboard = [this, &media](auto* relay) {
+        if (!m_InputPolicy.unrestricted() || media.type != MediaType::GameStreamRtsp ||
+            !m_Backend || m_Backend->type() != QStringLiteral("gamestream") ||
+            m_Host->serverCertPem.isEmpty())
+            return;
+        const auto identity = IdentityManager::get()->identityForSeat(m_Host->identitySeat);
+        ApolloClipboard::Config config;
+        config.origin.setScheme("https");
+        config.origin.setHost(m_Host->activeAddress.address());
+        config.origin.setPort(m_Host->activeHttpsPort > 0 ? m_Host->activeHttpsPort
+                                                          : MW_HTTPS_PORT);
+        config.certificate = identity.certPem;
+        config.key = identity.keyPem;
+        config.serverCertificate = m_Host->serverCertPem;
+        config.uniqueId = effectiveUniqueId();
+        config.appleHost = m_Host->hostOs() == HostOsProbe::HostOs::MacOs;
+        relay->setApolloClipboard(config);
+    };
+
     qInfo() << "[Session] Clipboard sync" << (clipboardLocal ? "enabled" : "disabled")
             << "(host address:" << m_Host->activeAddress.address()
             << ", restricted:" << !m_InputPolicy.unrestricted() << ")";
@@ -809,6 +828,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         streamRelay->setHttpsPort(m_HttpsPort);
         streamRelay->setWsPath(m_WsPath);
         streamRelay->setClipboardEnabled(clipboardLocal);
+        if (!clipboardLocal) configureApolloClipboard(streamRelay);
         streamRelay->setInputPolicy(m_InputPolicy);
 
         connect(m_Engine, &IMediaEngine::connectionStarted, this,
@@ -855,6 +875,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // No QObject parent: it is moved onto a dedicated thread below.
         auto* relay = new MediaTrackRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
+        if (!clipboardLocal) configureApolloClipboard(relay);
         relay->setInputPolicy(m_InputPolicy);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
@@ -922,6 +943,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // No QObject parent: it is moved onto a dedicated thread below.
         auto* relay = new DataChannelRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
+        if (!clipboardLocal) configureApolloClipboard(relay);
         relay->setInputPolicy(m_InputPolicy);
         relay->setStreamBitrateKbps(m_StreamBitrateKbps);
 
