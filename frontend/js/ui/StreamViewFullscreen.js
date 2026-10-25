@@ -342,6 +342,13 @@ export class StreamViewFullscreen {
         }
     }
 
+    /** Preserve capture intent across an application-requested fullscreen transition.
+     * @this {StreamViewInstance}
+     */
+    _changeFullscreen(operation) {
+        return this._exclusive ? this._exclusive.transitionFullscreen(operation) : operation();
+    }
+
     /**
      * Request fullscreen for any transport mode, with CSS fallback on failure.
      *
@@ -361,8 +368,7 @@ export class StreamViewFullscreen {
         if (this._cssFullscreen) return;
 
         if (document.documentElement.requestFullscreen) {
-            document.documentElement
-                .requestFullscreen()
+            this._changeFullscreen(() => document.documentElement.requestFullscreen())
                 .then(() => {
                     // Success — button visibility handled by fullscreenchange
                 })

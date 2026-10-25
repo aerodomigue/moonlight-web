@@ -75,6 +75,10 @@ plein écran ; une indication ponctuelle signale une capture indisponible ou par
 À la perte du focus, les touches et boutons distants sont relâchés. Au retour,
 une reprise est tentée une fois ; **« Reprendre la capture »** demande un geste
 si le navigateur l’exige. Une libération volontaire annule cette reprise.
+Le raccourci X conserve l’intention de capture lors des transitions dans les deux sens.
+La souris est recapturée si le navigateur la relâche ; le clavier devient indisponible
+en fenêtre, puis sa capture est redemandée au retour en plein écran. Un refus du
+navigateur nécessite le geste de reprise habituel, sans modifier les paramètres.
 Les raccourcis M et Z conservent le plein écran. Avec une capture clavier autorisée
 en plein écran, un appui bref sur **Échap** est transmis au PC distant et conserve
 les captures. La sortie de secours du navigateur reste disponible (appui prolongé

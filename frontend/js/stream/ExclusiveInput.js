@@ -76,8 +76,30 @@ export class ExclusiveInput {
     notify() {
         if (!this.closed) this.change(this);
     }
+    // Fullscreen can release locks on some browser/platform combinations.
+    // Fence those releases before invoking the API, without changing intent.
+    async transitionFullscreen(operation) {
+        if (this.closed || this.fullscreenPending) return;
+        this.fullscreenPending = true;
+        clearTimeout(this.lossTimer);
+        this.dropLocks();
+        try {
+            // Invoke synchronously: requestFullscreen consumes user activation.
+            await operation();
+        } finally {
+            this.fullscreenPending = false;
+            this.attempt();
+        }
+    }
     async attempt() {
-        if (this.closed || !this.enabled || this.suspended || !this.foreground) return;
+        if (
+            this.closed ||
+            this.fullscreenPending ||
+            !this.enabled ||
+            this.suspended ||
+            !this.foreground
+        )
+            return;
         this.needsGesture = false;
         const generation = this.generation;
         if (
@@ -120,7 +142,7 @@ export class ExclusiveInput {
         }
     }
     syncKeyboard() {
-        if (this.closed) return;
+        if (this.closed || this.fullscreenPending) return;
         if (
             !this.wantsKeyboard ||
             this.suspended ||
@@ -186,7 +208,7 @@ export class ExclusiveInput {
         this.pointerLocked = this.doc.pointerLockElement === this.element;
         if (this.pointerLocked) {
             this.expectedUnlock = false;
-            if (!this.wantsMouse || this.suspended || this.closed) {
+            if (!this.wantsMouse || this.suspended || this.closed || this.fullscreenPending) {
                 this.expectedUnlock = true;
                 this.doc.exitPointerLock();
                 return;
@@ -239,7 +261,9 @@ export class ExclusiveInput {
             this.enabled &&
             !this.suspended &&
             !this.needsGesture &&
-            (!this.wantsMouse || this.doc.pointerLockElement === this.element)
+            (this.fullscreenPending ||
+                !this.wantsMouse ||
+                this.doc.pointerLockElement === this.element)
         ) {
             this.disable();
         } else {
