@@ -2240,8 +2240,10 @@ export const MoonlightApp = {
             streamingSettings.stream_aspect_forced === true
                 ? streamingSettings.stream_aspect
                 : 'auto';
-        if (size.aspect) {
-            streamingSettings.stream_aspect = size.aspect;
+        // Retain the constrained shape: restoring size.aspect here could
+        // derive a width larger than the decoder accepted at this height.
+        if (bounded.aspect) {
+            streamingSettings.stream_aspect = bounded.aspect;
             // The native host still states the shape it settled on, and that
             // is worth remembering for the next fixed-rung launch.
             this._aspectAuto = nativeHost;
@@ -2256,9 +2258,9 @@ export const MoonlightApp = {
             '[MW] Resolution ' +
                 choice.mode +
                 ' → ' +
-                (size.height || 'native') +
-                (size.aspect ? ' @ ' + size.aspect : '') +
-                (size.fitBox ? (size.allowUpscale ? ' (box, may upscale)' : ' (box)') : ''),
+                (streamingSettings.stream_height || 'native') +
+                (streamingSettings.stream_aspect ? ' @ ' + streamingSettings.stream_aspect : '') +
+                (bounded.fitBox ? (bounded.allowUpscale ? ' (box, may upscale)' : ' (box)') : ''),
         );
 
         try {
