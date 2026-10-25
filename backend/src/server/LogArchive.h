@@ -60,6 +60,10 @@ public:
         QString error;
     };
 
+    LogArchive() = default;
+    // The mutex and owned worker already make this class non-copyable.
+    LogArchive(const LogArchive&) = delete;
+    LogArchive& operator=(const LogArchive&) = delete;
     ~LogArchive();
 
     /// Start building from @p logDir, plus @p extraFile (the server's own log
