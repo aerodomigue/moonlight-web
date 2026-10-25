@@ -33,15 +33,6 @@ import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
-import { noticeDetailsHtml } from './PrivacyNotice.js';
-import { BMC_FULL_LOGO } from './bmcLogo.js';
-import {
-    SUPPORT_URL,
-    SUPPORT_BUTTON_AT,
-    goodSessionCount,
-    isSupportHidden,
-    setSupportHidden,
-} from '../util/supportNudge.js';
 import {
     GamepadRemapDialog,
     connectedPads,
@@ -79,8 +70,6 @@ import {
 import { isGameDevice } from '../hid/hidWire.js';
 import { openHidHelp } from './HidHelpDialog.js';
 import { confirmAction } from './ConfirmDialog.js';
-import { hostUpdate, canSelfUpdate } from './HostUpdate.js';
-import { Host } from '../models/Host.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 import { autoFps, measuredFps } from '../util/RefreshRate.js';
 import { ASPECT_VALUES, SCREEN_ASPECTS } from '../util/AspectRatio.js';
@@ -204,28 +193,6 @@ export class SettingsView {
 
         // Debounce timer to avoid rapid repeated saves
         this._saveTimer = null;
-
-        // Privacy section. Everyone signed in sees what this machine reports;
-        // only the machine itself may change the answer, so the switch and the
-        // disclosure are two separate things. All false until _loadStatsConsent
-        // runs, so a backend that will not answer yields no section at all
-        // rather than one claiming the wrong state.
-        this._statsLoaded = false;
-        this._statsAvailable = false;
-        this._statsGranted = false;
-        this._statsWritable = false;
-
-        // Update section: the host's cached release check (null = no answer),
-        // the hosts it is judged against (HostUpdate.canSelfUpdate), and what
-        // a running update shows — the same run the Hosts banner follows.
-        this._updateLoaded = false;
-        this._updateInfo = null;
-        this._updateHosts = [];
-        this._updateRun = null;
-        this._updateWarmupTries = 0;
-        this._updateRetryTimer = null;
-        this._unsubUpdate = null;
-        this._destroyed = false;
     }
 
     async start() {
@@ -239,270 +206,8 @@ export class SettingsView {
         // Whether a 4:4:4 stream (HEVC RExt / H.264 High 4:4:4) decodes here.
         this._chroma444Capability = await chroma444ClientCapability();
         this._canLogout = await this._checkSession();
-        await this._loadStatsConsent();
-        await this._loadUpdateState();
         this.render();
         this.bindEvents();
-        this._unsubUpdate = hostUpdate.subscribe((view) => {
-            this._updateRun = view;
-            this._paintUpdateSection();
-        });
-    }
-
-    /**
-     * Ask the host whether a newer MoonlightWeb exists. The same cached answer
-     * the Hosts banner reads, so asking costs the host nothing. An empty
-     * `checked_at` means its first look at the releases is still in flight:
-     * asked again shortly, a few times, rather than reporting "up to date".
-     */
-    async _loadUpdateState() {
-        try {
-            this._updateInfo = await BackendClient.checkForUpdate();
-        } catch {
-            this._updateInfo = null; // said as "could not check"
-        }
-        this._updateLoaded = true;
-        if (this._updateInfo && !this._updateInfo.checked_at && this._updateWarmupTries < 3) {
-            this._updateWarmupTries++;
-            this._updateRetryTimer = setTimeout(async () => {
-                this._updateRetryTimer = null;
-                if (this._destroyed) return;
-                await this._loadUpdateState();
-                if (!this._destroyed) this._paintUpdateSection();
-            }, 10000);
-        }
-    }
-
-    /**
-     * Update: whether this machine runs the latest MoonlightWeb, and when it
-     * does not, the same Update button, bar and messages as the Hosts banner —
-     * which a dismissed banner no longer offers, and this section always does.
-     * Absent in a booth, whose visitors can do nothing about an update.
-     */
-    _renderUpdateSection() {
-        if (BackendClient.adminLocked) return '';
-        return `
-                <div class="settings-section settings-section-update" id="settings-section-update">
-                    <h3 class="settings-section-title">${escapeHtml(t('update.sectionTitle'))}</h3>
-                    <div class="settings-update-body">${this._updateBodyHtml()}</div>
-                </div>`;
-    }
-
-    _updateBodyHtml() {
-        const run = this._updateRun;
-        const info = this._updateInfo;
-        const canUpdate = canSelfUpdate(info, this._updateHosts);
-        const installed =
-            info && info.current
-                ? `<p class="setting-desc">${escapeHtml(t('update.installed', { version: info.current }))}</p>`
-                : '';
-        if (info && info.channel === 'self-hosted') {
-            return `<p class="setting-desc">${escapeHtml(t('update.selfHosted'))}</p>${installed}`;
-        }
-        const button = canUpdate
-            ? `<button class="btn btn-secondary settings-update-apply">${escapeHtml(t('update.updateNow'))}</button>`
-            : '';
-
-        if (run && run.state === 'progress') {
-            return `
-                <div class="update-banner">
-                    <span class="update-banner-text">${escapeHtml(run.label)}</span>
-                    <span class="update-banner-progress" role="progressbar"
-                          aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-                        <span class="update-banner-progress-fill" style="width:0%"></span>
-                    </span>
-                </div>`;
-        }
-        if (run && run.state === 'failed') {
-            const reason = run.message ? ` — ${escapeHtml(run.message)}` : '';
-            return `
-                <div class="update-banner">
-                    <span class="update-banner-text">${escapeHtml(t('update.failed'))}${reason}</span>
-                    <span class="update-banner-actions">${button}</span>
-                </div>${installed}`;
-        }
-        if (!this._updateLoaded || (info && !info.checked_at)) {
-            return `<p class="setting-desc">${escapeHtml(t('update.checking'))}</p>`;
-        }
-        if (!info) {
-            return `<p class="setting-desc">${escapeHtml(t('update.checkFailed'))}</p>`;
-        }
-        if (!info.update_available) {
-            const upToDate = t('update.upToDate', { version: info.current || '' });
-            return `<p class="setting-desc">${escapeHtml(upToDate)}</p>`;
-        }
-        const notes = info.release_url
-            ? `<a class="update-banner-notes" href="${escapeHtml(info.release_url)}"
-                  target="_blank" rel="noopener noreferrer">${escapeHtml(t('update.releaseNotes'))}</a>`
-            : '';
-        const text = canUpdate
-            ? t('update.available', { version: info.latest })
-            : t('update.availableManual', { version: info.latest });
-        return `
-                <div class="update-banner">
-                    <span class="update-banner-text">${escapeHtml(text)}</span>
-                    <span class="update-banner-actions">${button}${notes}</span>
-                </div>${installed}`;
-    }
-
-    /**
-     * Repaint the section's body. While an update runs this is called on every
-     * animation frame: the row is built once, and after that only the bar and
-     * the words change.
-     */
-    _paintUpdateSection() {
-        const body = this.container.querySelector('.settings-update-body');
-        if (!body) return;
-        const run = this._updateRun;
-        if (!run || run.state !== 'progress') {
-            body.innerHTML = this._updateBodyHtml();
-            return;
-        }
-        let fill = /** @type {HTMLElement|null} */ (
-            body.querySelector('.update-banner-progress-fill')
-        );
-        if (!fill) {
-            body.innerHTML = this._updateBodyHtml();
-            fill = /** @type {HTMLElement} */ (body.querySelector('.update-banner-progress-fill'));
-        }
-        const label = body.querySelector('.update-banner-text');
-        if (label && label.textContent !== run.label) label.textContent = run.label;
-        const pct = Math.max(0, Math.min(100, run.percent));
-        fill.style.width = `${pct.toFixed(1)}%`;
-        const track = body.querySelector('.update-banner-progress');
-        if (track) track.setAttribute('aria-valuenow', String(Math.round(pct)));
-    }
-
-    /**
-     * What this machine reports, and whether this browser may change it.
-     *
-     * Readable by any signed-in user — it is their streams being counted too,
-     * and a disclosure only the owner can find is not a disclosure. Writable
-     * only from the machine itself: the answer speaks for the machine, and a
-     * guest on the LAN does not get to answer for its owner.
-     *
-     * Best-effort: no answer means no section. Better to say nothing than to
-     * claim a state the backend has not confirmed.
-     */
-    async _loadStatsConsent() {
-        try {
-            const state = await BackendClient.getMetricsReporting();
-            this._statsLoaded = !!state;
-            this._statsAvailable = !!(state && state.available);
-            this._statsGranted = !!(state && state.enabled);
-            this._statsWritable = !!(state && state.writable);
-        } catch (err) {
-            console.warn('[Settings] statistics state unavailable:', err);
-            this._statsLoaded = false;
-        }
-    }
-
-    /**
-     * Turn the census off, or back on. This is the means of refusal the
-     * disclosure beside it promises, so the one thing it must never do is end
-     * up showing a state the backend does not hold: on failure the box goes
-     * back where it was rather than claiming a refusal that was not recorded.
-     */
-    async _setStatsConsent(checkbox) {
-        const enabled = checkbox.checked;
-        checkbox.disabled = true;
-        try {
-            await BackendClient.setMetricsReporting(enabled);
-            this._statsGranted = enabled;
-            Toast.success(enabled ? t('stats.turnedOn') : t('stats.turnedOff'));
-        } catch (err) {
-            console.warn('[Settings] could not save the statistics choice:', err);
-            checkbox.checked = !enabled;
-            Toast.error(t('stats.choiceSaveFailed'));
-        } finally {
-            checkbox.disabled = false;
-        }
-    }
-
-    /**
-     * "Buy me a coffee": what a coffee pays for, the link, and the one switch
-     * that hides the button everywhere — the header's and the stream bar's
-     * (util/supportNudge.js). The switch is unticked by default and lives in
-     * this browser only, like the count behind the button. It shows from the
-     * session the button is earned on, ticked or not: before that there is
-     * nothing to hide. "Reset to defaults" leaves it alone: it is not a
-     * streaming setting.
-     */
-    _renderSupportSection() {
-        const hideToggle =
-            goodSessionCount() >= SUPPORT_BUTTON_AT
-                ? `
-                    <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-support-hidden"
-                                   ${isSupportHidden() ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">${escapeHtml(t('support.hideToggle'))}</span>
-                        </label>
-                    </div>`
-                : '';
-        return `
-                <div class="settings-section" id="settings-section-support">
-                    <h3 class="settings-section-title">${escapeHtml(t('support.title'))}</h3>
-                    <p class="setting-desc">${escapeHtml(t('support.desc'))}</p>
-                    <div class="settings-field">
-                        <a class="btn btn-neutral settings-support-link" href="${SUPPORT_URL}"
-                           target="_blank" rel="noopener noreferrer"
-                           aria-label="${escapeHtml(t('support.action'))}">${BMC_FULL_LOGO}</a>
-                    </div>${hideToggle}
-                </div>`;
-    }
-
-    /**
-     * The privacy block: what leaves this machine, and the switch that stops
-     * it. Absent only when the backend would not say — claiming "nothing is
-     * sent" without having asked would be the one unacceptable answer.
-     *
-     * Three shapes, and the middle one is the one that is easy to get wrong:
-     *
-     *   - no reporting credentials (anything self-compiled): a statement, since
-     *     a switch that changes nothing would be a lie;
-     *   - somebody else's browser: a statement too. A ticked box nobody can
-     *     untick reads as a setting imposed on the reader, when it is in fact a
-     *     fact about a machine that is not theirs. So they are told what that
-     *     machine does, in a sentence, and why the answer is not theirs;
-     *   - the machine itself: the switch.
-     *
-     * Nothing here is a consent gate for the reader. The census carries no
-     * field that identifies anyone, it is emitted by the host and never by this
-     * page, and this browser stores nothing for it — so a per-browser answer
-     * would have to invent an identifier for a visitor in order to remember it,
-     * which is the opposite of the point. See PrivacyNotice.js for the text.
-     */
-    _renderPrivacySection() {
-        if (!this._statsLoaded) return '';
-
-        let control;
-        if (!this._statsAvailable) {
-            control = `<p class="setting-desc">${t('stats.unavailable')}</p>`;
-        } else if (!this._statsWritable) {
-            control = `
-                    <div class="settings-field">
-                        <p class="setting-desc">${this._statsGranted ? t('stats.remoteOn') : t('stats.remoteOff')}</p>
-                        <p class="setting-desc">${t('stats.ownerOnly')}</p>
-                    </div>`;
-        } else {
-            control = `
-                    <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-stats-consent"
-                                   ${this._statsGranted ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">${t('stats.toggle')}</span>
-                        </label>
-                        <p class="setting-desc">${t('stats.toggleDesc')}</p>
-                    </div>`;
-        }
-
-        return `
-                <div class="settings-section" id="settings-section-privacy">
-                    <h3 class="settings-section-title">${t('stats.settingsTitle')}</h3>
-                    ${control}
-                    ${noticeDetailsHtml()}
-                </div>`;
     }
 
     /**
@@ -869,7 +574,6 @@ export class SettingsView {
         try {
             const data = await BackendClient.getHosts();
             this._pyrowaveHost = anyHostCodesPyrowave(data?.hosts);
-            this._updateHosts = (data?.hosts || []).map((h) => new Host(h));
         } catch {
             this._pyrowaveHost = null;
         }
@@ -946,17 +650,10 @@ export class SettingsView {
     }
 
     destroy() {
-        this._destroyed = true;
         if (this._saveTimer) {
             clearTimeout(this._saveTimer);
             this._saveTimer = null;
         }
-        if (this._updateRetryTimer) {
-            clearTimeout(this._updateRetryTimer);
-            this._updateRetryTimer = null;
-        }
-        if (this._unsubUpdate) this._unsubUpdate();
-        this._unsubUpdate = null;
         this._stopPadWatch();
     }
 
@@ -2019,19 +1716,6 @@ export class SettingsView {
                     ${navigator.hid ? `<span class="setting-desc">${t('settings.hidDesc')}</span>` : ''}
                 </div>
 
-                <!-- ── Privacy ─────────────────────────────────────────────── -->
-                <!-- Here rather than in Admin: it concerns everyone who streams
-                     through this machine, and Admin is a door most users never
-                     open. The switch is still the owner's alone — shown to all,
-                     operable from the machine itself. -->
-                ${this._renderPrivacySection()}
-
-                <!-- ── Update ──────────────────────────────────────────────── -->
-                ${this._renderUpdateSection()}
-
-                <!-- ── Buy me a coffee ─────────────────────────────────────── -->
-                ${this._renderSupportSection()}
-
                 <!-- ── Reset ───────────────────────────────────────────────── -->
                 <div class="settings-section">
                     <button class="btn btn-neutral" id="btn-settings-reset">
@@ -2129,37 +1813,12 @@ export class SettingsView {
     }
 
     bindEvents() {
-        // Update: the section's body is repainted as the run goes, so the
-        // button is reached through its section rather than bound itself.
-        const updateSection = this.container.querySelector('#settings-section-update');
-        if (updateSection) {
-            updateSection.addEventListener('click', (e) => {
-                if (/** @type {Element} */ (e.target).closest('.settings-update-apply')) {
-                    hostUpdate.start(this._updateInfo);
-                }
-            });
-        }
-
         // Controllers: the list follows what is plugged in.
         this._padSig = '';
         this._startPadWatch();
         this._hidSig = null;
         this._renderPads();
         this._refreshHid();
-
-        // Anonymous statistics: consent given, or withdrawn, on the spot.
-        const statsChk = this.container.querySelector('#settings-stats-consent');
-        if (statsChk) {
-            statsChk.addEventListener('change', () => this._setStatsConsent(statsChk));
-        }
-
-        // Buy me a coffee: the link opens its own tab by itself (a plain link);
-        // the switch hides the button everywhere, or brings it back.
-        const supportChk = /** @type {HTMLInputElement|null} */ (
-            this.container.querySelector('#settings-support-hidden')
-        );
-        if (supportChk)
-            supportChk.addEventListener('change', () => setSupportHidden(supportChk.checked));
 
         // A codec picked is the preference at once (the menu shows only the
         // effective one, see _getEffectiveCodec); re-rendered for the note
