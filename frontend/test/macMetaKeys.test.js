@@ -288,3 +288,18 @@ describe('Apollo clipboard shortcuts', () => {
         expect(v.sent).toEqual([]);
     });
 });
+
+describe('exclusive capture shortcuts', () => {
+    it.each([
+        ['KeyM', null],
+        ['Semicolon', new Map([['Semicolon', 'm']])],
+    ])('toggles once for the M label on %s, ignoring key repeat', (code, layout) => {
+        let toggles = 0;
+        const v = keySink({ _layoutMap: layout, toggleMouseMode: () => toggles++ });
+        const mods = { ctrlKey: true, metaKey: true, altKey: true, shiftKey: true };
+        v.handleKeyDown(ev(code, 'm', mods));
+        v.handleKeyDown(ev(code, 'm', { ...mods, repeat: true }));
+        expect(toggles).toBe(1);
+        expect(v.sent).toEqual([]);
+    });
+});

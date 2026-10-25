@@ -511,6 +511,22 @@ class OidcIsolation(unittest.TestCase):
         self.assertEqual(alice.request("/api/auth/status")[1]["user"]["id"], alice_status["user"]["id"])
         self.assertEqual(alice.request("/api/hosts")[1]["hosts"][0]["uuid"], alice_pc)
 
+    def test_exclusive_input_configuration_validation(self):
+        browser = self.start()
+        admin, headers = self.administrator()
+        path = "/api/settings/streaming"
+        before = admin.request(path)[1]
+        for mode in ("mouse", "keyboard", "both"):
+            code, result, _ = admin.request(path, {"exclusive_mode": mode, "exclusive_enabled": True}, extra_headers=headers)
+            self.assertEqual(code, 200)
+            self.assertEqual(result["exclusive_mode"], mode)
+            self.assertEqual(admin.request(path)[1]["exclusive_mode"], mode)
+        self.assertEqual(admin.request(path, {"exclusive_mode": "invalid", "stream_fps": 30}, extra_headers=headers)[0], 400)
+        self.assertEqual(admin.request(path)[1]["stream_fps"], before["stream_fps"])
+        self.assertEqual(admin.request(path, {"exclusive_enabled": "true"}, extra_headers=headers)[0], 400)
+        self.login(browser)
+        self.assertEqual(browser.request(path, {"exclusive_mode": "mouse"})[0], 403)
+
     def test_sharing_capability_is_local_owner_only(self):
         visitor = self.start()
         self.assertFalse(visitor.request("/api/auth/status")[1]["can_manage_shares"])

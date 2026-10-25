@@ -1257,6 +1257,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["video_codec"] = codecStr;
 
         obj["gaming_mode"] = appSettings.gamingMode();
+        obj["exclusive_mode"] = appSettings.exclusiveMode();
+        obj["exclusive_enabled"] = appSettings.exclusiveEnabled();
         obj["show_performance_stats"] = appSettings.showPerformanceStats();
         obj["upnp_enabled"] = appSettings.upnpEnabled();
         obj["stun_server"] = appSettings.stunServer();
@@ -1330,6 +1332,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         QJsonObject obj;
         bool hadChange = false;
 
+        if ((body.contains("exclusive_mode") && (!body["exclusive_mode"].isString() ||
+                                                 !QStringList{"mouse", "keyboard", "both"}.contains(
+                                                     body["exclusive_mode"].toString()))) ||
+            (body.contains("exclusive_enabled") && !body["exclusive_enabled"].isBool()))
+            return HttpResponse::error(400, "Invalid exclusive input settings");
+
         // First, so that a bad value refuses the whole request before any of
         // its other keys is written. Refused rather than stored: a typo saved
         // would read back as "auto" and hide behind the default.
@@ -1354,6 +1362,17 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["gaming_mode"].toBool();
             appSettings.setGamingMode(enabled);
             obj["gaming_mode"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("exclusive_mode") || body.contains("exclusive_enabled")) {
+            appSettings.setExclusiveInput(
+                body.value("exclusive_mode").toString(appSettings.exclusiveMode()),
+                body.value("exclusive_enabled").toBool(appSettings.exclusiveEnabled()));
+            obj["gaming_mode"] = appSettings.gamingMode();
+            obj["exclusive_mode"] = appSettings.exclusiveMode();
+            obj["exclusive_enabled"] = appSettings.exclusiveEnabled();
             obj["status"] = "saved";
             hadChange = true;
         }
