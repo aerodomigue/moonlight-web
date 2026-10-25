@@ -50,7 +50,11 @@ export class ExclusiveInput {
         };
         this.onFullscreen = () => this.syncKeyboard();
         this.onEscape = (event) => {
-            if (event.key === 'Escape' && this.enabled) this.disable();
+            // A granted Keyboard Lock delivers short Escape presses to the
+            // stream. Releasing it here would swallow the remote key and hand
+            // fullscreen back to the browser. Its long-Escape escape hatch is
+            // still handled by the browser, not by this keydown listener.
+            if (event.key === 'Escape' && this.enabled && !this.keyboardLocked) this.disable();
         };
         win.addEventListener('blur', this.onBlur);
         win.addEventListener('focus', this.onFocus);

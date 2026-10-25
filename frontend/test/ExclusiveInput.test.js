@@ -145,7 +145,24 @@ describe('exclusive input lifecycle', () => {
         expect(keyboard.lock).toHaveBeenCalledOnce();
         expect(capture.needsGesture).toBe(true);
     });
-    it('Escape releases both captures and prevents focus recapture', async () => {
+    it.each(['keyboard', 'both'])('keeps a granted %s capture on short Escape', async (mode) => {
+        capture.mode = mode;
+        await capture.attempt();
+        await tick();
+        expect(capture.keyboardLocked).toBe(true);
+        const event = new Event('keydown', { cancelable: true });
+        event.key = 'Escape';
+        doc.dispatchEvent(event);
+        expect(capture.enabled).toBe(true);
+        expect(capture.keyboardLocked).toBe(true);
+        expect(doc.pointerLockElement).toBe(mode === 'both' ? element : null);
+        expect(keyboard.unlock).not.toHaveBeenCalled();
+        expect(release).not.toHaveBeenCalled();
+        // StreamView must still receive and forward the key to the host.
+        expect(event.defaultPrevented).toBe(false);
+    });
+    it('Escape without keyboard permission releases captures and prevents recapture', async () => {
+        keyboard.lock.mockRejectedValueOnce(new Error('NotAllowedError'));
         await capture.attempt();
         await tick();
         const event = new Event('keydown');
