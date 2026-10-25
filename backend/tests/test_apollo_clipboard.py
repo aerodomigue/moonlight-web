@@ -133,6 +133,16 @@ class ClipboardTests(unittest.TestCase):
         out = self.run_adapter(commands)
         self.assertEqual(self.server.text, data)
         self.assertEqual(sum(x['type']=='injected' for x in out), 1)
+    def test_oversized_read_is_reported_without_truncation(self):
+        self.server.text = b'x' * (256 * 1024 + 1)
+        out = self.run_adapter([{'at':250, 'message': {'type':'clipboardread'}}])
+        self.assertFalse(any(x['type']=='clipboardchunk' for x in out))
+        self.assertTrue(any(x.get('code')=='too_large' for x in out))
+    def test_write_timeout_never_injects(self):
+        self.server.write_delay = 3.5
+        out = self.run_adapter([self.chunk()], duration=4100)
+        self.assertFalse(any(x['type']=='injected' for x in out))
+        self.assertTrue(any(x.get('code')=='write_failed' for x in out))
     def test_slow_reads_do_not_overlap(self):
         self.server.read_delay = 1.2
         self.run_adapter([{'at':n, 'message': {'type':'clipboardread'}} for n in [250, 500, 1300]], duration=1600)

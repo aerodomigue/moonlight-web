@@ -80,6 +80,10 @@ describe('Apollo clipboard channel', () => {
             c.handle({ type: 'clipboardchunk', id: 'x', ...msg });
         expect(writeText).not.toHaveBeenCalled();
     });
+    it('reports a remote size refusal explicitly', () => {
+        c.handle({ type: 'clipboarderror', code: 'too_large' });
+        expect(error).toHaveBeenCalledWith('tooLarge');
+    });
     it('honors independent permissions', async () => {
         c.handle({ type: 'clipboardcaps', read: false, write: false });
         send.mockClear();

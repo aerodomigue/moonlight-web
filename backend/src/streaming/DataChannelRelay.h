@@ -106,7 +106,7 @@ public:
 
     void stop() override;
 
-    /// Hides RelayBase::setInputPolicy: in direct-input mode the policy is read
+    /// Overrides RelayBase::setInputPolicy: in direct-input mode the policy is read
     /// on a libdatachannel thread while the session pushes updates onto the
     /// relay thread, so the write goes under m_InputMutex. Same signature and
     /// meaning; callers hold a DataChannelRelay*, so they land here.

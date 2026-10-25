@@ -108,7 +108,10 @@ void ApolloClipboard::request(const QString& path, const QByteArray* body,
     });
     // Never buffer an unbounded response from a paired machine.
     connect(reply, &QNetworkReply::readyRead, this, [reply] {
-        if (reply->bytesAvailable() > MaxBytes) reply->abort();
+        if (reply->bytesAvailable() > MaxBytes) {
+            reply->setProperty("clipboardOversized", true);
+            reply->abort();
+        }
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply, done = std::move(done)] {
         if (m_Reply == reply) m_Reply = nullptr;
@@ -118,9 +121,10 @@ void ApolloClipboard::request(const QString& path, const QByteArray* body,
                 : (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() >= 400
                        ? reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()
                        : 0);
+        const bool oversized = reply->property("clipboardOversized").toBool();
         const QByteArray bytes = reply->read(MaxBytes + 1);
         reply->deleteLater();
-        if (!m_Stopped) done(bytes.size() > MaxBytes ? 413 : status, bytes);
+        if (!m_Stopped) done(oversized || bytes.size() > MaxBytes ? 413 : status, bytes);
     });
 }
 
@@ -170,6 +174,8 @@ void ApolloClipboard::handle(const QJsonObject& msg)
                 QStringDecoder decoder(QStringDecoder::Utf8);
                 decoder(bytes);
                 if (decoder.hasError()) {
+                    m_Read = false;
+                    caps();
                     error("invalid_text");
                     return;
                 }
@@ -178,6 +184,10 @@ void ApolloClipboard::handle(const QJsonObject& msg)
                     m_LastText = bytes;
                     sendText(bytes);
                 }
+            } else if (status == 413) {
+                m_Read = false;
+                caps();
+                error("too_large");
             } else if (status == 401 || status == 403 || status == 404) {
                 m_Read = false;
                 caps();

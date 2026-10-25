@@ -13,6 +13,8 @@ describe('hostMessages — what reaches the stream view', () => {
             'rumble',
             'clipboard',
             'clipboardcaps',
+            'clipboardchunk',
+            'clipboarderror',
             'cursor',
             'cursorpos',
             'inputgate',

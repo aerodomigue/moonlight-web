@@ -27,7 +27,9 @@ export class ApolloClipboard {
             clearTimeout(this.timer);
             this.poll();
         } else if (msg.type === 'clipboarderror') {
-            this.error(msg.code === 'busy' ? 'busy' : 'failed');
+            this.error(
+                msg.code === 'too_large' ? 'tooLarge' : msg.code === 'busy' ? 'busy' : 'failed',
+            );
         } else if (msg.type === 'clipboardchunk' && this.read) {
             const { id, index, total, data } = msg;
             if (
