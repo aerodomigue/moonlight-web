@@ -87,7 +87,7 @@ public:
     /// moved to its dedicated thread (Session does, right after creation).
     void setClipboardEnabled(bool enabled);
     void setApolloClipboard(const ApolloClipboard::Config& config);
-    void setInputPolicy(const InputMsg::Policy& policy)
+    void setInputPolicy(const InputMsg::Policy& policy) override
     {
         if (m_ApolloClipboard && !policy.unrestricted()) m_ApolloClipboard->stop();
         RelayBase::setInputPolicy(policy);

@@ -110,8 +110,7 @@ public:
     /// on a libdatachannel thread while the session pushes updates onto the
     /// relay thread, so the write goes under m_InputMutex. Same signature and
     /// meaning; callers hold a DataChannelRelay*, so they land here.
-    // cppcheck-suppress duplInheritedMember ; intentional non-virtual hide, see comment above
-    void setInputPolicy(const InputMsg::Policy& policy)
+    void setInputPolicy(const InputMsg::Policy& policy) override
     {
         std::lock_guard<std::mutex> lk(m_InputMutex);
         if (m_ApolloClipboard && !policy.unrestricted()) m_ApolloClipboard->stop();
