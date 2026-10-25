@@ -159,7 +159,10 @@ export class ExclusiveInput {
                     this.keyboardUnavailable = false;
                 },
                 () => {
-                    if (generation === this.generation) this.keyboardUnavailable = true;
+                    if (generation === this.generation) {
+                        this.keyboardUnavailable = true;
+                        this.needsGesture = true;
+                    }
                 },
             )
             .finally(() => {

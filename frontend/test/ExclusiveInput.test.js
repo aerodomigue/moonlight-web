@@ -83,6 +83,21 @@ describe('exclusive input lifecycle', () => {
         await tick();
         expect(doc.pointerLockElement).toBe(element);
     });
+    it('retries keyboard-only capture with the same shortcut after a permission refusal', async () => {
+        capture.mode = 'keyboard';
+        keyboard.lock.mockRejectedValueOnce(new Error('NotAllowedError'));
+        await capture.attempt();
+        await tick();
+        expect(capture.needsGesture).toBe(true);
+        win.dispatchEvent(new Event('focus'));
+        await tick();
+        expect(keyboard.lock).toHaveBeenCalledTimes(1);
+        capture.toggle();
+        await tick();
+        expect(keyboard.lock).toHaveBeenCalledTimes(2);
+        expect(capture.keyboardLocked).toBe(true);
+        expect(capture.enabled).toBe(true);
+    });
     it('never recaptures after voluntary release', async () => {
         await capture.attempt();
         doc.pointerLockElement = null;

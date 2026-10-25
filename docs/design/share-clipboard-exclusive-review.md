@@ -109,3 +109,12 @@ WSS fallback. Transport tests now exercise clipboard capabilities/chunks/errors
 on both WebRTC variants, direct WSS and signaling WSS, and reject late messages
 after stop. The existing mutually authenticated HTTPS adapter tests apply to the
 same adapter used by all four paths.
+
+
+The keyboard-only permission-refusal regression initially failed: M disabled the
+capture instead of retrying it. A rejected Keyboard Lock request now marks the
+capture as requiring a gesture. The same M shortcut retries once, with no focus
+retry loop; the 13 controller checks pass. This final correction changes only
+JavaScript/tests/documentation. The native bundle can retain the already-built
+C++ revision when its backend sources are byte-identical; its complete frontend
+is replaced from the final CI-validated commit and checked before deployment.
