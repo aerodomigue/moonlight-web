@@ -92,3 +92,20 @@ The adapter's HTTPS fixture verifies the exact paired certificate, no redirect,
 bounded requests, explicit oversized response failure, independent permissions,
 and cancellation before paste injection. This is distinct from a real Apollo
 end-to-end test, and no PC is altered by these fixtures.
+
+
+## Final transport review
+
+The review found a fourth path: ICE failure stops the WebRTC relay and carries
+media over its signaling WSS connection. It previously discarded text replies.
+A dedicated idle adapter now starts only when that fallback becomes active;
+the stopped WebRTC adapter remains terminal. Permissions are checked against the
+same relay policy, and restriction, disconnect or stop cancels the fallback
+adapter. The browser routes its authenticated text messages through the existing
+WSS handler, including clipboard updates and revocation.
+
+A reproduction test failed on clipboard delivery and revocation in signaling
+WSS fallback. Transport tests now exercise clipboard capabilities/chunks/errors
+on both WebRTC variants, direct WSS and signaling WSS, and reject late messages
+after stop. The existing mutually authenticated HTTPS adapter tests apply to the
+same adapter used by all four paths.

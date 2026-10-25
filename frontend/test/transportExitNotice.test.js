@@ -82,3 +82,39 @@ describe.each([
         expect(() => send({ type: 'host-ended' })).not.toThrow();
     });
 });
+
+describe.each(['webrtc-dc', 'webrtc-media', 'wss', 'fallback-wss'])(
+    '%s clipboard channel lifetime',
+    (mode) => {
+        it('forwards clipboard capabilities, chunks and errors only while active', () => {
+            const t =
+                mode === 'webrtc-media'
+                    ? new WebRtcMedia('wss://fixture.invalid')
+                    : new WebRtcDataChannel('wss://fixture.invalid');
+            t.onStats = vi.fn();
+            const receive =
+                mode === 'wss'
+                    ? (obj) => t._onWssMessage({ data: JSON.stringify(obj) })
+                    : mode === 'fallback-wss'
+                      ? (obj) => t._onWsFallbackMessage({ data: JSON.stringify(obj) })
+                      : inputChannel(t, 'input');
+            const messages = [
+                { type: 'clipboardcaps', remote: true, read: true, write: true },
+                { type: 'clipboardchunk', id: 'copy', index: 0, total: 1, data: 'aGk=' },
+                { type: 'clipboarderror', code: 'write_failed' },
+            ];
+            for (const message of messages) receive(message);
+            expect(t.onStats.mock.calls.map(([m]) => m)).toEqual(messages);
+            t._stopping = true;
+            receive(messages[1]);
+            expect(t.onStats).toHaveBeenCalledTimes(3);
+        });
+    },
+);
+
+it('honors revocation through signaling WSS fallback', () => {
+    const t = new WebRtcDataChannel('wss://fixture.invalid');
+    t.onRevoked = vi.fn();
+    t._onWsFallbackMessage({ data: JSON.stringify({ type: 'revoked' }) });
+    expect(t.onRevoked).toHaveBeenCalledOnce();
+});

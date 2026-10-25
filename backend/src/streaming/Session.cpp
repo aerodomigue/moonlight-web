@@ -885,6 +885,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
+        if (!clipboardLocal && !m_AutoMode) configureApolloClipboard(signaling);
         signaling->setClientKind(m_ClientKind);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
@@ -986,6 +987,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
+        if (!clipboardLocal && !m_AutoMode) configureApolloClipboard(signaling);
         signaling->setClientKind(m_ClientKind);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
@@ -1061,6 +1063,7 @@ void StreamSession::applyInputPolicy(const InputMsg::Policy& policy)
     push(m_Relay);
     push(m_MediaTrackRelay);
     push(m_StreamRelay);
+    push(m_Signaling);
 
     if (IMediaEngine* shim = m_Engine) {
         QMetaObject::invokeMethod(

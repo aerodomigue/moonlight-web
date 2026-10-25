@@ -1867,7 +1867,7 @@ export class WebRtcDataChannel {
 
     /**
      * Handle incoming WS messages in fallback mode.
-     * Binary → video/audio data, Text → ignored (no server-to-client text yet).
+     * Binary carries video/audio; text shares the authenticated WSS control messages.
      */
     _onWsFallbackMessage(evt) {
         if (this._stopping) return;
@@ -1891,8 +1891,7 @@ export class WebRtcDataChannel {
                 console.warn('[WebRTC] WS fallback: unknown channel byte:', channel);
             }
         } else if (typeof evt.data === 'string') {
-            // Text messages from backend in fallback mode are currently unused
-            // (reserved for future extensions like rumble or connection stats)
+            this._onWssMessage(evt);
         }
     }
 
