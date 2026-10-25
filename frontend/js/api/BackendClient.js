@@ -217,7 +217,9 @@ export class BackendClient {
     }
 
     static async get(path, options) {
-        const resp = await authenticatedFetch(path, options);
+        const resp = await (options === undefined
+            ? authenticatedFetch(path)
+            : authenticatedFetch(path, options));
         if (!resp.ok) return this._handleError(resp, path);
         return this._json(resp);
     }
