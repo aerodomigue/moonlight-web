@@ -97,24 +97,44 @@ describe('the running app card', () => {
         vi.spyOn(view, 'refresh').mockResolvedValue(undefined);
 
         cardOf(2).querySelector('.app-card-quit').click();
+        expect(BackendClient.stopHostSession).not.toHaveBeenCalled();
+        document.querySelector('.mw-confirm-overlay [data-answer="yes"]').click();
         await vi.waitFor(() => expect(view.hosts[0].currentGameId).toBe(0));
 
-        expect(window.confirm).toHaveBeenCalledTimes(1);
+        expect(window.confirm).not.toHaveBeenCalled();
         expect(BackendClient.stopHostSession).toHaveBeenCalledWith('host-a');
         expect(onLaunch).not.toHaveBeenCalled();
         await vi.waitFor(() => expect(container.querySelector('.app-card--running')).toBeNull());
     });
 
-    it('Quit declined leaves the app running', () => {
+    it('Quit declined leaves the app running', async () => {
         mount({ resumableApps: true, currentGameId: 2 });
         view.onLaunchApp = vi.fn();
         vi.spyOn(window, 'confirm').mockReturnValue(false);
 
         cardOf(2).querySelector('.app-card-quit').click();
 
+        document.querySelector('.mw-confirm-overlay [data-answer="no"]').click();
+        await Promise.resolve();
+        expect(window.confirm).not.toHaveBeenCalled();
         expect(BackendClient.stopHostSession).not.toHaveBeenCalled();
         expect(view.onLaunchApp).not.toHaveBeenCalled();
         expect(cardOf(2).classList.contains('app-card--running')).toBe(true);
+    });
+
+    it('also confirms stopping from the host menu inside the app', async () => {
+        mount({ resumableApps: true, currentGameId: 2 });
+        const stop = container.querySelector('.btn-stop-session');
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        vi.spyOn(view, 'refresh').mockResolvedValue(undefined);
+        BackendClient.stopHostSession.mockResolvedValue({ status: 'stopped' });
+        stop.click();
+        expect(BackendClient.stopHostSession).not.toHaveBeenCalled();
+        document.querySelector('.mw-confirm-overlay [data-answer="yes"]').click();
+        await vi.waitFor(() =>
+            expect(BackendClient.stopHostSession).toHaveBeenCalledWith('host-a'),
+        );
+        expect(window.confirm).not.toHaveBeenCalled();
     });
 
     // MultiSeat: each device has its own seat, so the host's currentGameId —

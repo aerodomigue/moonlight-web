@@ -353,6 +353,7 @@
         "quit": "退出",
         "quitAria": "在主机上退出 {{name}}",
         "resumeAria": "继续 {{name}}",
+        "quitTitle": "退出应用？",
         "quitConfirm": "在主机上退出 {{name}}？未保存的进度将丢失，正在串流的人都会断开连接。",
         "quitting": "正在退出…",
         "quitFailed": "无法在主机上退出 {{name}}。"
