@@ -49,3 +49,13 @@ MW_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 
 Frontend tests, translations and the existing backend CTest integration suite
 are run separately. GitHub must validate the final commit before merging.
+
+## Static-analysis compatibility
+
+The GitHub cppcheck gate also flagged the pre-existing `LogArchive` destructor
+for missing copy operations. Its mutex and atomic members already implicitly
+delete those operations. A separate commit makes that constraint explicit and
+retains the default constructor; class layout and runtime behavior are unchanged.
+The two warnings reproduce before the declarations and disappear after them.
+Existing archive tests pass; the full Linux backend suite retains only the five
+known Steam-path failures.
