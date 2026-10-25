@@ -74,9 +74,13 @@ plein écran ; une indication ponctuelle signale une capture indisponible ou par
 
 À la perte du focus, les touches et boutons distants sont relâchés. Au retour,
 une reprise est tentée une fois ; **« Reprendre la capture »** demande un geste
-si le navigateur l’exige. Échap ou une libération volontaire annulent cette
-reprise. Les raccourcis M et Z conservent le plein écran. La capture ne modifie
-ni les paramètres vidéo ni les protections contre les entrées bloquées.
+si le navigateur l’exige. Une libération volontaire annule cette reprise.
+Les raccourcis M et Z conservent le plein écran. Avec une capture clavier autorisée
+en plein écran, un appui bref sur **Échap** est transmis au PC distant et conserve
+les captures. La sortie de secours du navigateur reste disponible (appui prolongé
+sur Échap dans [Chrome](https://developer.chrome.com/blog/better-full-screen-mode)).
+Sans capture clavier accordée, Échap conserve son comportement de libération.
+La capture ne modifie ni les paramètres vidéo ni les protections contre les entrées bloquées.
 
 L’ancien réglage activé devient « Souris + clavier » ; désactivé, il conserve
 les captures désactivées. Sans historique, le choix initial est « Souris ».
