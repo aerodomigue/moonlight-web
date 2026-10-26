@@ -31,6 +31,31 @@ Administrator APIs (existing admin authorization, signed SSO requests and CSRF a
 - Existing `POST /api/admin/hosts/:id/transfer`, `.../duplicate` and
   `DELETE /api/admin/hosts/:id` retain their semantics and collision protections.
 
+### Dashboard discovery and sign-out
+
+Automatic discovery is an account preference, stored atomically in the private
+version-4 user store (`discovery_enabled`, optional boolean). Existing accounts
+retain their identifiers and use the default until an explicit choice is saved:
+no enabled PC means discovery on; any enabled PC, including offline, means off.
+Account identity updates, roles and PIN/SSO logins preserve this preference.
+
+- `GET /api/hosts/discovery` returns `{ "enabled": boolean }` for the caller.
+- `POST /api/hosts/discovery` accepts the same shape; non-booleans return 400,
+  persistence failure returns 503 without changing the previous preference.
+- `POST /api/hosts/scan` returns 403 when discovery is disabled. Authentication,
+  SSO request signatures and CSRF protection also cover these endpoints.
+- Disabling cancels that account's participation and invalidates in-flight results,
+  including after a quick re-enable. Other accounts' scans remain independent.
+- The dashboard scans on entry, foreground return and explicit activation only;
+  known-PC polling continues when discovery is off.
+
+Sign-out uses the application confirmation and revokes the current session before
+navigating to `/?logged_out=1`. This non-authorizing navigation marker prevents an
+automatic SSO loop even without browser storage. PIN-only, SSO-only and mixed modes
+show their configured methods; clicking SSO explicitly starts a fresh OIDC flow.
+The SSO remember checkbox is removed, without changing request signing, browser
+key binding, opening-time revalidation or the absolute eight-hour lifetime.
+
 The upstream settings reference follows; removed upstream service panels are not
 available in this fork.
 
