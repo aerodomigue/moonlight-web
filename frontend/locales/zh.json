@@ -1251,6 +1251,7 @@
         "transfer": "移动",
         "duplicate": "克隆",
         "delete": "删除",
-        "disabledByAdmin": "已被管理员禁用"
+        "disabledByAdmin": "已被管理员禁用",
+        "confirmActivation": "仅更改此记录的访问权限？其他副本、电脑及其配对将保持不变。"
     }
 }

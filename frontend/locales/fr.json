@@ -1251,6 +1251,7 @@
         "transfer": "Déplacer",
         "duplicate": "Cloner",
         "delete": "Supprimer",
-        "disabledByAdmin": "Désactivé par un administrateur"
+        "disabledByAdmin": "Désactivé par un administrateur",
+        "confirmActivation": "Modifier l’accès à cet enregistrement uniquement ? Les autres copies, le PC et son appairage restent inchangés."
     }
 }

@@ -53,6 +53,38 @@ export class AdminUsersPanel {
         }
     }
 
+    async refreshCounts() {
+        try {
+            const result = await BackendClient.get('/api/admin/users');
+            if (this.destroyed) return;
+            for (const user of this.users) {
+                const fresh = result.users.find((item) => item.id === user.id);
+                if (!fresh) continue;
+                user.machine_count = fresh.machine_count;
+                user.session_count = fresh.session_count;
+            }
+            this.container.querySelectorAll('[data-user-id]').forEach((row) => {
+                const user = this.users.find((item) => item.id === row.dataset.userId);
+                if (!user) return;
+                row.lastElementChild.textContent = t('adminAccounts.counts', {
+                    machines: user.machine_count,
+                    sessions: user.session_count,
+                });
+            });
+            const user = this.users.find((item) => item.id === this.selected);
+            const counts = this.container.querySelector('[data-user-counts]');
+            if (user && counts)
+                counts.textContent = t('adminAccounts.counts', {
+                    machines: user.machine_count,
+                    sessions: user.session_count,
+                });
+        } catch (error) {
+            const feedback = this.container.querySelector('#admin-users-feedback');
+            if (!this.destroyed && feedback)
+                feedback.textContent = `${t('adminAccounts.loadError')} ${error.message}`;
+        }
+    }
+
     render() {
         const esc = escapeHtml;
         const user = this.users.find((u) => u.id === this.selected);

@@ -200,6 +200,15 @@ describe('Administration accounts and machine assignments', () => {
         expect(document.querySelector('#admin-user-name')).toBe(name);
         expect(name.value).toBe('Draft');
     });
+    it('refreshes counts after a PC operation without losing unsaved fields', async () => {
+        await openUsers();
+        const name = document.querySelector('#admin-user-name'); name.value = 'Unsaved';
+        users[0] = { ...users[0], machine_count: 4 };
+        await view.refreshCounts();
+        expect(view.users[0].machine_count).toBe(4);
+        expect(document.querySelector('#admin-user-name')).toBe(name);
+        expect(name.value).toBe('Unsaved');
+    });
     it('shows a verified identity for explicit confirmation', async () => {
         const base = get.getMockImplementation();
         get.mockImplementation((path) => path === '/api/admin/users/sso/pending' ? Promise.resolve({ pending: true, user_id: 'local-player', name: '<OIDC>', issuer: 'https://issuer.example', subject: 'verified-sub' }) : base(path));

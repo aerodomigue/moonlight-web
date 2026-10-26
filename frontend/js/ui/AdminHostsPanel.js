@@ -133,7 +133,7 @@ export class AdminHostsPanel {
                     : 'adminManagement.disable'
                 : `adminManagement.${action}`,
         );
-        const message = `${label} — ${host.customName || host.name}${['transfer', 'duplicate'].includes(action) ? ` → ${destination.name}` : ''}\n${t(action === 'delete' ? 'adminAccounts.confirmDeleteMachine' : 'adminAccounts.confirmMachineAction')}`;
+        const message = `${label} — ${host.customName || host.name}${['transfer', 'duplicate'].includes(action) ? ` → ${destination.name}` : ''}\n${t(action === 'delete' ? 'adminAccounts.confirmDeleteMachine' : action === 'enabled' ? 'adminManagement.confirmActivation' : 'adminAccounts.confirmMachineAction')}`;
         this.busy = true;
         try {
             if (

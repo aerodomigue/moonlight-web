@@ -40,6 +40,30 @@ Le serveur Moonlight-Web local reste nécessaire pour joindre Apollo/Sunshine
 et adapter leur flux au navigateur. L'hôte natif et le partage de session hérités
 du projet amont restent disponibles selon les capacités du matériel et du navigateur.
 
+## Paramètres et administration
+
+Les paramètres personnels sont organisés en **Vidéo et audio**, **Contrôles** et
+**Général**. L’administration propose **Connexion**, **Utilisateurs**, **PC**,
+**Sessions**, **Réseau** et **Serveur**. Changer d’onglet conserve les formulaires
+sans les enregistrer ; aucun brouillon ou secret SSO n’est stocké dans le navigateur.
+
+Les comptes SSO sont créés automatiquement à la première connexion validée, avec
+les rôles fournis par Authentik. En mode SSO seul, la création de comptes locaux
+et les actions PIN sont masquées ; la gestion des comptes existants et la
+récupération locale restent disponibles.
+
+Dans **PC**, rechercher et filtrer les enregistrements par propriétaire ou état,
+puis utiliser **Actions** pour déplacer, cloner, désactiver/réactiver ou supprimer.
+Une désactivation bloque uniquement cet enregistrement, qui reste visible chez
+son propriétaire. Elle survit au redémarrage et ne peut pas être annulée par un
+scan ou un ajout manuel. Les autres copies restent indépendantes. Un PC occupé
+par un flux ou une opération doit être libéré avant modification.
+
+Déplacement et clonage conservent configuration, état d’activation et appairage ;
+les clones partagent l’identité client Apollo/Sunshine. Supprimer retire seulement
+l’enregistrement, sans désappairer ni éteindre le PC. La capture native reste
+attachée au propriétaire local.
+
 ## Partage, presse-papiers et capture des entrées
 
 Le partage de session est réservé au propriétaire local. Les autres comptes,

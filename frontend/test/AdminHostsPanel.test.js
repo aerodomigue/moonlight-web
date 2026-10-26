@@ -43,6 +43,16 @@ describe('administrator host registrations', () => {
         expect(del).toHaveBeenCalledWith('/api/admin/hosts/one');
         expect(post).not.toHaveBeenCalled();
     });
+    it('disables and re-enables only the selected registration', async () => {
+        await panel.action('enabled', hosts[0], '');
+        expect(post).toHaveBeenLastCalledWith('/api/admin/hosts/one/enabled', { enabled: false });
+        expect(confirmAction).toHaveBeenCalledWith(expect.stringContaining('adminManagement.confirmActivation'), expect.any(Object));
+        hosts[0].enabled = false;
+        await panel.action('enabled', hosts[0], '');
+        expect(post).toHaveBeenLastCalledWith('/api/admin/hosts/one/enabled', { enabled: true });
+        await panel.action('enabled', hosts[1], '');
+        expect(post).toHaveBeenCalledTimes(2);
+    });
     it('reports a server rejection without discarding the registration', async () => {
         post.mockRejectedValueOnce(new Error('busy'));
         await panel.action('transfer', hosts[0], 'bob');

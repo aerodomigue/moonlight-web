@@ -1200,7 +1200,10 @@ export class AdminView {
             ['login', 'users', 'hosts', 'sessions', 'network', 'server'],
             this._selectedTab,
             (key) => {
+                const changed = this._selectedTab !== key;
                 this._selectedTab = key;
+                if (changed && key === 'hosts' && this._hostsPanel && !this._hostsPanel.destroyed)
+                    this._hostsPanel.start();
             },
         );
 
@@ -1472,14 +1475,17 @@ export class AdminView {
                         this.bindEvents();
                         Toast.success(t('adminAccounts.saved'));
                     }),
-                    new AdminUsersPanel(users, (id) => {
+                    (this._usersPanel = new AdminUsersPanel(users, (id) => {
+                        this._hostsPanel.owner = id;
                         this._tabs.select('hosts');
-                        this._hostsPanel.showOwner(id);
-                    }),
+                    })),
                     (this._hostsPanel = new AdminHostsPanel(
                         this.container.querySelector('#admin-hosts-panel'),
+                        () => this._usersPanel.refreshCounts(),
                     )),
                 ];
+                if (new URL(window.location.href).searchParams.has('oidc_link'))
+                    this._tabs.select('users');
                 this._accountPanels.forEach((panel) => panel.start());
             }
         }

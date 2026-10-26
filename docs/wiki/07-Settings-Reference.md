@@ -1,5 +1,40 @@
 [← Security](06-Security.md) · **Settings Reference** · [Next: REST API →](08-REST-API.md)
 
+## Administration in this fork
+
+Personal settings use **Video and audio**, **Controls**, and **General** tabs.
+Administrator settings use **Sign-in**, **Users**, **PCs**, **Sessions**, **Network**,
+and **Server**. Switching tabs preserves mounted controls and unsaved form values;
+it does not save settings. SSO secrets are never persisted by the browser.
+
+SSO accounts are provisioned on successful sign-in. In SSO-only mode, local-account
+creation and PIN generation are hidden. Authentik roles remain read-only. The
+protected local owner and local recovery are preserved.
+
+The PCs tab searches all private registrations and filters by owner and state.
+Its Actions menu moves, clones, enables/disables or deletes one registration.
+Disabled registrations stay visible without actions, and all functional host routes
+reject access. Existing registrations default to enabled. Discovery cannot override
+the persisted flag. Copies and transfers retain that flag and the shared client
+pairing identity; disabling one copy does not disable another. Native capture is
+protected. Mutations are rejected while the physical PC has a stream or operation
+in progress. Deleting a registration never powers off or unpairs the PC.
+
+Administrator APIs (existing admin authorization, signed SSO requests and CSRF apply):
+
+- `GET /api/admin/hosts`: `hosts` list containing `uuid`, `name`, `customName`,
+  `state`, `backendType`, `owner_id`, `enabled`, `busy`, and `blocked_reason`
+  (`native`, `busy`, or empty). No backend credentials or certificate keys.
+- `POST /api/admin/hosts/:id/enabled`: `{ "enabled": true|false }`; missing or
+  non-boolean values return 400, occupied PCs return 409, persistence failures
+  return 500 and restore the previous state.
+- Existing `POST /api/admin/hosts/:id/transfer`, `.../duplicate` and
+  `DELETE /api/admin/hosts/:id` retain their semantics and collision protections.
+
+The upstream settings reference follows; removed upstream service panels are not
+available in this fork.
+
+
 ---
 
 # 7. Settings Reference

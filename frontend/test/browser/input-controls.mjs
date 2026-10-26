@@ -21,6 +21,7 @@ try {
     assert.equal(status.auth_method, 'sso');
     assert.equal(status.can_manage_shares, false);
     await page.locator('#btn-settings').click();
+    await page.locator('#view-settings-tab-controls').click();
     assert.match(
         await page.locator('label:has(#settings-gaming-mode)').innerText(),
         /Mode exclusif/,
@@ -37,6 +38,7 @@ try {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('#view-hosts').waitFor();
     await page.locator('#btn-settings').click();
+    await page.locator('#view-settings-tab-controls').click();
     assert.equal(await page.locator('#settings-exclusive-mode').inputValue(), 'both');
     await page.locator('#btn-settings-close').click();
     // Test actual browser Pointer Lock and clipboard APIs on a local surface.
@@ -124,6 +126,7 @@ try {
         for (const enabled of [false, true]) {
             console.log(`Checking stream capture: ${mode}, starts enabled=${enabled}`);
             await page.locator('#btn-settings').click();
+    await page.locator('#view-settings-tab-controls').click();
             await page.locator('#settings-exclusive-mode').selectOption(mode);
             await page.locator('#settings-gaming-mode').setChecked(enabled);
             await page.waitForFunction(
@@ -187,6 +190,7 @@ try {
     }
     // Real pointer capture with M; Z releases it without leaving fullscreen.
     await page.locator('#btn-settings').click();
+    await page.locator('#view-settings-tab-controls').click();
     await page.locator('#settings-exclusive-mode').selectOption('mouse');
     await page.locator('#settings-gaming-mode').setChecked(false);
     await page.locator('#btn-settings-close').click();

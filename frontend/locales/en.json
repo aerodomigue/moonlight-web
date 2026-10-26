@@ -1251,6 +1251,7 @@
         "transfer": "Move",
         "duplicate": "Clone",
         "delete": "Delete",
-        "disabledByAdmin": "Disabled by an administrator"
+        "disabledByAdmin": "Disabled by an administrator",
+        "confirmActivation": "Change access to this registration only? Other copies, the PC and its pairing remain unchanged."
     }
 }
