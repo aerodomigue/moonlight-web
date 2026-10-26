@@ -201,6 +201,23 @@ describe('BackendClient', () => {
         Object.defineProperty(window, 'location', { value: original, configurable: true });
     });
 
+    it('hides stale private UI and revalidates without sessionStorage after a session refusal', async () => {
+        BackendClient._hadSession = true;
+        const original = window.location; const reload = vi.fn();
+        Object.defineProperty(window, 'location', {value:{reload}, configurable:true});
+        const blocked = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(()=>{throw Error('storage unavailable')});
+        vi.stubGlobal('fetch',vi.fn().mockResolvedValue(jsonResponse({message:'sso_revalidation_required'},{ok:false,status:401})));
+        try {
+            BackendClient.getHosts();
+            await vi.waitFor(()=>expect(reload).toHaveBeenCalled());
+            expect(document.documentElement.style.visibility).toBe('hidden');
+        } finally {
+            blocked.mockRestore();
+            Object.defineProperty(window,'location',{value:original,configurable:true});
+            document.documentElement.style.visibility='';
+        }
+    });
+
     it('aborts a POST after the client timeout', async () => {
         // fetch rejects with an AbortError when the signal fires.
         mockFetch(

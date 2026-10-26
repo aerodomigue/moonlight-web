@@ -190,13 +190,28 @@ export class BackendClient {
             msg === 'sso_revalidation_required' ||
             (resp.status === 401 && !msg);
         if (this._hadSession && !this._loggingOut && !isAuthEndpoint && isSessionLost) {
-            if (!sessionStorage.getItem('mw_auth_reload')) {
-                sessionStorage.setItem('mw_auth_reload', '1');
+            let alreadyReloaded = false;
+            try {
+                alreadyReloaded = !!sessionStorage.getItem('mw_auth_reload');
+            } catch {
+                /* optional */
+            }
+            if (!alreadyReloaded) {
+                try {
+                    sessionStorage.setItem('mw_auth_reload', '1');
+                } catch {
+                    /* optional */
+                }
+                document.documentElement.style.visibility = 'hidden';
                 console.warn('[MW] Authentication required — reloading page');
                 window.location.reload();
                 return new Promise(() => {});
             }
-            sessionStorage.removeItem('mw_auth_reload');
+            try {
+                sessionStorage.removeItem('mw_auth_reload');
+            } catch {
+                /* optional */
+            }
         }
 
         const friendly = {

@@ -66,3 +66,9 @@ have no additions (135 distinct diagnostics versus 136 on the prior baseline).
 C++ cppcheck passes. Full backend integration and exact-commit GitHub gates are
 required again for delivery; the earlier Linux launcher-path failures remain
 separately identified.
+
+Final review follow-up: a refused SSO request previously read sessionStorage
+without a guard, which could leave stale UI visible when storage was blocked.
+The failure path now hides the document and revalidates even without storage,
+without calling server logout. A regression test covers this fallback; it does
+not alter role/session authorization or resolve the six separate audit findings.
