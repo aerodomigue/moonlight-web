@@ -24,6 +24,7 @@ import { Icons } from '../ui/icons.js';
 export class Host {
     constructor(data) {
         this.uuid = data.uuid || '';
+        this.enabled = data.enabled !== false;
         this.name = data.name || 'Unknown Host';
         // A name given here, in MoonlightWeb. Wins over the reported one wherever
         // the host is shown, and is kept apart from it so the rename dialog can
@@ -105,7 +106,7 @@ export class Host {
         return this.isOnline && !this.isPaired;
     }
     get isAvailable() {
-        return this.isOnline && this.isPaired;
+        return this.enabled && this.isOnline && this.isPaired;
     }
 
     // The native host with nothing attached AND no "MoonlightWeb Virtual
@@ -151,6 +152,7 @@ export class Host {
     // Wake-on-LAN is offered for offline hosts whose MAC the server knows —
     // but only when the machine is actually down (not merely service-down).
     get canWake() {
+        if (!this.enabled) return false;
         return !this.isOnline && !this.reachable && this.wakeSupported;
     }
 
@@ -176,6 +178,7 @@ export class Host {
     }
 
     get statusLabel() {
+        if (!this.enabled) return t('adminManagement.disabled');
         if (this.needsVirtualDisplay) return t('hosts.statusNoDisplay');
         if (this.isUnavailable) return t('hosts.statusUnavailable');
         if (!this.isOnline) return t('hosts.statusOffline');
@@ -184,6 +187,7 @@ export class Host {
     }
 
     get statusClass() {
+        if (!this.enabled) return 'disabled';
         if (this.needsVirtualDisplay) return 'nodisplay';
         if (this.isUnavailable) return 'unavailable';
         if (!this.isOnline) return 'offline';

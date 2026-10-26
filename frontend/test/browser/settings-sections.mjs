@@ -21,6 +21,7 @@ try {
     await assertNoCommunityLink();
     for (let visit = 0; visit < 2; visit++) {
         await page.locator('#btn-settings').click();
+        await page.locator('#view-settings-tab-controls').click();
         await page.locator('#settings-exclusive-mode').waitFor();
         await assertNoCommunityLink();
         assert.equal(
@@ -35,6 +36,7 @@ try {
         assert.equal(await page.locator('#settings-gaming-mode').count(), 1);
         assert.equal(await page.locator('#settings-video-codec').count(), 1);
         assert.equal(await page.locator('#btn-settings-reset').count(), 1);
+        await page.locator('#view-settings-tab-general').click();
         await page.locator('#btn-settings-reset').scrollIntoViewIfNeeded();
         if (process.env.MW_UI_SCREENSHOT)
             await page.screenshot({ path: process.env.MW_UI_SCREENSHOT });

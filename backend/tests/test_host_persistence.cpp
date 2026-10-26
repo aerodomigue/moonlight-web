@@ -74,6 +74,7 @@ void run_host_persistence_tests()
         alice.ownerId = "alice";
         alice.identitySeat = "alice-client-certificate";
         alice.customName = "Alice PC";
+        alice.enabled = false;
         NvComputer restored;
         roundTrip(alice, restored, tmp.path());
         CHECK_EQ(restored.uuid, alice.uuid);
@@ -81,12 +82,20 @@ void run_host_persistence_tests()
         CHECK_EQ(restored.ownerId, alice.ownerId);
         CHECK_EQ(restored.identitySeat, alice.identitySeat);
         CHECK_EQ(restored.customName, alice.customName);
+        CHECK(!restored.enabled);
+        CHECK(!restored.toJson()["enabled"].toBool());
+        auto polled = restored;
+        polled.enabled = true;
+        polled.name = "Fresh name";
+        restored.update(polled);
+        CHECK(!restored.enabled); // Discovery never changes administrative state.
         QSettings legacy(tmp.filePath("legacy.ini"), QSettings::IniFormat);
         legacy.setValue("uuid", "old-pc");
         NvComputer old(legacy);
         CHECK_EQ(old.ownerId, QString("local-owner"));
         CHECK_EQ(old.physicalUuid, QString("old-pc"));
         CHECK(old.identitySeat.isEmpty());
+        CHECK(old.enabled);
     }
 
     // --- The address that answered survives, and stays the one we poll first ---

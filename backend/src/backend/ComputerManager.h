@@ -178,6 +178,8 @@ public:
     // Host lookup (public, for stream session creation)
     NvComputer* getHost(const QString& uuid) const;
     std::shared_ptr<void> acquireHostLease(const QString& uuid, const QString& ownerId) const;
+    std::shared_ptr<void> trackHostRequest(const QString& uuid);
+    std::pair<int, QJsonObject> setHostEnabled(const QString& uuid, bool enabled);
     bool hostOperationBusy(const QString& uuid) const;
     QJsonArray diagnosticHostsJson() const;
     NvHTTP* http() const { return m_Http; }
@@ -247,6 +249,7 @@ private:
                                const QString& ownerId = QStringLiteral("local-owner"));
 
     UserAccess::HostLeases m_HostLeases;
+    QHash<QString, std::weak_ptr<void>> m_HostRequests;
     std::function<bool(const QString&)> m_OwnerActive;
     QSet<QString> m_ScanOwners;
     QMap<QString, NvComputer*> m_Hosts; // uuid → host, all pointers owned here

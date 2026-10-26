@@ -1215,5 +1215,43 @@
         "authentikRole": "来源：Authentik。角色在 SSO 登录时同步，无法在此修改。",
         "backchannelUrl": "后端通道注销 URL",
         "backchannelHint": "在 Authentik 中配置此后端通道注销 URL，并允许签名的 POST 通知通过代理，无需交互式登录。每次加载页面都会检查 SSO；会话撤销后会关闭流。"
+    },
+    "settingsTabs": {
+        "navigation": "设置分类",
+        "media": "视频和音频",
+        "controls": "控制",
+        "general": "常规",
+        "login": "登录",
+        "users": "用户",
+        "hosts": "电脑",
+        "sessions": "会话",
+        "network": "网络",
+        "server": "服务器"
+    },
+    "adminManagement": {
+        "ssoAutomatic": "SSO 用户将在首次登录时自动创建。角色由 Authentik 提供。",
+        "searchUsers": "搜索用户",
+        "noResults": "无结果",
+        "viewHosts": "查看电脑",
+        "searchHosts": "搜索电脑",
+        "owner": "所有者",
+        "state": "状态",
+        "all": "全部",
+        "enabled": "已启用",
+        "disabled": "已禁用",
+        "online": "在线",
+        "offline": "离线",
+        "busy": "忙碌",
+        "refresh": "刷新",
+        "nativeProtected": "本地捕获仍归本地所有者。",
+        "busyReason": "请先停止此电脑上的流或操作。",
+        "actions": "操作",
+        "enable": "启用",
+        "disable": "禁用",
+        "transfer": "移动",
+        "duplicate": "克隆",
+        "delete": "删除",
+        "disabledByAdmin": "已被管理员禁用",
+        "confirmActivation": "仅更改此记录的访问权限？其他副本、电脑及其配对将保持不变。"
     }
 }

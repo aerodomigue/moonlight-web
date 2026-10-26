@@ -1,0 +1,51 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SettingsTabs } from '../js/ui/SettingsTabs.js';
+import { SettingsView } from '../js/ui/SettingsView.js';
+import { AdminView } from '../js/ui/AdminView.js';
+vi.mock('../js/util/BrowserDetect.js', async (original) => ({ ...(await original()), supportsGamingMode: () => true }));
+afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); });
+describe('settings tabs', () => {
+    it('retains draft nodes and handles keyboard navigation without writing storage', () => {
+        document.body.innerHTML = '<div id="view"><div>Header</div><section data-settings-tab="login"><input type="password"></section><section data-settings-tab="network">Network</section></div>';
+        const store = vi.spyOn(Storage.prototype, 'setItem');
+        const root = document.querySelector('#view');
+        const input = root.querySelector('input');
+        input.value = 'unsaved-fixture';
+        new SettingsTabs(root, ['login', 'network'], 'missing');
+        const buttons = root.querySelectorAll('[role="tab"]');
+        buttons[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+        expect(document.activeElement).toBe(buttons[1]);
+        expect(buttons[0].tabIndex).toBe(-1);
+        buttons[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home' }));
+        expect(document.activeElement).toBe(buttons[0]);
+        buttons[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'End' }));
+        expect(document.activeElement).toBe(buttons[1]);
+        buttons[0].click();
+        expect(root.querySelector('input')).toBe(input);
+        expect(input.value).toBe('unsaved-fixture');
+        expect(store).not.toHaveBeenCalled();
+    });
+    it('categorizes personal settings and remembers the selected tab across renders', () => {
+        document.body.innerHTML = '<div id="view"></div>';
+        const view = new SettingsView(document.querySelector('#view'), () => {});
+        view.render();
+        expect(document.querySelectorAll('[role="tab"]')).toHaveLength(3);
+        expect(document.querySelector('#settings-exclusive-mode').closest('[role="tabpanel"]').id).toBe('view-settings-panel-controls');
+        expect(document.querySelector('#settings-stream-height').closest('[role="tabpanel"]').id).toBe('view-settings-panel-media');
+        expect(document.querySelector('#settings-language').closest('[role="tabpanel"]').id).toBe('view-settings-panel-general');
+        expect(document.querySelectorAll('#view-settings > .settings-section')).toHaveLength(0);
+        view._tabs.select('controls'); view.render();
+        expect(document.querySelector('#view-settings-panel-controls').hidden).toBe(false);
+        view.destroy();
+    });
+    it('separates server and network fields', () => {
+        document.body.innerHTML = '<div id="view"></div>';
+        const view = new AdminView(document.querySelector('#view'), () => {});
+        vi.spyOn(view, '_isLocalhost').mockReturnValue(true);
+        view.render();
+        expect(document.querySelector('#select-transport-mode').closest('[role="tabpanel"]').id).toBe('view-admin-panel-network');
+        expect(document.querySelector('#admin-instance-name').closest('[role="tabpanel"]').id).toBe('view-admin-panel-server');
+        expect(document.querySelectorAll('#view-admin > .settings-section')).toHaveLength(0);
+        view.destroy();
+    });
+});

@@ -1215,5 +1215,43 @@
         "authentikRole": "Source : Authentik. Ce rôle est synchronisé à la connexion SSO et ne peut pas être modifié ici.",
         "backchannelUrl": "URL de déconnexion back-channel",
         "backchannelHint": "Configurer cette URL en déconnexion Back-channel dans Authentik et autoriser ses POST signés à travers le proxy sans connexion interactive. Le SSO est vérifié à chaque ouverture ; une session révoquée coupe ses flux."
+    },
+    "settingsTabs": {
+        "navigation": "Catégories de paramètres",
+        "media": "Vidéo et audio",
+        "controls": "Contrôles",
+        "general": "Général",
+        "login": "Connexion",
+        "users": "Utilisateurs",
+        "hosts": "PC",
+        "sessions": "Sessions",
+        "network": "Réseau",
+        "server": "Serveur"
+    },
+    "adminManagement": {
+        "ssoAutomatic": "Les comptes SSO sont créés automatiquement à leur première connexion. Les rôles sont fournis par Authentik.",
+        "searchUsers": "Rechercher un utilisateur",
+        "noResults": "Aucun résultat",
+        "viewHosts": "Voir les PC",
+        "searchHosts": "Rechercher un PC",
+        "owner": "Propriétaire",
+        "state": "État",
+        "all": "Tous",
+        "enabled": "Activé",
+        "disabled": "Désactivé",
+        "online": "En ligne",
+        "offline": "Hors ligne",
+        "busy": "Occupé",
+        "refresh": "Actualiser",
+        "nativeProtected": "La capture native reste attachée au propriétaire local.",
+        "busyReason": "Arrêtez le flux ou l’opération en cours sur ce PC avant de le modifier.",
+        "actions": "Actions",
+        "enable": "Réactiver",
+        "disable": "Désactiver",
+        "transfer": "Déplacer",
+        "duplicate": "Cloner",
+        "delete": "Supprimer",
+        "disabledByAdmin": "Désactivé par un administrateur",
+        "confirmActivation": "Modifier l’accès à cet enregistrement uniquement ? Les autres copies, le PC et son appairage restent inchangés."
     }
 }

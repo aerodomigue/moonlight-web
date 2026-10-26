@@ -1,3 +1,5 @@
+import { AdminHostsPanel } from './AdminHostsPanel.js';
+import { SettingsTabs, moveSettingsFields } from './SettingsTabs.js';
 /*
  * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
@@ -697,8 +699,8 @@ export class AdminView {
                     ${
                         this._adminUnlockAvailable
                             ? `
-                    <div class="settings-section">
-                        <h3 class="settings-section-title">${t('admin.unlockTitle')}</h3>
+                    <div class="settings-section" data-settings-tab="server">
+                    <h3 class="settings-section-title">${t('admin.unlockTitle')}</h3>
                         <div class="settings-field u-pt-0">
                             <p class="setting-desc">${t('admin.unlockDesc')}</p>
                             <input type="password" class="settings-input" id="admin-unlock-input"
@@ -782,13 +784,13 @@ export class AdminView {
                             title="${this.esc(t('admin.closeDiscard'))}">&times;</button>
                 </div>
 
-                ${this._accountAdministration ? '<div id="admin-login-settings"></div><div id="admin-users-panel"></div>' : ''}
+                ${this._accountAdministration ? '<div id="admin-login-settings" data-settings-tab="login"></div><div id="admin-users-panel" data-settings-tab="users"></div><div id="admin-hosts-panel" data-settings-tab="hosts"></div>' : ''}
                 <!-- PIN (localhost only) -->
                 ${
                     this._isLocalhost() && this._pinLoginEnabled
                         ? `
-                    <div class="settings-section">
-                        <h3 class="settings-section-title">${t('admin.accessPin')}</h3>
+                    <div class="settings-section" data-settings-tab="login">
+                    <h3 class="settings-section-title">${t('admin.accessPin')}</h3>
                         <div class="settings-field u-pt-0">
                             <p class="setting-desc">
                                 ${t('admin.accessPinDesc')}
@@ -828,8 +830,8 @@ export class AdminView {
                 ${
                     this._isLocalhost() && this._pinLoginEnabled
                         ? `
-                    <div class="settings-section">
-                        <h3 class="settings-section-title">${t('admin.certAuth')}</h3>
+                    <div class="settings-section" data-settings-tab="login">
+                    <h3 class="settings-section-title">${t('admin.certAuth')}</h3>
                         <div class="settings-field u-pt-0">
                             <label class="settings-checkbox-label">
                                 <input type="checkbox" id="chk-cert-auth"
@@ -866,7 +868,7 @@ export class AdminView {
                 ${
                     this._reverseProxy
                         ? `
-                <div class="settings-section" id="admin-section-internet">
+                <div class="settings-section" id="admin-section-internet" data-settings-tab="network">
                     <h3 class="settings-section-title">${t('admin.reverseProxy')}</h3>
                     <p>${t('admin.reverseProxyDescription')}</p>
                     <div class="settings-field">
@@ -884,7 +886,7 @@ export class AdminView {
                 `
                         : `
                 <!-- Internet -->
-                <div class="settings-section" id="admin-section-internet">
+                <div class="settings-section" id="admin-section-internet" data-settings-tab="network">
                     <h3 class="settings-section-title">${t('admin.internet')}${
                         this._internetEnabled &&
                         !this._lastError &&
@@ -1041,7 +1043,7 @@ export class AdminView {
                 ${
                     this._localIps.length
                         ? `
-                <div class="settings-section">
+                <div class="settings-section" data-settings-tab="network">
                     <h3 class="settings-section-title">${t('admin.localAccess')}</h3>
                     <div class="settings-field u-pt-0">
                         ${this._localIps
@@ -1069,8 +1071,8 @@ export class AdminView {
                 ${
                     this._isLocalhost()
                         ? `
-                    <div class="settings-section" id="admin-section-sessions">
-                        <h3 class="settings-section-title">${t('admin.activeSessions')}</h3>
+                    <div class="settings-section" id="admin-section-sessions" data-settings-tab="sessions">
+                    <h3 class="settings-section-title">${t('admin.activeSessions')}</h3>
                         <div class="settings-field u-pt-0">
                             <p class="setting-desc">
                                 ${t('admin.activeSessionsDesc')}
@@ -1098,7 +1100,7 @@ export class AdminView {
                 }
 
                 <!-- Server Configuration -->
-                <div class="settings-section">
+                <div class="settings-section" data-settings-tab="server">
                     <h3 class="settings-section-title">${t('admin.serverConfig')}</h3>
 
                     ${
@@ -1186,6 +1188,24 @@ export class AdminView {
                 ${this._renderAdvanced()}
             </div>
         `;
+
+        const tabsRoot = this.container.querySelector('#view-admin');
+        moveSettingsFields(
+            tabsRoot,
+            ['#chk-packet-marking', '#select-transport-mode', '#admin-https-port'],
+            'network',
+        );
+        this._tabs = new SettingsTabs(
+            tabsRoot,
+            ['login', 'users', 'hosts', 'sessions', 'network', 'server'],
+            this._selectedTab,
+            (key) => {
+                const changed = this._selectedTab !== key;
+                this._selectedTab = key;
+                if (changed && key === 'hosts' && this._hostsPanel && !this._hostsPanel.destroyed)
+                    this._hostsPanel.start();
+            },
+        );
 
         this._markClean();
     }
@@ -1455,8 +1475,17 @@ export class AdminView {
                         this.bindEvents();
                         Toast.success(t('adminAccounts.saved'));
                     }),
-                    new AdminUsersPanel(users),
+                    (this._usersPanel = new AdminUsersPanel(users, (id) => {
+                        this._hostsPanel.owner = id;
+                        this._tabs.select('hosts');
+                    })),
+                    (this._hostsPanel = new AdminHostsPanel(
+                        this.container.querySelector('#admin-hosts-panel'),
+                        () => this._usersPanel.refreshCounts(),
+                    )),
                 ];
+                if (new URL(window.location.href).searchParams.has('oidc_link'))
+                    this._tabs.select('users');
                 this._accountPanels.forEach((panel) => panel.start());
             }
         }
@@ -2276,7 +2305,7 @@ export class AdminView {
     // internet's (through the rendezvous only) ---
     _renderRemoteAdmin() {
         return `
-                <div class="settings-section">
+                <div class="settings-section" data-settings-tab="login">
                     <h3 class="settings-section-title">${t('admin.remoteAdmin')}</h3>
                     <div class="settings-field u-pt-0">
                         <label class="settings-checkbox-label">
@@ -2349,7 +2378,7 @@ export class AdminView {
     _renderAdvanced() {
         return `
                 <!-- Advanced -->
-                <div class="settings-section" id="admin-section-advanced">
+                <div class="settings-section" id="admin-section-advanced" data-settings-tab="server">
                     <h3 class="settings-section-title">${t('admin.advanced')}</h3>
                     ${this._videoPipelineSupported ? this._renderVideoPipeline() : ''}
                     ${this._renderDiagMode('chk-debug-mode', this._debugMode, this._debugModeCli, 'debugMode', '--debug')}
@@ -2589,7 +2618,7 @@ export class AdminView {
             )
             .join('');
         return `
-                <div class="settings-section host-apps" id="admin-section-host-apps">
+                <div class="settings-section host-apps" id="admin-section-host-apps" data-settings-tab="server">
                     <h3 class="settings-section-title">${t('admin.hostApps')}</h3>
                     <p class="settings-section-desc">${desc}</p>
                     ${

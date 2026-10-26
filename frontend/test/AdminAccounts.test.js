@@ -1,3 +1,5 @@
+import { confirmAction } from '../js/ui/ConfirmDialog.js';
+vi.mock('../js/ui/ConfirmDialog.js', () => ({ confirmAction: vi.fn(async () => true) }));
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { BackendClient } from '../js/api/BackendClient.js';
 import { AdminLoginSettings } from '../js/ui/AdminLoginSettings.js';
@@ -28,7 +30,7 @@ beforeEach(() => {
     });
     post = vi.spyOn(BackendClient, 'post').mockResolvedValue({});
     del = vi.spyOn(BackendClient, 'del').mockResolvedValue({});
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmAction.mockResolvedValue(true);
 });
 afterEach(() => {
     view?.destroy();
@@ -125,17 +127,17 @@ describe('Administration sign-in configuration', () => {
 describe('Administration accounts and machine assignments', () => {
     it('shows counts and roles while escaping names and protecting the owner', async () => {
         await openUsers();
-        expect(document.querySelector('#admin-user-select').textContent).toContain('<Alice>');
+        expect(document.querySelector('#admin-user-list').textContent).toContain('<Alice>');
         expect(document.querySelector('#panel alice')).toBeNull();
         expect(document.querySelector('[data-user-action="delete"]').disabled).toBe(true);
         expect(document.querySelector('#admin-edit-user [name="role"]').disabled).toBe(true);
-        expect(document.querySelector('[data-host-row] strong').textContent).toBe('<PC>');
+        expect(document.querySelector('[data-user-action="hosts"]')).not.toBeNull();
     });
     it('shows the Authentik role as read-only and omits it from account updates', async () => {
         users[1] = { ...member(), sso_linked: true, role_source: 'authentik', issuer: 'https://auth.example/' };
         await openUsers();
         view.selected = users[1].id;
-        await view.loadHosts();
+        view.render();
         expect(document.querySelector('#admin-edit-user [name="role"]').disabled).toBe(true);
         expect(document.querySelector('[data-role-source]').textContent).toContain('adminAccounts.authentikRole');
         document.querySelector('#admin-edit-user').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
@@ -172,28 +174,40 @@ describe('Administration accounts and machine assignments', () => {
     });
     it('requires confirmation with counts before deleting a user', async () => {
         await openUsers();
-        window.confirm.mockReturnValue(false);
+        confirmAction.mockResolvedValue(false);
         await view.userAction('delete', users[1]);
-        expect(window.confirm).toHaveBeenCalled();
+        expect(confirmAction).toHaveBeenCalledWith(expect.any(String), { inApp: true, danger: true });
         expect(del).not.toHaveBeenCalled();
     });
-    it('duplicates the selected registration to the selected destination', async () => {
+    it('hides local creation and PIN in SSO-only mode while retaining management', async () => {
         await openUsers();
-        await view.hostAction('duplicate', document.querySelector('[data-host-row]'));
-        expect(post).toHaveBeenCalledWith('/api/admin/hosts/host-one/duplicate', { user_id: 'local-player' });
+        view.config.pin = false;
+        view.render();
+        expect(document.querySelector('#admin-create-user')).toBeNull();
+        expect(document.querySelector('[data-user-action="pin"]')).toBeNull();
+        expect(document.querySelector('[data-user-action="revoke"]')).not.toBeNull();
+        const callback = vi.fn(); view.onHosts = callback;
+        await view.userAction('hosts', users[1]);
+        expect(callback).toHaveBeenCalledWith('local-player');
     });
-    it('deletes one registration without calling a host power endpoint', async () => {
+    it('searches users without replacing the current draft form', async () => {
         await openUsers();
-        await view.hostAction('delete', document.querySelector('[data-host-row]'));
-        expect(del).toHaveBeenCalledWith('/api/admin/hosts/host-one');
-        expect(post).not.toHaveBeenCalled();
+        const name = document.querySelector('#admin-user-name'); name.value = 'Draft';
+        const search = document.querySelector('#admin-user-search'); search.value = 'Alice';
+        search.dispatchEvent(new Event('input'));
+        expect(document.querySelector('[data-user-id="local-owner"]').hidden).toBe(true);
+        expect(document.querySelector('[data-user-id="local-player"]').hidden).toBe(false);
+        expect(document.querySelector('#admin-user-name')).toBe(name);
+        expect(name.value).toBe('Draft');
     });
-    it('displays a busy-host rejection and keeps the registration visible', async () => {
+    it('refreshes counts after a PC operation without losing unsaved fields', async () => {
         await openUsers();
-        post.mockRejectedValue(new Error('host in use'));
-        await view.hostAction('transfer', document.querySelector('[data-host-row]'));
-        expect(document.querySelector('#admin-users-feedback').textContent).toContain('host in use');
-        expect(document.querySelector('[data-host-row]')).not.toBeNull();
+        const name = document.querySelector('#admin-user-name'); name.value = 'Unsaved';
+        users[0] = { ...users[0], machine_count: 4 };
+        await view.refreshCounts();
+        expect(view.users[0].machine_count).toBe(4);
+        expect(document.querySelector('#admin-user-name')).toBe(name);
+        expect(name.value).toBe('Unsaved');
     });
     it('shows a verified identity for explicit confirmation', async () => {
         const base = get.getMockImplementation();

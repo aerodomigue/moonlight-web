@@ -1215,5 +1215,43 @@
         "authentikRole": "Source: Authentik. This role is synchronized at SSO sign-in and cannot be edited here.",
         "backchannelUrl": "Back-channel logout URL",
         "backchannelHint": "Configure this URL for Back-channel logout in Authentik and allow signed POST notifications through the proxy without interactive login. SSO is checked at each page load; revoked sessions lose their streams."
+    },
+    "settingsTabs": {
+        "navigation": "Settings categories",
+        "media": "Video and audio",
+        "controls": "Controls",
+        "general": "General",
+        "login": "Sign-in",
+        "users": "Users",
+        "hosts": "PCs",
+        "sessions": "Sessions",
+        "network": "Network",
+        "server": "Server"
+    },
+    "adminManagement": {
+        "ssoAutomatic": "SSO accounts are created automatically on first sign-in. Roles are supplied by Authentik.",
+        "searchUsers": "Search users",
+        "noResults": "No results",
+        "viewHosts": "View PCs",
+        "searchHosts": "Search PCs",
+        "owner": "Owner",
+        "state": "State",
+        "all": "All",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "online": "Online",
+        "offline": "Offline",
+        "busy": "Busy",
+        "refresh": "Refresh",
+        "nativeProtected": "Native capture remains attached to the local owner.",
+        "busyReason": "Stop the active stream or operation on this PC before changing it.",
+        "actions": "Actions",
+        "enable": "Enable",
+        "disable": "Disable",
+        "transfer": "Move",
+        "duplicate": "Clone",
+        "delete": "Delete",
+        "disabledByAdmin": "Disabled by an administrator",
+        "confirmActivation": "Change access to this registration only? Other copies, the PC and its pairing remain unchanged."
     }
 }

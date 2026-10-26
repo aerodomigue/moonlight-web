@@ -34,7 +34,8 @@ try {
     console.log('PASS: silent revalidation restores the administrator route after reload.');
     assert.match(await admin.locator('#admin-section-login h3').innerText(), /connexion/i);
     const adminId = await admin.evaluate(async () => (await (await import('/js/api/BackendClient.js')).BackendClient.getAuthStatus()).user.id);
-    await admin.locator('#admin-user-select').selectOption(adminId);
+    await admin.locator('#view-admin-tab-users').click();
+    await admin.locator(`[data-user-id="${adminId}"]`).click();
     await admin.locator('[data-role-source]').waitFor();
     assert.match(await admin.locator('[data-role-source]').innerText(), /Source : Authentik/);
     assert.equal(await admin.locator('#admin-edit-user [name="role"]').isDisabled(), true);
