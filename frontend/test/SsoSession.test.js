@@ -1,3 +1,4 @@
+import { acceptAccount, leaveAccount } from '../js/util/authAccountState.js';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { webcrypto } from 'node:crypto';
 vi.mock('../js/util/pairingCrypto.js', () => ({
@@ -5,7 +6,7 @@ vi.mock('../js/util/pairingCrypto.js', () => ({
     bytesToBase64: (value) => Buffer.from(value).toString('base64'),
 }));
 import { loadOrCreateIdentity } from '../js/util/pairingCrypto.js';
-import { SsoSession } from '../js/api/SsoSession.js';
+import { SsoSession, authenticatedFetch } from '../js/api/SsoSession.js';
 let pair;
 let fetcher;
 beforeEach(async () => {
@@ -94,4 +95,35 @@ describe('SSO request possession and document authority', () => {
         expect(options.headers.has('Signature')).toBe(true);
         expect(await original.text()).toBe('payload');
     });
+    it('rejects an old account response even when its network request succeeded', async () => {
+        acceptAccount({id:'a'});
+        let resolve;
+        fetcher.mockReturnValue(new Promise(r=>resolve=r));
+        const pending=authenticatedFetch('/api/hosts');
+        acceptAccount({id:'b'});
+        resolve(new Response('{"hosts":[{"uuid":"a"}]}'));
+        await expect(pending).rejects.toThrow('account_changed');
+    });
+    it('rejects body parsing that completes after logout', async () => {
+        acceptAccount({id:'a'});
+        let resolve;
+        fetcher.mockResolvedValue({ok:true,json:()=>new Promise(r=>resolve=r)});
+        const response=await authenticatedFetch('/api/hosts');
+        const pending=response.json();
+        leaveAccount();resolve({hosts:[{uuid:'private'}]});
+        await expect(pending).rejects.toThrow('account_changed');
+    });
+    it('never sends an old action using a changed signing context', async () => {
+        acceptAccount({id:'a'});
+        Object.assign(SsoSession,{sessionId:'a',pageId:'page-a'});
+        let resolve;
+        loadOrCreateIdentity.mockReturnValue(new Promise(r=>resolve=r));
+        const pending=SsoSession.fetch('/api/hosts/private/start',{method:'POST'});
+        acceptAccount({id:'b'});
+        Object.assign(SsoSession,{sessionId:'b',pageId:'page-b'});
+        resolve({privateKey:pair.privateKey,keyId:'key'});
+        await expect(pending).rejects.toThrow('account_changed');
+        expect(fetcher).not.toHaveBeenCalled();
+    });
+
 });

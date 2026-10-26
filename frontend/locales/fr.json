@@ -105,8 +105,8 @@
         "nativePermOnTheMac": "Ce réglage ne s'ouvre que depuis le Mac lui-même — faites-le là-bas.",
         "title": "Bibliothèque d'applications",
         "addManually": "Ajouter manuellement",
-        "empty": "Aucun hôte trouvé",
-        "emptyHint": "Les hôtes de ce réseau apparaissent tout seuls. Vous pouvez aussi en ajouter un manuellement.",
+        "empty": "Aucun PC enregistré",
+        "emptyHint": "Ajoutez un PC détecté ci-dessus, ou ajoutez-le manuellement. La découverte seule ne l’enregistre pas.",
         "emptyNeedsHost": "Streamer un ordinateur demande un logiciel hôte sur cet ordinateur. MoonlightWeb fonctionne avec Sunshine — un logiciel à part, que vous téléchargez et installez vous-même.",
         "emptyGetSunshine": "Télécharger Sunshine",
         "connectionLost": "Connexion perdue",
@@ -145,7 +145,10 @@
         "backendSetup": "Configurer le backend…",
         "backendManage": "Backend : {{type}}",
         "discoveryOn": "Découverte automatique : activée",
-        "discoveryOff": "Découverte automatique : désactivée"
+        "discoveryOff": "Découverte automatique : désactivée",
+        "candidatesTitle": "PC détectés — à ajouter",
+        "candidatesHint": "La découverte n’enregistre et n’appaire aucun PC. Choisissez Ajouter pour l’enregistrer sur votre compte.",
+        "addCandidate": "Ajouter"
     },
     "selfStream": {
         "title": "Streamer ton propre PC ?",

@@ -78,7 +78,12 @@ const RIDE_OUT_LOSS = true;
  */
 
 import { loadOrCreateIdentity, rememberHostIdentity } from '../util/pairingCrypto.js';
-import { acceptAccount } from '../util/authAccountState.js';
+import {
+    acceptAccount,
+    leaveAccount,
+    accountRevision,
+    requireAccountRevision,
+} from '../util/authAccountState.js';
 import {
     CANVAS_TEARING_IS_REAL,
     decoderRidesOutGaps,
@@ -112,6 +117,11 @@ export class BackendClient {
      * The key is regenerated whenever the server restarts, hence the refresh.
      */
     static async _adminKey({ refresh = false } = {}) {
+        const revision = accountRevision();
+        if (this._adminKeyRevision !== revision) {
+            this._adminKeyPromise = null;
+            this._adminKeyRevision = revision;
+        }
         if (refresh) this._adminKeyPromise = null;
         if (!this._adminKeyPromise) {
             this._adminKeyPromise = (async () => {
@@ -211,6 +221,7 @@ export class BackendClient {
         try {
             return await resp.json();
         } catch (_) {
+            if (_?.message === 'account_changed') throw _;
             const e = /** @type {BackendError} */ (new Error(t('appError.serverUnreadable')));
             e.statusCode = resp.status;
             throw e;
@@ -226,6 +237,7 @@ export class BackendClient {
     }
 
     static async post(path, body = {}, { timeoutMs = 0, _retried = false } = {}) {
+        const revision = accountRevision();
         // Optional client-side timeout: when the backend hangs (crashed/stuck)
         // without closing the socket, abort early so the UI gets fast feedback
         // instead of waiting for the browser/proxy timeout (~30s → 504).
@@ -238,6 +250,7 @@ export class BackendClient {
         try {
             const headers = { 'Content-Type': 'application/json' };
             const adminKey = await this._adminKey();
+            requireAccountRevision(revision);
             if (adminKey) headers['X-MW-Admin-Key'] = adminKey;
 
             const resp = await authenticatedFetch(path, {
@@ -251,6 +264,7 @@ export class BackendClient {
             // request was refused before any handler ran, so replaying is safe.
             if (resp.status === 403 && !_retried) {
                 const fresh = await this._adminKey({ refresh: true });
+                requireAccountRevision(revision);
                 if (fresh && fresh !== adminKey)
                     return this.post(path, body, { timeoutMs, _retried: true });
             }
@@ -270,9 +284,11 @@ export class BackendClient {
     }
 
     static async del(path) {
+        const revision = accountRevision();
         /** @type {Record<string, string>} */
         const headers = {};
         const adminKey = await this._adminKey();
+        requireAccountRevision(revision);
         if (adminKey) headers['X-MW-Admin-Key'] = adminKey;
 
         const resp = await authenticatedFetch(path, { method: 'DELETE', headers });
@@ -285,6 +301,12 @@ export class BackendClient {
     }
     static async getDiscovery() {
         return this.get('/api/hosts/discovery');
+    }
+    static async getDiscoveryCandidates() {
+        return this.get('/api/hosts/discovery/candidates');
+    }
+    static async addDiscoveryCandidate(id) {
+        return this.post(`/api/hosts/discovery/candidates/${encodeURIComponent(id)}/add`);
     }
     static async setDiscovery(enabled) {
         return this.post('/api/hosts/discovery', { enabled });
@@ -810,6 +832,8 @@ export class BackendClient {
         this._loggingOut = false;
         this.currentUser = null;
         this.canManageShares = false;
+        leaveAccount();
+        this._adminKeyPromise = null;
         SsoSession.reset();
         try {
             localStorage.removeItem('mw-host-apps');

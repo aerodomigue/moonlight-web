@@ -197,10 +197,8 @@ describe('BackendClient', () => {
         // The call never settles — _handleError hands back a pending promise so
         // the caller cannot race the navigation.
         BackendClient.getHosts();
-        await Promise.resolve();
-        await Promise.resolve();
+        await vi.waitFor(() => expect(reload).toHaveBeenCalled());
         Object.defineProperty(window, 'location', { value: original, configurable: true });
-        expect(reload).toHaveBeenCalled();
     });
 
     it('aborts a POST after the client timeout', async () => {

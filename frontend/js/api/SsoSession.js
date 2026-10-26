@@ -1,3 +1,4 @@
+import { accountRevision, requireAccountRevision } from '../util/authAccountState.js';
 import { loadOrCreateIdentity, bytesToBase64 } from '../util/pairingCrypto.js';
 
 const encoder = new TextEncoder();
@@ -24,6 +25,9 @@ export const SsoSession = {
         const url = new URL(input instanceof Request ? input.url : input, location.href);
         if (url.origin !== location.origin || !url.pathname.startsWith('/api/'))
             return fetch(input, init);
+        const revision = accountRevision();
+        const sessionId = this.sessionId;
+        const pageId = this.page();
         const identity = await loadOrCreateIdentity();
         if (!identity) throw new Error('Browser identity unavailable');
         const request = new Request(input instanceof Request ? input.clone() : url.href, init);
@@ -36,8 +40,8 @@ export const SsoSession = {
             `"@path": ${url.pathname}`,
             `"@query": ${url.search || '?'}`,
             `"content-digest": ${digest}`,
-            `"x-mw-session-id": ${this.sessionId}`,
-            `"x-mw-page-id": ${this.page()}`,
+            `"x-mw-session-id": ${sessionId}`,
+            `"x-mw-page-id": ${pageId}`,
             `"@signature-params": ${params}`,
         ].join('\n');
         const signature = await crypto.subtle.sign(
@@ -47,10 +51,13 @@ export const SsoSession = {
         );
         const headers = new Headers(request.headers);
         headers.set('Content-Digest', digest);
-        headers.set('X-MW-Session-Id', this.sessionId);
-        headers.set('X-MW-Page-Id', this.page());
+        headers.set('X-MW-Session-Id', sessionId);
+        headers.set('X-MW-Page-Id', pageId);
         headers.set('Signature-Input', `mw=${params}`);
         headers.set('Signature', `mw=:${bytesToBase64(signature)}:`);
+        requireAccountRevision(revision);
+        if (sessionId !== this.sessionId || pageId !== this.pageId)
+            throw new Error('account_changed');
         return fetch(request, { headers });
     },
     async startup() {
@@ -131,5 +138,23 @@ export const SsoSession = {
         return ['moonlight-session-v1', `mw-auth.${(await response.json()).ticket}`];
     },
 };
-export const authenticatedFetch = (...args) =>
-    SsoSession.sessionId ? SsoSession.fetch(...args) : fetch(...args);
+export async function authenticatedFetch(input, init = undefined) {
+    const revision = accountRevision();
+    const response = await (SsoSession.sessionId
+        ? SsoSession.fetch(input, init)
+        : init === undefined
+          ? fetch(input)
+          : fetch(input, init));
+    requireAccountRevision(revision);
+    // Parsing can finish after logout too (including image/download bodies).
+    for (const method of ['json', 'text', 'blob', 'arrayBuffer']) {
+        const read = response[method]?.bind(response);
+        if (read)
+            response[method] = async (...params) => {
+                const result = await read(...params);
+                requireAccountRevision(revision);
+                return result;
+            };
+    }
+    return response;
+}

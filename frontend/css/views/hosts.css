@@ -470,3 +470,23 @@
     .hosts-header { flex-wrap: wrap; }
     .hosts-actions { width: 100%; }
 }
+
+#discovery-candidates {
+    margin-block: 1.5rem;
+}
+.discovery-candidate {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border-color, #253b43);
+}
+.discovery-candidate small {
+    display: block;
+    opacity: 0.7;
+    overflow-wrap: anywhere;
+}
+
+.discovery-candidate > span { min-width: 0; overflow-wrap: anywhere; }
+.discovery-candidate > button { flex-shrink: 0; }

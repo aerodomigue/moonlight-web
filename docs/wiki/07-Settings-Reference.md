@@ -48,6 +48,23 @@ Account identity updates, roles and PIN/SSO logins preserve this preference.
   including after a quick re-enable. Other accounts' scans remain independent.
 - The dashboard scans on entry, foreground return and explicit activation only;
   known-PC polling continues when discovery is off.
+- `GET /api/hosts/discovery/candidates` lists only the caller's temporary
+  observations (`id`, `name`, `address`, `port`), never registrations or credentials.
+- `POST /api/hosts/discovery/candidates/:id/add` accepts only the candidate ID
+  from the URL. It re-queries serverinfo and checks owner activity, scan generation,
+  expiry, physical identity and collisions before atomically persisting a new,
+  unpaired registration with a fresh certificate seat. The body cannot select an
+  owner or import pairing data. Missing/expired/foreign IDs return 404; concurrent
+  confirmation, collisions or changed identity return 409; write failure returns
+  503 and leaves no registration. Existing signature and CSRF checks apply.
+- Candidates expire 120 seconds after their last observation, are held only in
+  backend memory (128 per account, 1024 total), and disappear on disable/restart.
+  Merely discovering a PC never saves it. Manual addition remains available.
+- Successful host snapshots replace the dashboard list. Account revisions reject
+  stale REST/image bodies and signing work. BroadcastChannel and storage events
+  only trigger local invalidation/revalidation, never grant authority or revoke a
+  potentially newer server session. Logout notifications use `/?logged_out=1`;
+  switching identity during OIDC revalidation requires a fresh validated login.
 
 Sign-out uses the application confirmation and revokes the current session before
 navigating to `/?logged_out=1`. This non-authorizing navigation marker prevents an

@@ -47,6 +47,7 @@
  */
 // First, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
+import { watchAccountChanges } from './util/authAccountState.js';
 import { exclusiveSettings } from './stream/ExclusiveInput.js';
 import { SsoSession, authenticatedFetch } from './api/SsoSession.js';
 import { refreshClientLog } from './util/ClientLog.js';
@@ -247,6 +248,18 @@ export const MoonlightApp = {
 
     async init() {
         console.log('[MW] Initializing MoonlightWeb...');
+        watchAccountChanges((message) => {
+            document.documentElement.style.visibility = 'hidden';
+            try {
+                this.hostListView?.destroy();
+                this.streamView?.destroy();
+            } finally {
+                // Never call logout here: another tab may have authenticated a
+                // new account with the shared cookie. Revalidate or show login.
+                if (message.kind === 'logout') window.location.replace('/?logged_out=1');
+                else window.location.reload();
+            }
+        });
 
         // Measure this screen's refresh rate now, and again whenever the
         // window may have changed screen, so a launch can tell the native
