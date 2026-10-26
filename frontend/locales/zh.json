@@ -1227,5 +1227,11 @@
         "sessions": "会话",
         "network": "网络",
         "server": "服务器"
+    },
+    "adminManagement": {
+        "ssoAutomatic": "SSO 用户将在首次登录时自动创建。角色由 Authentik 提供。",
+        "searchUsers": "搜索用户",
+        "noResults": "无结果",
+        "viewHosts": "查看电脑"
     }
 }

@@ -1227,5 +1227,11 @@
         "sessions": "Sessions",
         "network": "Réseau",
         "server": "Serveur"
+    },
+    "adminManagement": {
+        "ssoAutomatic": "Les comptes SSO sont créés automatiquement à leur première connexion. Les rôles sont fournis par Authentik.",
+        "searchUsers": "Rechercher un utilisateur",
+        "noResults": "Aucun résultat",
+        "viewHosts": "Voir les PC"
     }
 }

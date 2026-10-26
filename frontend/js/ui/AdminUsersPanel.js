@@ -1,25 +1,25 @@
+import { confirmAction } from './ConfirmDialog.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { t } from '../i18n/i18n.js';
 
 export class AdminUsersPanel {
-    constructor(container) {
+    constructor(container, onHosts = () => {}) {
+        this.onHosts = onHosts;
+        this.search = '';
         this.container = container;
         this.users = [];
-        this.hosts = [];
         this.selected = '';
         this.config = {};
         this.pending = null;
         this.message = '';
         this.busy = false;
         this.destroyed = false;
-        this.revision = 0;
         this.pinTimer = null;
     }
 
     destroy() {
         this.destroyed = true;
-        this.revision++;
         clearTimeout(this.pinTimer);
         this.container
             .querySelectorAll('[data-account-pin]')
@@ -46,21 +46,11 @@ export class AdminUsersPanel {
             this.pending = pending.pending ? pending : null;
             if (!this.users.some((u) => u.id === this.selected))
                 this.selected = this.pending?.user_id || this.users[0]?.id || '';
-            await this.loadHosts();
+            this.render();
         } catch (error) {
             if (!this.destroyed)
                 this.container.textContent = `${t('adminAccounts.loadError')} ${error.message}`;
         }
-    }
-
-    async loadHosts() {
-        const revision = ++this.revision;
-        const result = this.selected
-            ? await BackendClient.get(`/api/admin/users/${encodeURIComponent(this.selected)}/hosts`)
-            : { hosts: [] };
-        if (this.destroyed || revision !== this.revision) return;
-        this.hosts = result.hosts;
-        this.render();
     }
 
     render() {
@@ -74,12 +64,27 @@ export class AdminUsersPanel {
             `<option value="user" ${role === 'user' ? 'selected' : ''}>${t('adminAccounts.userRole')}</option><option value="admin" ${role === 'admin' ? 'selected' : ''}>${t('adminAccounts.adminRole')}</option>`;
         this.container.innerHTML = `<section class="settings-section" id="admin-section-users">
             <h3 class="settings-section-title">${t('adminAccounts.usersTitle')}</h3>
-            <form id="admin-create-user" class="settings-field"><label for="admin-new-user">${t('adminAccounts.createLocal')}</label>
+            ${
+                this.config.pin
+                    ? `<form id="admin-create-user" class="settings-field"><label for="admin-new-user">${t('adminAccounts.createLocal')}</label>
                 <input class="settings-input" name="name" id="admin-new-user" maxlength="256" required />
                 <select class="settings-select" aria-label="${t('adminAccounts.role')}" name="role">${roleOptions('user')}</select>
-                <button class="btn btn-secondary" type="submit">${t('adminAccounts.create')}</button></form>
-            <div class="settings-field"><label for="admin-user-select">${t('adminAccounts.account')}</label>
-                <select id="admin-user-select" class="settings-select">${this.users.map((u) => `<option value="${esc(u.id)}" ${u.id === this.selected ? 'selected' : ''}>${esc(u.name)} · ${methods(u)} · ${t(u.role === 'admin' ? 'adminAccounts.adminRole' : 'adminAccounts.userRole')} · ${t(u.deleting ? 'adminAccounts.deleting' : u.enabled ? 'adminAccounts.enabled' : 'adminAccounts.disabled')}</option>`).join('')}</select></div>
+                <button class="btn btn-secondary" type="submit">${t('adminAccounts.create')}</button></form>`
+                    : `<p class="settings-hint">${t('adminManagement.ssoAutomatic')}</p>`
+            }
+            <label for="admin-user-search">${t('adminManagement.searchUsers')}</label>
+            <input id="admin-user-search" type="search" class="settings-input" value="${esc(this.search)}" />
+            <div class="admin-account-list" id="admin-user-list">${this.users
+                .map(
+                    (
+                        u,
+                    ) => `<button type="button" class="admin-account-row" data-user-id="${esc(u.id)}" aria-pressed="${u.id === this.selected}">
+                <strong>${esc(u.name)}</strong><span>${methods(u)}</span><span>${t(u.role === 'admin' ? 'adminAccounts.adminRole' : 'adminAccounts.userRole')}</span>
+                <span>${t(u.deleting ? 'adminAccounts.deleting' : u.enabled ? 'adminAccounts.enabled' : 'adminAccounts.disabled')}</span>
+                <span>${t('adminAccounts.counts', { machines: u.machine_count, sessions: u.session_count })}</span></button>`,
+                )
+                .join('')}</div>
+            <p data-users-empty hidden>${t('adminManagement.noResults')}</p>
             ${user ? `<p class="settings-hint" data-user-counts>${t('adminAccounts.counts', { machines: user.machine_count, sessions: user.session_count })}</p>` : ''}
             <p id="admin-users-feedback" role="status" aria-live="polite">${esc(this.message)}</p>
             <div data-account-pin role="status"></div>
@@ -91,35 +96,17 @@ export class AdminUsersPanel {
                 ${user.sso_linked ? `<p class="settings-hint" data-role-source>${t('adminAccounts.authentikRole')}</p>` : ''}
                 <label><input type="checkbox" name="enabled" ${user.enabled ? 'checked' : ''} ${user.protected ? 'disabled' : ''} /> ${t('adminAccounts.enabled')}</label>
                 <button class="btn btn-secondary" type="submit" ${user.deleting ? 'disabled' : ''}>${t('adminAccounts.saveUser')}</button></div></form>
-                <button class="btn btn-secondary" data-user-action="pin" ${!this.config.pin || !user.enabled || user.deleting ? 'disabled' : ''}>${t('adminAccounts.generatePin')}</button>
+                ${this.config.pin ? `<button class="btn btn-secondary" data-user-action="pin" ${!this.config.pin || !user.enabled || user.deleting ? 'disabled' : ''}>${t('adminAccounts.generatePin')}</button>` : ''}
                 <button class="btn btn-secondary" data-user-action="revoke">${t('adminAccounts.revokeSessions')}</button>
                 ${user.sso_linked ? `<p class="settings-hint">${esc(user.issuer)}<br />${esc(user.subject)}</p><button class="btn btn-secondary" data-user-action="unlink">${t('adminAccounts.unlinkSso')}</button>` : `<button class="btn btn-secondary" data-user-action="link" ${!this.config.sso || !user.enabled ? 'disabled' : ''}>${t('adminAccounts.linkSso')}</button>`}
                 <button class="btn btn-secondary" data-user-action="delete" ${user.protected ? 'disabled' : ''}>${t('adminAccounts.deleteUser')}</button>
                 ${this.pending?.user_id === user.id ? `<div class="settings-field"><p>${t('adminAccounts.confirmIdentity')} ${esc(this.pending.name)} — ${esc(this.pending.issuer)} — ${esc(this.pending.subject)}</p><button class="btn btn-primary" data-user-action="confirm-link">${t('adminAccounts.confirmLink')}</button></div>` : ''}
-                <h4>${t('adminAccounts.machines')}</h4><p class="settings-hint">${t('adminAccounts.sharedPairing')}</p>
-                ${
-                    this.hosts.length
-                        ? this.hosts
-                              .map(
-                                  (
-                                      host,
-                                  ) => `<div class="settings-field" data-host-row="${esc(host.uuid)}"><strong>${esc(host.customName || host.name || host.uuid)}</strong>
-                    <select class="settings-select" aria-label="${t('adminAccounts.destination')}">${this.users
-                        .filter((u) => u.id !== user.id && !u.deleting)
-                        .map((u) => `<option value="${esc(u.id)}">${esc(u.name)}</option>`)
-                        .join('')}</select>
-                    <button class="btn btn-secondary" data-host-action="transfer" ${host.backendType === 'native' ? 'disabled' : ''}>${t('adminAccounts.transfer')}</button>
-                    <button class="btn btn-secondary" data-host-action="duplicate" ${host.backendType === 'native' ? 'disabled' : ''}>${t('adminAccounts.duplicate')}</button>
-                    <button class="btn btn-secondary" data-host-action="delete" ${host.backendType === 'native' ? 'disabled' : ''}>${t('adminAccounts.deleteMachine')}</button></div>`,
-                              )
-                              .join('')
-                        : `<p>${t('adminAccounts.noMachines')}</p>`
-                }
+                <button class="btn btn-secondary" data-user-action="hosts">${t('adminManagement.viewHosts')}</button>
                 `
                     : ''
             }
             </section>`;
-        this.container.querySelector('#admin-create-user').addEventListener('submit', (event) => {
+        this.container.querySelector('#admin-create-user')?.addEventListener('submit', (event) => {
             event.preventDefault();
             const fields = new FormData(event.currentTarget);
             this.act(async () => {
@@ -130,12 +117,19 @@ export class AdminUsersPanel {
                 this.selected = result.user.id;
             });
         });
-        this.container.querySelector('#admin-user-select').addEventListener('change', (event) => {
-            if (this.busy) return;
-            this.selected = event.target.value;
-            this.message = '';
-            this.act(() => this.loadHosts(), false);
+        this.container.querySelector('#admin-user-search').addEventListener('input', (event) => {
+            this.search = event.target.value;
+            this.filterUsers();
         });
+        this.container.querySelectorAll('[data-user-id]').forEach((button) =>
+            button.addEventListener('click', () => {
+                if (this.busy) return;
+                this.selected = button.dataset.userId;
+                this.message = '';
+                this.render();
+            }),
+        );
+        this.filterUsers();
         this.container.querySelector('#admin-edit-user')?.addEventListener('submit', (event) => {
             event.preventDefault();
             const fields = new FormData(event.currentTarget);
@@ -156,13 +150,16 @@ export class AdminUsersPanel {
                     this.userAction(button.dataset.userAction, user),
                 ),
             );
-        this.container
-            .querySelectorAll('[data-host-action]')
-            .forEach((button) =>
-                button.addEventListener('click', () =>
-                    this.hostAction(button.dataset.hostAction, button.closest('[data-host-row]')),
-                ),
-            );
+    }
+
+    filterUsers() {
+        const query = this.search.toLocaleLowerCase().trim();
+        let count = 0;
+        this.container.querySelectorAll('[data-user-id]').forEach((row) => {
+            row.hidden = !row.textContent.toLocaleLowerCase().includes(query);
+            if (!row.hidden) count++;
+        });
+        this.container.querySelector('[data-users-empty]').hidden = count > 0;
     }
 
     async act(action, reload = true) {
@@ -194,7 +191,9 @@ export class AdminUsersPanel {
         }
     }
 
-    userAction(action, user) {
+    async userAction(action, user) {
+        if (this.busy || this.destroyed) return;
+        if (action === 'hosts') return this.onHosts(user.id);
         const path = `/api/admin/users/${encodeURIComponent(user.id)}`;
         if (action === 'pin') {
             return this.act(async () => {
@@ -210,18 +209,29 @@ export class AdminUsersPanel {
         }
         if (
             action === 'delete' &&
-            !confirm(
+            !(await confirmAction(
                 t('adminAccounts.confirmDeleteUser', {
                     name: user.name,
                     machines: user.machine_count,
                     sessions: user.session_count,
                 }),
-            )
+                { inApp: true, danger: true },
+            ))
         )
             return;
-        if (action === 'revoke' && !confirm(t('adminAccounts.confirmRevoke', { name: user.name })))
+        if (
+            action === 'revoke' &&
+            !(await confirmAction(t('adminAccounts.confirmRevoke', { name: user.name }), {
+                inApp: true,
+            }))
+        )
             return;
-        if (action === 'unlink' && !confirm(t('adminAccounts.confirmUnlink'))) return;
+        if (
+            action === 'unlink' &&
+            !(await confirmAction(t('adminAccounts.confirmUnlink'), { inApp: true }))
+        )
+            return;
+        if (this.destroyed) return;
         if (action === 'link') {
             if (
                 this.config.public_url &&
@@ -244,26 +254,5 @@ export class AdminUsersPanel {
             if (action === 'unlink') await BackendClient.post(path, { unlink_sso: true });
             if (action === 'confirm-link') await BackendClient.post(`${path}/sso/confirm`, {});
         });
-    }
-
-    hostAction(action, row) {
-        const target = row.querySelector('select').value;
-        const path = `/api/admin/hosts/${encodeURIComponent(row.dataset.hostRow)}`;
-        if (action !== 'delete' && !target) return;
-        if (
-            !confirm(
-                t(
-                    action === 'delete'
-                        ? 'adminAccounts.confirmDeleteMachine'
-                        : 'adminAccounts.confirmMachineAction',
-                ),
-            )
-        )
-            return;
-        return this.act(() =>
-            action === 'delete'
-                ? BackendClient.del(path)
-                : BackendClient.post(`${path}/${action}`, { user_id: target }),
-        );
     }
 }

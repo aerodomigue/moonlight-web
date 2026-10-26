@@ -414,3 +414,10 @@
     user-select: all;
     background: var(--accent-soft);
 }
+
+.admin-account-list { display: grid; gap: .5rem; max-height: 22rem; overflow: auto; margin: 1rem 0; }
+.admin-account-row { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; padding: .8rem; color: inherit; background: transparent; border: 1px solid #28434b; text-align: left; cursor: pointer; }
+.admin-account-row[aria-pressed="true"] { border-color: #00c8df; background: #12323a; }
+.admin-account-row[hidden] { display: none; }
+.admin-account-row strong { min-width: 10rem; }
+.admin-account-row span { font-size: .85rem; }

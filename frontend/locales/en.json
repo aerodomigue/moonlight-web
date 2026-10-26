@@ -1227,5 +1227,11 @@
         "sessions": "Sessions",
         "network": "Network",
         "server": "Server"
+    },
+    "adminManagement": {
+        "ssoAutomatic": "SSO accounts are created automatically on first sign-in. Roles are supplied by Authentik.",
+        "searchUsers": "Search users",
+        "noResults": "No results",
+        "viewHosts": "View PCs"
     }
 }
