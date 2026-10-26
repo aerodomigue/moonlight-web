@@ -16,7 +16,12 @@ function clearAccountCaches() {
             if (
                 (key.startsWith('mw-') || key.startsWith('mw_')) &&
                 key !== 'mw-auth-user' &&
-                key !== 'mw-streaming-settings'
+                ![
+                    'mw-streaming-settings',
+                    'mw_client_uniqueid',
+                    'mw-lang',
+                    'mw-gamepad-mappings',
+                ].includes(key)
             )
                 localStorage.removeItem(key);
         }

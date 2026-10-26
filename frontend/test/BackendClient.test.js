@@ -61,12 +61,18 @@ describe('BackendClient', () => {
         BackendClient._hadSession = true;
         localStorage.setItem('mw-host-apps', 'private apps');
         localStorage.setItem('mw-streaming-settings', 'preferences');
+        localStorage.setItem('mw_client_uniqueid', 'browser-device');
+        localStorage.setItem('mw-lang', 'fr');
+        localStorage.setItem('mw-gamepad-mappings', 'custom mappings');
         mockFetch(jsonResponse({status:'ok'}));
         await BackendClient.logout();
         expect(BackendClient.currentUser).toBeNull();
         expect(BackendClient._hadSession).toBe(false);
         expect(localStorage.getItem('mw-host-apps')).toBeNull();
         expect(localStorage.getItem('mw-streaming-settings')).toBe('preferences');
+        expect(localStorage.getItem('mw_client_uniqueid')).toBe('browser-device');
+        expect(localStorage.getItem('mw-lang')).toBe('fr');
+        expect(localStorage.getItem('mw-gamepad-mappings')).toBe('custom mappings');
         expect(sessionStorage.getItem('mw-sso-logged-out')).toBe('1');
     });
 

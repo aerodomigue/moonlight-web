@@ -80,3 +80,10 @@ passed. Discovery now refreshes metadata only for an already registered, enabled
 PC owned by the caller; it never creates that registration, changes its seat or
 pairing, updates a disabled record, or changes native capture. Unknown PCs still
 require explicit confirmation. Reviewed the owner/collision and native-host guards.
+
+Logout retention review: private host caches are cleared, but the same account's
+video preferences, language, gamepad mappings and browser device ID must survive.
+The logout regression now asserts these four exceptions explicitly. A subsequent
+validated different-account login still clears all account-specific preferences,
+as covered by the existing account-switch tests. The IndexedDB signing key is
+never removed.
