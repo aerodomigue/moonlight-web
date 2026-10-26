@@ -2043,7 +2043,7 @@ export class SettingsView {
     }
 
     /**
-     * End this browser's session and go back to the PIN page.
+     * End this browser's session and show the configured sign-in methods.
      *
      * The reload is not cosmetic: the backend only checks the session cookie
      * when a WebSocket is upgraded, so a stream already running would survive
@@ -2051,7 +2051,13 @@ export class SettingsView {
      * through _checkAuth(), which now finds no session.
      */
     async _logout(btn) {
-        if (!(await confirmAction(t('settings.logoutConfirm')))) return;
+        if (
+            !(await confirmAction(t('settings.logoutConfirm'), {
+                inApp: true,
+                confirmLabel: t('settings.logout'),
+            }))
+        )
+            return;
 
         btn.disabled = true;
         try {
@@ -2062,7 +2068,7 @@ export class SettingsView {
             Toast.error(err.message || t('appError.sessionPersistenceFailed'));
             return; // Keep the document and cookie available for a safe retry.
         }
-        window.location.replace(window.location.pathname);
+        window.location.replace('/?logged_out=1');
     }
 
     // --- Helpers ---

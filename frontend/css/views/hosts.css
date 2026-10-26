@@ -463,3 +463,10 @@
         gap: var(--space-3);
     }
 }
+
+.hosts-actions { flex-wrap: wrap; }
+#btn-discovery { white-space: normal; max-width: 100%; }
+@media (max-width: 600px) {
+    .hosts-header { flex-wrap: wrap; }
+    .hosts-actions { width: 100%; }
+}

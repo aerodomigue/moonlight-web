@@ -81,6 +81,25 @@ describe('PIN and SSO connection modes', () => {
         document.querySelector('#btn-login-sso').click();
         await vi.waitFor(() => expect(BackendClient.beginSso).toHaveBeenCalledTimes(1));
     });
+    it('keeps the logout landing page even when browser storage is unavailable', async () => {
+        history.replaceState(null, '', '/?logged_out=1');
+        vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+        await open(status(false, true));
+        expect(BackendClient.beginSso).not.toHaveBeenCalled();
+        expect(document.querySelector('#login-remember')).toBeNull();
+        document.querySelector('#btn-login-sso').click();
+        await vi.waitFor(() => expect(BackendClient.beginSso).toHaveBeenCalledOnce());
+    });
+    it('does not carry the PIN remember preference into SSO', async () => {
+        await open(status(true, true));
+        document.querySelector('#btn-login-pin').click();
+        const remember = document.querySelector('#login-remember');
+        remember.checked = false;
+        remember.dispatchEvent(new Event('change'));
+        document.querySelector('#btn-login-sso').click();
+        await vi.waitFor(() => expect(BackendClient.beginSso).toHaveBeenCalledWith(expect.any(String), true));
+        expect(document.querySelector('#login-remember')).toBeNull();
+    });
     it('shows a retry after provider failure without an automatic loop', async () => {
         BackendClient.beginSso.mockRejectedValue(new Error('provider unavailable'));
         await open(status(false, true));

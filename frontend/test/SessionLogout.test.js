@@ -201,7 +201,9 @@ describe('SettingsView log out', () => {
             'confirm',
             vi.fn(() => false),
         );
-        await view._logout(container.querySelector('#btn-settings-logout'));
+        const pending = view._logout(container.querySelector('#btn-settings-logout'));
+        document.querySelector('[data-answer="no"]').click();
+        await pending;
         expect(BackendClient.logout).not.toHaveBeenCalled();
         expect(replace).not.toHaveBeenCalled();
     });
@@ -212,9 +214,11 @@ describe('SettingsView log out', () => {
             'confirm',
             vi.fn(() => true),
         );
-        await view._logout(container.querySelector('#btn-settings-logout'));
+        const pending = view._logout(container.querySelector('#btn-settings-logout'));
+        document.querySelector('[data-answer="yes"]').click();
+        await pending;
         expect(BackendClient.logout).toHaveBeenCalled();
-        expect(replace).toHaveBeenCalledWith('/');
+        expect(replace).toHaveBeenCalledWith('/?logged_out=1');
     });
 
     it('keeps the page and allows retry when durable logout fails', async () => {
@@ -225,7 +229,9 @@ describe('SettingsView log out', () => {
         );
         BackendClient.logout.mockRejectedValueOnce(new Error('Storage unavailable'));
         const button = container.querySelector('#btn-settings-logout');
-        await view._logout(button);
+        const pending = view._logout(button);
+        document.querySelector('[data-answer="yes"]').click();
+        await pending;
         expect(replace).not.toHaveBeenCalled();
         expect(button.disabled).toBe(false);
         expect(Toast.error).toHaveBeenCalledWith('Storage unavailable');

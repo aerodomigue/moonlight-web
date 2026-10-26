@@ -35,6 +35,7 @@ describe('BackendClient', () => {
         sessionStorage.clear();
         BackendClient._adminKeyPromise = null; // cached across calls by design
         BackendClient._hadSession = false; // per-document, so per-test
+        BackendClient._loggingOut = false;
     });
 
     it.each([
@@ -53,6 +54,20 @@ describe('BackendClient', () => {
         mockFetch(jsonResponse({error:'session_persistence_failed'}, {ok:false, status:503}));
         await expect(BackendClient.logout()).rejects.toMatchObject({statusCode:503});
         expect(sessionStorage.getItem('mw-sso-logged-out')).toBeNull();
+    });
+
+    it('clears private caches and session authority only after confirmed logout', async () => {
+        BackendClient.currentUser = { id: 'alice' };
+        BackendClient._hadSession = true;
+        localStorage.setItem('mw-host-apps', 'private apps');
+        localStorage.setItem('mw-streaming-settings', 'preferences');
+        mockFetch(jsonResponse({status:'ok'}));
+        await BackendClient.logout();
+        expect(BackendClient.currentUser).toBeNull();
+        expect(BackendClient._hadSession).toBe(false);
+        expect(localStorage.getItem('mw-host-apps')).toBeNull();
+        expect(localStorage.getItem('mw-streaming-settings')).toBe('preferences');
+        expect(sessionStorage.getItem('mw-sso-logged-out')).toBe('1');
     });
 
     it('GET returns parsed JSON on success', async () => {
