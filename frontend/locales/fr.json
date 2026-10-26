@@ -1215,5 +1215,17 @@
         "authentikRole": "Source : Authentik. Ce rôle est synchronisé à la connexion SSO et ne peut pas être modifié ici.",
         "backchannelUrl": "URL de déconnexion back-channel",
         "backchannelHint": "Configurer cette URL en déconnexion Back-channel dans Authentik et autoriser ses POST signés à travers le proxy sans connexion interactive. Le SSO est vérifié à chaque ouverture ; une session révoquée coupe ses flux."
+    },
+    "settingsTabs": {
+        "navigation": "Catégories de paramètres",
+        "media": "Vidéo et audio",
+        "controls": "Contrôles",
+        "general": "Général",
+        "login": "Connexion",
+        "users": "Utilisateurs",
+        "hosts": "PC",
+        "sessions": "Sessions",
+        "network": "Réseau",
+        "server": "Serveur"
     }
 }

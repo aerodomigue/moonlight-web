@@ -185,3 +185,10 @@ html.remote-nav:has(.settings-header, .admin-header) {
 .settings-section-shortcuts .shortcut-keys kbd {
     color: var(--text-1);
 }
+
+/* Accessible tabs retain mounted forms and unsaved values. */
+.settings-tabs { display: flex; gap: .4rem; overflow-x: auto; margin-bottom: 1.5rem; padding-bottom: .5rem; }
+.settings-tabs [role="tab"] { flex: 0 0 auto; padding: .65rem 1rem; color: inherit; background: transparent; border: 1px solid var(--border-color, #28434b); cursor: pointer; }
+.settings-tabs [aria-selected="true"] { border-color: var(--accent-color, #00c8df); background: #12323a; }
+.settings-tabs [role="tab"]:focus-visible { outline: 2px solid #00c8df; outline-offset: 2px; }
+[role="tabpanel"][hidden] { display: none !important; }

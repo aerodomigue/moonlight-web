@@ -1215,5 +1215,17 @@
         "authentikRole": "来源：Authentik。角色在 SSO 登录时同步，无法在此修改。",
         "backchannelUrl": "后端通道注销 URL",
         "backchannelHint": "在 Authentik 中配置此后端通道注销 URL，并允许签名的 POST 通知通过代理，无需交互式登录。每次加载页面都会检查 SSO；会话撤销后会关闭流。"
+    },
+    "settingsTabs": {
+        "navigation": "设置分类",
+        "media": "视频和音频",
+        "controls": "控制",
+        "general": "常规",
+        "login": "登录",
+        "users": "用户",
+        "hosts": "电脑",
+        "sessions": "会话",
+        "network": "网络",
+        "server": "服务器"
     }
 }

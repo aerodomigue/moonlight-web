@@ -1215,5 +1215,17 @@
         "authentikRole": "Source: Authentik. This role is synchronized at SSO sign-in and cannot be edited here.",
         "backchannelUrl": "Back-channel logout URL",
         "backchannelHint": "Configure this URL for Back-channel logout in Authentik and allow signed POST notifications through the proxy without interactive login. SSO is checked at each page load; revoked sessions lose their streams."
+    },
+    "settingsTabs": {
+        "navigation": "Settings categories",
+        "media": "Video and audio",
+        "controls": "Controls",
+        "general": "General",
+        "login": "Sign-in",
+        "users": "Users",
+        "hosts": "PCs",
+        "sessions": "Sessions",
+        "network": "Network",
+        "server": "Server"
     }
 }

@@ -1,3 +1,4 @@
+import { SettingsTabs, moveSettingsFields } from './SettingsTabs.js';
 /*
  * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
@@ -1426,7 +1427,7 @@ export class SettingsView {
                 </div>
 
                 <!-- ── Video ─────────────────────────────────────────────── -->
-                <div class="settings-section">
+                <div class="settings-section" data-settings-tab="media">
                     <h3 class="settings-section-title">${t('settings.video')}</h3>
 
                     <div class="settings-field">
@@ -1487,7 +1488,7 @@ export class SettingsView {
                 </div>
 
                 <!-- ── Advanced ────────────────────────────────────────────── -->
-                <div class="settings-section">
+                <div class="settings-section" data-settings-tab="media">
                     <h3 class="settings-section-title">${t('settings.advanced')}</h3>
 
                     <div class="settings-field${veLockedClass}">
@@ -1671,7 +1672,7 @@ export class SettingsView {
                 </div>
 
                 <!-- ── Language ────────────────────────────────────────────── -->
-                <div class="settings-section">
+                <div class="settings-section" data-settings-tab="general">
                     <h3 class="settings-section-title">${t('settings.language')}</h3>
                     <div class="settings-field">
                         <select id="settings-language" class="settings-select">
@@ -1688,7 +1689,7 @@ export class SettingsView {
                     IS_TOUCH_DEVICE
                         ? `
                 <!-- ── Power Saving (mobile only, isolated above Reset) ──────── -->
-                <div class="settings-section settings-section-powersave">
+                <div class="settings-section settings-section-powersave" data-settings-tab="general">
                     <h3 class="settings-section-title">${t('settings.powerSave')}</h3>
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
@@ -1707,7 +1708,7 @@ export class SettingsView {
                 <!-- ── Controllers ─────────────────────────────────────────── -->
                 <!-- Per browser: a layout belongs to the pad in this hand, not
                      to the machine, so nothing here is saved to the server. -->
-                <div class="settings-section settings-section-controllers">
+                <div class="settings-section settings-section-controllers" data-settings-tab="controls">
                     <h3 class="settings-section-title">${t('settings.controllers')}</h3>
                     <span class="setting-desc">${t('settings.controllersDesc')}</span>
                     <div class="settings-pads"></div>
@@ -1717,7 +1718,7 @@ export class SettingsView {
                 </div>
 
                 <!-- ── Reset ───────────────────────────────────────────────── -->
-                <div class="settings-section">
+                <div class="settings-section" data-settings-tab="general">
                     <button class="btn btn-neutral" id="btn-settings-reset">
                         ${t('settings.resetDefaults')}
                     </button>
@@ -1728,7 +1729,7 @@ export class SettingsView {
                     this._canLogout
                         ? `
                 <!-- ── Session (last action: it ends the visit) ───────────── -->
-                <div class="settings-section settings-section-logout">
+                <div class="settings-section settings-section-logout" data-settings-tab="general">
                     <h3 class="settings-section-title">${t('settings.session')}</h3>
                     ${
                         BackendClient.currentUser?.id &&
@@ -1750,7 +1751,7 @@ export class SettingsView {
                      which auto-hides after 5s — this is where you read it when
                      it went by too fast. Kept truly last: it is the one section
                      with no control in it. -->
-                <div class="settings-section settings-section-shortcuts">
+                <div class="settings-section settings-section-shortcuts" data-settings-tab="controls">
                     <h3 class="settings-section-title">${escapeHtml(
                         shortcutsTitle(this._helpOpts()),
                     )}</h3>
@@ -1759,6 +1760,28 @@ export class SettingsView {
                 </div>
             </div>
         `;
+
+        const tabsRoot = this.container.querySelector('#view-settings');
+        moveSettingsFields(
+            tabsRoot,
+            [
+                '#settings-gaming-mode',
+                '#settings-mouse-sensitivity',
+                '#settings-touch-screen',
+                '#settings-sensitivity',
+                '#settings-gamepad-profile',
+            ],
+            'controls',
+        );
+        moveSettingsFields(tabsRoot, ['#settings-quit-app-on-stop'], 'general');
+        this._tabs = new SettingsTabs(
+            tabsRoot,
+            ['media', 'controls', 'general'],
+            this._selectedTab,
+            (key) => {
+                this._selectedTab = key;
+            },
+        );
 
         // Live bitrate label updates on slider input
         const slider = this.container.querySelector('#settings-stream-bitrate');
