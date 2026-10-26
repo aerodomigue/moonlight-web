@@ -949,9 +949,17 @@ void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns
                     NvHTTP::verifyResponseStatus(xml);
                     if (fromMdns) {
                         const NvComputer observed(xml, addr);
-                        if (!m_Hosts.contains(UserAccess::hostId(ownerId, observed.uuid)))
+                        const auto* existing =
+                            findHostByUuid(UserAccess::hostId(ownerId, observed.uuid));
+                        if (!existing) {
                             m_DiscoveryCandidates.observe(ownerId, observed.uuid, observed.name,
                                                           addr.address(), addr.port());
+                        } else if (existing->ownerId == ownerId && existing->enabled &&
+                                   !existing->isNativeEngine()) {
+                            // Discovery may refresh an existing PC's address, but
+                            // must never create a registration without confirmation.
+                            addOrUpdateHost(xml, addr, ownerId);
+                        }
                     } else {
                         addOrUpdateHost(xml, addr, ownerId);
                     }

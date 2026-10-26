@@ -72,3 +72,11 @@ without a guard, which could leave stale UI visible when storage was blocked.
 The failure path now hides the document and revalidates even without storage,
 without calling server logout. A regression test covers this fallback; it does
 not alter role/session authorization or resolve the six separate audit findings.
+
+Address-refresh regression: a known PC advertised on a different port stayed on
+its old address when all discovery replies were treated only as new candidates.
+The new HTTPS reproduction failed before correction (old port retained), then
+passed. Discovery now refreshes metadata only for an already registered, enabled
+PC owned by the caller; it never creates that registration, changes its seat or
+pairing, updates a disabled record, or changes native capture. Unknown PCs still
+require explicit confirmation. Reviewed the owner/collision and native-host guards.

@@ -681,7 +681,7 @@ class OidcIsolation(unittest.TestCase):
         self.assertEqual(alice.request(path)[0], 401)
         self.assertEqual(alice.request(path, {"enabled": True})[0], 401)
 
-    def discovery_packet(self):
+    def discovery_packet(self, port=None):
         import struct
         def name(value):
             return b"".join(bytes([len(label)]) + label.encode() for label in value.split(".")) + b"\0"
@@ -691,9 +691,33 @@ class OidcIsolation(unittest.TestCase):
             return name(owner) + struct.pack("!HHIH", kind, 1, 60, len(data)) + data
         packet = struct.pack("!HHHHHH", 0, 0x8400, 0, 3, 0, 0)
         packet += rr("_nvstream._tcp.local", 12, name(instance))
-        packet += rr(instance, 33, struct.pack("!HHH", 0, 0, self.pc.server_port) + name(hostname))
+        packet += rr(instance, 33, struct.pack("!HHH", 0, 0, port or self.pc.server_port) + name(hostname))
         packet += rr(hostname, 1, socket.inet_aton("127.0.0.1"))
         return packet
+
+    def test_discovery_updates_known_pc_address_without_creating_a_registration(self):
+        alice = self.start(); self.login(alice)
+        host = alice.request("/api/hosts/manual", {"address": "127.0.0.1:" + str(self.pc.server_port)})[1]["hosts"][0]
+        alternate = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+        alternate.https_port = self.pc.https_port
+        threading.Thread(target=alternate.serve_forever, daemon=True).start()
+        try:
+            alice.request("/api/hosts/discovery", {"enabled": True})
+            alice.request("/api/hosts/scan", {})
+            packet = self.discovery_packet(alternate.server_port)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                for _ in range(60):
+                    sender.sendto(packet, ("127.0.0.1", 5353))
+                    hosts = alice.request("/api/hosts")[1]["hosts"]
+                    if hosts[0]["port"] == alternate.server_port: break
+                    time.sleep(0.1)
+            self.assertEqual(len(hosts), 1)
+            self.assertEqual(hosts[0]["uuid"], host["uuid"])
+            self.assertEqual(hosts[0]["port"], alternate.server_port)
+            self.assertEqual(hosts[0]["pairState"], host["pairState"])
+            self.assertEqual(alice.request("/api/hosts/discovery/candidates")[1]["candidates"], [])
+        finally:
+            alternate.shutdown(); alternate.server_close()
 
     def test_discovery_disable_discards_inflight_reply_without_affecting_other_owner(self):
         import struct
