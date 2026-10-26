@@ -44,10 +44,14 @@ Branch: `fix/dashboard-discovery-login`, from main `6669150d`.
   before deployment. Five known Linux Steam-path unit failures remain separate.
 - The six earlier audit findings are not declared resolved by this change.
 
-Final local validation: 1,750 frontend tests passed (93.59% line coverage), 47
+Final local validation before the re-entry regression: 1,750 frontend tests passed (93.59% line coverage), 47
 HTTPS integration scenarios passed, and all three authentication-mode browser
 scenarios passed. Backend serial run: 17,083/17,088 checks; only the five known
 Linux Steam-path failures. A concurrent run also failed seven assertions in the
 IPC frame-delivery fixture; its isolated rerun passed, and no IPC code changed.
 Prettier, ESLint, translations (1,167 keys / three locales) and C++ formatting pass.
 Advisory TypeScript comparison: 136 distinct diagnostics before and after, none new.
+
+Final review also caught a quick leave/return during preference loading: the old
+request was discarded but the new dashboard could remain uninitialized. A targeted
+regression now verifies a fresh authority read without executing the obsolete scan.

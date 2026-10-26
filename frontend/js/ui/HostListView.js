@@ -697,6 +697,9 @@ export class HostListView {
         } finally {
             this._discoveryBusy = false;
             if (!this._destroyed) this._paintDiscovery();
+            // A new dashboard visit may have started while the old request was pending.
+            if (!this._destroyed && this._active && revision !== this._discoveryRevision)
+                this._autoScan();
         }
     }
 

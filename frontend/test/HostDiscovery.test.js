@@ -43,6 +43,20 @@ describe('account discovery preference', () => {
         await pending;
         expect(api.scanHosts).not.toHaveBeenCalled();
     });
+    it('reloads authority after returning before an obsolete request finishes', async () => {
+        let resolve;
+        api.getDiscovery.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+        api.getDiscovery.mockResolvedValue({ enabled: false });
+        const pending = view._autoScan();
+        view.stop();
+        view._active = true;
+        await view._autoScan();
+        resolve({ enabled: true });
+        await pending;
+        await vi.waitFor(() => expect(api.getDiscovery).toHaveBeenCalledTimes(2));
+        expect(api.scanHosts).not.toHaveBeenCalled();
+        expect(view._discoveryEnabled).toBe(false);
+    });
     it('persists activation before starting its scan', async () => {
         view._discoveryEnabled = false;
         api.setDiscovery.mockResolvedValue({ enabled: true });
