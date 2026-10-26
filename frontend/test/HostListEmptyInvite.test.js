@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../js/api/BackendClient.js', () => ({
-    BackendClient: { getHosts: vi.fn(), getAppList: vi.fn() },
+    BackendClient: { getHosts: vi.fn(), getAppList: vi.fn(), getDiscoveryCandidates: vi.fn().mockResolvedValue({candidates:[]}) },
 }));
 
 import { HostListView } from '../js/ui/HostListView.js';

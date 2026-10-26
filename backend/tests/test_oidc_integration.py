@@ -681,6 +681,44 @@ class OidcIsolation(unittest.TestCase):
         self.assertEqual(alice.request(path)[0], 401)
         self.assertEqual(alice.request(path, {"enabled": True})[0], 401)
 
+    def discovery_packet(self, port=None):
+        import struct
+        def name(value):
+            return b"".join(bytes([len(label)]) + label.encode() for label in value.split(".")) + b"\0"
+        instance = "fixture-" + secrets.token_hex(4) + "._nvstream._tcp.local"
+        hostname = "fixture-" + secrets.token_hex(4) + ".local"
+        def rr(owner, kind, data):
+            return name(owner) + struct.pack("!HHIH", kind, 1, 60, len(data)) + data
+        packet = struct.pack("!HHHHHH", 0, 0x8400, 0, 3, 0, 0)
+        packet += rr("_nvstream._tcp.local", 12, name(instance))
+        packet += rr(instance, 33, struct.pack("!HHH", 0, 0, port or self.pc.server_port) + name(hostname))
+        packet += rr(hostname, 1, socket.inet_aton("127.0.0.1"))
+        return packet
+
+    def test_discovery_updates_known_pc_address_without_creating_a_registration(self):
+        alice = self.start(); self.login(alice)
+        host = alice.request("/api/hosts/manual", {"address": "127.0.0.1:" + str(self.pc.server_port)})[1]["hosts"][0]
+        alternate = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+        alternate.https_port = self.pc.https_port
+        threading.Thread(target=alternate.serve_forever, daemon=True).start()
+        try:
+            alice.request("/api/hosts/discovery", {"enabled": True})
+            alice.request("/api/hosts/scan", {})
+            packet = self.discovery_packet(alternate.server_port)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                for _ in range(60):
+                    sender.sendto(packet, ("127.0.0.1", 5353))
+                    hosts = alice.request("/api/hosts")[1]["hosts"]
+                    if hosts[0]["port"] == alternate.server_port: break
+                    time.sleep(0.1)
+            self.assertEqual(len(hosts), 1)
+            self.assertEqual(hosts[0]["uuid"], host["uuid"])
+            self.assertEqual(hosts[0]["port"], alternate.server_port)
+            self.assertEqual(hosts[0]["pairState"], host["pairState"])
+            self.assertEqual(alice.request("/api/hosts/discovery/candidates")[1]["candidates"], [])
+        finally:
+            alternate.shutdown(); alternate.server_close()
+
     def test_discovery_disable_discards_inflight_reply_without_affecting_other_owner(self):
         import struct
         alice = self.start(); self.login(alice)
@@ -691,16 +729,7 @@ class OidcIsolation(unittest.TestCase):
             self.assertEqual(browser.request("/api/hosts/scan", {})[0], 200)
         self.pc.info_gate = threading.Event()
         self.pc.info_entered = threading.Event()
-        def name(value):
-            return b"".join(bytes([len(label)]) + label.encode() for label in value.split(".")) + b"\0"
-        instance = "fixture-" + secrets.token_hex(4) + "._nvstream._tcp.local"
-        hostname = "fixture-" + secrets.token_hex(4) + ".local"
-        def rr(owner, kind, data):
-            return name(owner) + struct.pack("!HHIH", kind, 1, 60, len(data)) + data
-        packet = struct.pack("!HHHHHH", 0, 0x8400, 0, 3, 0, 0)
-        packet += rr("_nvstream._tcp.local", 12, name(instance))
-        packet += rr(instance, 33, struct.pack("!HHH", 0, 0, self.pc.server_port) + name(hostname))
-        packet += rr(hostname, 1, socket.inet_aton("127.0.0.1"))
+        packet = self.discovery_packet()
         try:
             # Unicast only to the fixture's local discovery socket, never to the LAN.
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
@@ -713,14 +742,155 @@ class OidcIsolation(unittest.TestCase):
             self.assertEqual(alice.request(path, {"enabled": True})[0], 200)
             self.pc.info_gate.set()
             for _ in range(100):
-                if bob.request("/api/hosts")[1]["hosts"]: break
+                if bob.request("/api/hosts/discovery/candidates")[1]["candidates"]: break
                 time.sleep(0.02)
-            self.assertEqual(len(bob.request("/api/hosts")[1]["hosts"]), 1)
+            self.assertEqual(len(bob.request("/api/hosts/discovery/candidates")[1]["candidates"]), 1)
+            self.assertEqual(bob.request("/api/hosts")[1]["hosts"], [])
+            self.assertEqual(alice.request("/api/hosts/discovery/candidates")[1]["candidates"], [])
             self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
         finally:
             self.pc.info_gate.set()
             del self.pc.info_gate
             del self.pc.info_entered
+
+    def discover_candidate(self, browser):
+        self.assertEqual(browser.request("/api/hosts/discovery", {"enabled": True})[0], 200)
+        self.assertEqual(browser.request("/api/hosts/scan", {})[0], 200)
+        packet = self.discovery_packet()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            for _ in range(100):
+                sender.sendto(packet, ("127.0.0.1", 5353))
+                result = browser.request("/api/hosts/discovery/candidates")[1]["candidates"]
+                if result: return result[0]
+                time.sleep(0.1)
+        self.fail("No candidate from fixture")
+
+    def test_candidates_require_explicit_confirmation_and_own_identity(self):
+        alice = self.start(); self.login(alice)
+        bob = Browser(self.base); self.login(bob, "bob-sub")
+        candidate = self.discover_candidate(alice)
+        self.assertEqual(set(candidate), {"id", "name", "address", "port"})
+        self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
+        self.assertEqual(bob.request("/api/hosts/discovery/candidates")[1]["candidates"], [])
+        path = "/api/hosts/discovery/candidates/" + candidate["id"] + "/add"
+        self.assertEqual(bob.request(path, {})[0], 404)
+        self.assertEqual(alice.request(path, {}, cross_site=True)[0], 403)
+        alice.signing = False
+        self.assertEqual(alice.request(path, {})[0], 401)
+        alice.signing = True
+        result = alice.request(path, {})
+        self.assertEqual(result[0], 200, result)
+        host = result[1]["hosts"][0]
+        self.assertNotEqual(host["pairState"], "paired")
+        self.assertEqual(alice.request(path, {})[0], 404)
+        self.assertEqual(len(alice.request("/api/hosts")[1]["hosts"]), 1)
+        other = self.discover_candidate(bob)
+        otherpath = "/api/hosts/discovery/candidates/" + other["id"] + "/add"
+        self.assertEqual(bob.request("/api/hosts/" + host["uuid"] + "/apps")[0], 404)
+        copied = bob.request(otherpath, {})[1]["hosts"][0]
+        self.assertNotEqual(copied["uuid"], host["uuid"])
+        self.assertNotEqual(copied["pairState"], "paired")
+        # Revalidating the same cookie jar as a new account cannot carry machines.
+        self.assertEqual(alice.request("/api/auth/logout", {})[0], 200)
+        self.login(alice, "third-sub")
+        self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
+        self.assertEqual(alice.request("/api/hosts/" + host["uuid"] + "/apps")[0], 404)
+
+    def test_readding_a_candidate_never_reuses_a_retained_clone_identity(self):
+        import configparser
+        alice = self.start(); self.login(alice)
+        bob = Browser(self.base); bob_id = self.login(bob, "bob-sub")["user"]["id"]
+        candidate = self.discover_candidate(alice)
+        path = "/api/hosts/discovery/candidates/" + candidate["id"] + "/add"
+        source = alice.request(path, {})[1]["hosts"][0]["uuid"]
+        admin, headers = self.administrator()
+        copied = admin.request("/api/admin/hosts/" + source + "/duplicate", {"user_id": bob_id}, extra_headers=headers)
+        self.assertEqual(copied[0], 200)
+        copy_id = copied[1]["host"]["uuid"]
+        def seats():
+            config = configparser.ConfigParser(interpolation=None)
+            config.read(self.state / "config/MoonlightWeb/MoonlightWeb.conf")
+            return {value: config["hosts"].get(key[:-4] + "identityseat", "")
+                    for key, value in config["hosts"].items() if key.endswith("\\uuid")}
+        previous = seats()
+        self.assertTrue(previous[source])
+        self.assertEqual(previous[source], previous[copy_id])
+        self.assertEqual(admin.request("/api/admin/hosts/" + source, method="DELETE", extra_headers=headers)[0], 200)
+        candidate = self.discover_candidate(alice)
+        fresh = alice.request("/api/hosts/discovery/candidates/" + candidate["id"] + "/add", {})
+        self.assertEqual(fresh[0], 200)
+        self.assertEqual(fresh[1]["hosts"][0]["uuid"], source)
+        self.assertEqual(fresh[1]["hosts"][0]["pairState"], "not_paired")
+        current = seats()
+        self.assertNotEqual(current[source], previous[source])
+        self.assertEqual(current[copy_id], previous[copy_id])
+        self.assertEqual(bob.request("/api/hosts")[1]["hosts"][0]["uuid"], copy_id)
+
+    def test_candidate_rechecks_identity_and_registration_collision(self):
+        alice = self.start(); self.login(alice)
+        candidate = self.discover_candidate(alice)
+        path = "/api/hosts/discovery/candidates/" + candidate["id"] + "/add"
+        original = getattr(self.pc, "physical_uuid", "fixture-physical-pc")
+        try:
+            self.pc.physical_uuid = "changed-physical-identity"
+            self.assertEqual(alice.request(path, {})[0], 409)
+            self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
+        finally: self.pc.physical_uuid = original
+        address = "127.0.0.1:" + str(self.pc.server_port)
+        host = alice.request("/api/hosts/manual", {"address": address})[1]["hosts"][0]
+        admin, headers = self.administrator()
+        self.assertEqual(admin.request("/api/admin/hosts/" + host["uuid"] + "/enabled", {"enabled": False}, extra_headers=headers)[0], 200)
+        self.assertEqual(alice.request(path, {})[0], 409)
+        self.assertEqual(alice.request("/api/hosts/discovery/candidates")[1]["candidates"], [])
+        self.assertFalse(alice.request("/api/hosts")[1]["hosts"][0]["enabled"])
+
+    def test_candidate_confirmation_is_single_flight_and_cancelled_on_disable(self):
+        alice = self.start(); self.login(alice)
+        candidate = self.discover_candidate(alice)
+        path = "/api/hosts/discovery/candidates/" + candidate["id"] + "/add"
+        self.pc.info_gate = threading.Event(); self.pc.info_entered = threading.Event()
+        replies = []
+        worker = threading.Thread(target=lambda: replies.append(alice.request(path, {})[0]))
+        worker.start()
+        try:
+            self.assertTrue(self.pc.info_entered.wait(3))
+            self.assertEqual(alice.request(path, {})[0], 409)
+            self.assertEqual(alice.request("/api/hosts/discovery", {"enabled": False})[0], 200)
+            self.assertEqual(alice.request("/api/hosts/discovery", {"enabled": True})[0], 200)
+        finally:
+            self.pc.info_gate.set(); worker.join(10)
+            del self.pc.info_gate; del self.pc.info_entered
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(replies, [409])
+        self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
+
+    def test_candidate_confirmation_storage_failure_does_not_leave_a_registration(self):
+        alice = self.start(); self.login(alice)
+        candidate = self.discover_candidate(alice)
+        path = "/api/hosts/discovery/candidates/" + candidate["id"] + "/add"
+        config = self.state / "config/MoonlightWeb/MoonlightWeb.conf"
+        mode = config.stat().st_mode & 0o777
+        directory_mode = config.parent.stat().st_mode & 0o777
+        config.chmod(0o400); config.parent.chmod(0o500)
+        try:
+            self.assertEqual(alice.request(path, {})[0], 503)
+            self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
+        finally:
+            config.parent.chmod(directory_mode); config.chmod(mode)
+        self.start(); alice.base = self.base; self.login(alice)
+        self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
+
+    def test_candidates_are_cleared_on_disable_and_restart(self):
+        alice = self.start(); self.login(alice)
+        candidate = self.discover_candidate(alice)
+        path = "/api/hosts/discovery/candidates/" + candidate["id"] + "/add"
+        self.assertEqual(alice.request("/api/hosts/discovery", {"enabled": False})[0], 200)
+        self.assertEqual(alice.request(path, {})[0], 404)
+        self.assertEqual(alice.request("/api/hosts/discovery/candidates")[1]["candidates"], [])
+        self.discover_candidate(alice)
+        self.start(); alice.base = self.base; self.login(alice)
+        self.assertEqual(alice.request("/api/hosts/discovery/candidates")[1]["candidates"], [])
+        self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
 
     def test_discovery_save_failure_keeps_previous_choice(self):
         alice = self.start()

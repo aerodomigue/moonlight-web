@@ -49,6 +49,18 @@ recherches sont limitées dans le temps et démarrent à l’ouverture du dashbo
 au retour au premier plan ou lors de l’activation du bouton. Désactiver la
 découverte n’arrête pas la surveillance des PC enregistrés ni leur Wake-on-LAN.
 
+**Découvrir n’enregistre plus un PC.** La section **PC détectés — à ajouter**
+présente des candidats temporaires propres au compte, conservés deux minutes
+après leur dernière détection. **Ajouter** revérifie le PC et crée un enregistrement
+personnel non appairé, avec sa propre identité client. Aucun appairage d’un autre
+compte n’est repris ; seuls les clonages et transferts administratifs explicites
+conservent l’identité existante. Désactiver la découverte efface ses candidats.
+
+La liste de PC du serveur fait autorité : une machine retirée disparaît du
+dashboard. Un changement de compte invalide les réponses en attente et les caches.
+Les autres onglets masquent leur ancien contenu et se revalident ; une déconnexion
+explicite les ramène à la connexion sans relancer automatiquement le SSO.
+
 Les menus **…** restent accessibles au-delà des cartes, y compris sur mobile.
 **Se déconnecter**, dans Paramètres → Général, ferme la session Moonlight-Web et
 revient au choix PIN/SSO autorisé. Une déconnexion volontaire n’entraîne pas de

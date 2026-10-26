@@ -947,7 +947,22 @@ void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns
 
                 try {
                     NvHTTP::verifyResponseStatus(xml);
-                    addOrUpdateHost(xml, addr, ownerId);
+                    if (fromMdns) {
+                        const NvComputer observed(xml, addr);
+                        const auto* existing =
+                            findHostByUuid(UserAccess::hostId(ownerId, observed.uuid));
+                        if (!existing) {
+                            m_DiscoveryCandidates.observe(ownerId, observed.uuid, observed.name,
+                                                          addr.address(), addr.port());
+                        } else if (existing->ownerId == ownerId && existing->enabled &&
+                                   !existing->isNativeEngine()) {
+                            // Discovery may refresh an existing PC's address, but
+                            // must never create a registration without confirmation.
+                            addOrUpdateHost(xml, addr, ownerId);
+                        }
+                    } else {
+                        addOrUpdateHost(xml, addr, ownerId);
+                    }
                 } catch (const std::exception& e) {
                     Logger::warning(
                         QString("Failed to query host at %1: %2").arg(addr.toString(), e.what()));
@@ -1160,8 +1175,102 @@ bool ComputerManager::discoveryEnabled(const QString& ownerId) const
 void ComputerManager::cancelDiscovery(const QString& ownerId)
 {
     ++m_DiscoveryGeneration[ownerId];
+    m_DiscoveryCandidates.clear(ownerId);
     m_ScanOwners.remove(ownerId);
     if (m_ScanOwners.isEmpty()) stopMdnsDiscovery();
+}
+
+QJsonArray ComputerManager::discoveryCandidates(const QString& ownerId)
+{
+    QJsonArray result;
+    if (!discoveryEnabled(ownerId)) return result;
+    for (const auto& candidate : m_DiscoveryCandidates.list(ownerId)) {
+        if (m_Hosts.contains(UserAccess::hostId(ownerId, candidate.physical))) continue;
+        result.append(QJsonObject{{"id", candidate.id},
+                                  {"name", candidate.name},
+                                  {"address", candidate.address},
+                                  {"port", candidate.port}});
+    }
+    return result;
+}
+
+void ComputerManager::confirmDiscoveryCandidate(const QString& ownerId, const QString& id,
+                                                ResponseCallback respond)
+{
+    const auto candidate = m_DiscoveryCandidates.find(ownerId, id);
+    if (!candidate) {
+        respond(HttpResponse::error(404, "Discovery candidate expired or not found"));
+        return;
+    }
+    if (!discoveryEnabled(ownerId)) {
+        respond(HttpResponse::error(409, "Discovery is disabled"));
+        return;
+    }
+    const auto uuid = UserAccess::hostId(ownerId, candidate->physical);
+    if (m_Hosts.contains(uuid)) {
+        respond(HttpResponse::error(409, "Host already registered"));
+        return;
+    }
+    if (m_CandidateConfirmations.contains(id)) {
+        respond(HttpResponse::error(409, "Host confirmation in progress"));
+        return;
+    }
+    m_CandidateConfirmations.insert(id);
+    const auto generation = m_DiscoveryGeneration.value(ownerId);
+    const NvAddress address(candidate->address, candidate->port);
+    auto* reply = m_Http->getServerInfoAsync(address, clientUniqueId());
+    connect(
+        reply, &QNetworkReply::finished, this,
+        [this, reply, ownerId, id, candidate, uuid, address, generation, respond]() {
+            m_CandidateConfirmations.remove(id);
+            reply->deleteLater();
+            if (!discoveryEnabled(ownerId) || generation != m_DiscoveryGeneration.value(ownerId) ||
+                !m_DiscoveryCandidates.find(ownerId, id)) {
+                respond(HttpResponse::error(409, "Discovery candidate is no longer available"));
+                return;
+            }
+            if (reply->error() != QNetworkReply::NoError) {
+                respond(HttpResponse::error(502, "Could not verify discovered PC"));
+                return;
+            }
+            const auto xml = QString::fromUtf8(reply->readAll());
+            try {
+                NvHTTP::verifyResponseStatus(xml);
+            } catch (const std::exception&) {
+                respond(HttpResponse::error(502, "Invalid PC response"));
+                return;
+            }
+            auto host = std::make_unique<NvComputer>(xml, address);
+            if (host->uuid != candidate->physical || m_Hosts.contains(uuid)) {
+                respond(HttpResponse::error(409, "PC identity changed or host already registered"));
+                return;
+            }
+            host->physicalUuid = host->uuid;
+            host->uuid = uuid;
+            host->ownerId = ownerId;
+            // Even when another copy retains a deleted registration's certificate,
+            // a new explicit addition must never inherit that pairing identity.
+            host->identitySeat = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            host->pairState = NvComputer::PS_NOT_PAIRED;
+            host->serverCertPem.clear();
+            m_Hosts[uuid] = host.get();
+            if (!saveHosts()) {
+                m_Hosts.remove(uuid);
+                saveHosts(true); // Restore Qt's pending cache after a failed write.
+                respond(HttpResponse::error(503, "Could not persist PC registration"));
+                return;
+            }
+            const auto data = host->toJson();
+            host.release();
+            m_DiscoveryCandidates.remove(ownerId, id);
+            if (!discoveryEnabled(ownerId)) cancelDiscovery(ownerId);
+            emit hostsChanged();
+            respond(HttpResponse::json(QJsonObject{{"hosts", QJsonArray{data}}}));
+        });
+    QPointer<QNetworkReply> guard(reply);
+    QTimer::singleShot(NvHTTP::REQUEST_TIMEOUT_MS, reply, [guard]() {
+        if (guard && !guard->isFinished()) guard->abort();
+    });
 }
 
 void ComputerManager::handleScanRequest(const QString& ownerId)

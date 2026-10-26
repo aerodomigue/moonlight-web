@@ -26,6 +26,7 @@
  * The online/offline badge sits next to the host name; "Remove" lives in a
  * per-host "…" menu.
  */
+import { accountRevision, requireAccountRevision } from '../util/authAccountState.js';
 import { SsoSession, authenticatedFetch } from '../api/SsoSession.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Host } from '../models/Host.js';
@@ -194,6 +195,11 @@ export class HostListView {
 
         // Button delegation — bound once, cleaned up in destroy()
         this._clickHandler = (e) => {
+            const candidateButton = e.target.closest('[data-add-candidate]');
+            if (candidateButton) {
+                this._addCandidate(candidateButton);
+                return;
+            }
             if (e.target.closest('#btn-discovery')) {
                 this._toggleDiscovery();
                 return;
@@ -682,6 +688,44 @@ export class HostListView {
         banner.hidden = false;
     }
 
+    async _addCandidate(button) {
+        if (button.disabled) return;
+        button.disabled = true;
+        try {
+            await BackendClient.addDiscoveryCandidate(button.dataset.addCandidate);
+            if (!this._active || this._destroyed) return;
+            await this.refresh();
+            await this._autoScan();
+        } catch (error) {
+            if (!this._destroyed) Toast.error(error.message);
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    async _refreshCandidates() {
+        const section = this.container.querySelector('#discovery-candidates');
+        if (!section) return;
+        const revision = this._discoveryRevision;
+        const request = (this._candidateRequest = (this._candidateRequest || 0) + 1);
+        const data = await BackendClient.getDiscoveryCandidates();
+        if (request !== this._candidateRequest) return;
+        if (!this._active || this._destroyed || revision !== this._discoveryRevision) return;
+        const candidates = data.candidates || [];
+        section.hidden = candidates.length === 0;
+        const fingerprint = JSON.stringify(candidates);
+        if (section.dataset.snapshot === fingerprint) return;
+        section.dataset.snapshot = fingerprint;
+        section.innerHTML =
+            `<h3>${t('hosts.candidatesTitle')}</h3><p>${t('hosts.candidatesHint')}</p>` +
+            candidates
+                .map(
+                    (c) =>
+                        `<div class="discovery-candidate"><span>${this.esc(c.name)} <small>${this.esc(c.address)}</small></span><button class="btn btn-neutral" data-add-candidate="${this.esc(c.id)}">${t('hosts.addCandidate')}</button></div>`,
+                )
+                .join('');
+    }
+
     _paintDiscovery() {
         const button = this.container.querySelector('#btn-discovery');
         if (!button) return;
@@ -701,6 +745,7 @@ export class HostListView {
             if (!this._active || this._destroyed || revision !== this._discoveryRevision) return;
             this._discoveryEnabled = state.enabled === true;
             if (this._discoveryEnabled) await BackendClient.scanHosts();
+            await this._refreshCandidates();
         } catch {
             // No scan on an unavailable preference; a later focus retries.
         } finally {
@@ -721,6 +766,7 @@ export class HostListView {
             if (this._destroyed || !this._active) return;
             this._discoveryEnabled = state.enabled === true;
             if (this._discoveryEnabled) await BackendClient.scanHosts();
+            await this._refreshCandidates();
         } catch (error) {
             if (!this._destroyed) Toast.error(error.message);
         } finally {
@@ -792,24 +838,35 @@ export class HostListView {
 
     async refresh() {
         if (!this._active) return;
+        const revision = this._discoveryRevision;
+        const request = (this._hostsRequest = (this._hostsRequest || 0) + 1);
         try {
             const data = await BackendClient.getHosts();
+            if (request !== this._hostsRequest) return;
             // Re-check after await: stop()/destroy() may have run while the
             // request was in flight (e.g. a stream was launched) — a late
             // render here would overwrite the current view.
             if (!this._active || this._destroyed) return;
             const serverHosts = data.hosts || [];
             const before = this._fingerprint();
-            // Merge — add/update, never remove
-            for (const h of serverHosts) {
+            if (revision !== this._discoveryRevision) return;
+            const retained = new Set(serverHosts.map((h) => h.uuid));
+            for (const old of this.hosts)
+                if (!retained.has(old.uuid)) {
+                    forgetCachedApps(old.uuid);
+                    delete this.appsByHost[old.uuid];
+                    clearTimeout(this._appRetryTimers[old.uuid]);
+                    delete this._appRetryTimers[old.uuid];
+                    this._deviceRunning.delete(old.uuid);
+                    this._deviceRunningAt.delete(old.uuid);
+                }
+            this.hosts = serverHosts.map((h) => {
                 const host = new Host(h);
                 // This device's running app, as last asked (see Host).
                 if (host.runningAppPerDevice)
                     host.currentGameId = this._deviceRunning.get(host.uuid) || 0;
-                const idx = this.hosts.findIndex((ex) => ex.uuid === host.uuid);
-                if (idx >= 0) this.hosts[idx] = host;
-                else this.hosts.push(host);
-            }
+                return host;
+            });
             this._refreshDeviceRunning();
             const firstLoad = !this._hostsLoaded;
             this._hostsLoaded = true;
@@ -824,7 +881,15 @@ export class HostListView {
             // so it can only be decided once the list is known — including the
             // "no hosts at all" case, which no fingerprint change signals.
             if (firstLoad || before !== after) this._renderUpdateBanner();
+            await this._refreshCandidates().catch(() => {});
         } catch (err) {
+            if (
+                !this._active ||
+                this._destroyed ||
+                revision !== this._discoveryRevision ||
+                request !== this._hostsRequest
+            )
+                return;
             console.error('[MW] Failed to refresh hosts:', err);
             // Show error only on first load; keep existing data on refresh
             if (this.hosts.length === 0) this.renderError(err.message);
@@ -931,6 +996,7 @@ export class HostListView {
                         }
                     </div>
                 </div>
+                <section id="discovery-candidates" hidden aria-label="${t('hosts.candidatesTitle')}"></section>
                 <div class="hosts-list" id="hosts-list"></div>
             </div>
         `;
@@ -1323,6 +1389,7 @@ export class HostListView {
      *          per host: a second caller joins the one in flight.
      */
     _refreshApps(uuid) {
+        const revision = accountRevision();
         const prev = this.appsByHost[uuid];
         if (prev && prev.pending) return prev.pending;
 
@@ -1332,6 +1399,8 @@ export class HostListView {
 
         const pending = BackendClient.getAppList(uuid)
             .then((data) => {
+                requireAccountRevision(revision);
+                if (this._destroyed || !this.hosts.some((h) => h.uuid === uuid)) return {};
                 if (data && data.status === 'ok') {
                     const raw = data.apps || [];
                     saveCachedApps(uuid, raw);
@@ -1368,7 +1437,12 @@ export class HostListView {
                 });
             })
             .then((result) => {
-                if (this._destroyed) return result;
+                if (
+                    this._destroyed ||
+                    revision !== accountRevision() ||
+                    !this.hosts.some((h) => h.uuid === uuid)
+                )
+                    return result;
                 const current = this.appsByHost[uuid];
                 const shown = current && current.apps ? current.apps : null;
 

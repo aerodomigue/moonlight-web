@@ -56,7 +56,11 @@ void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManage
                                    req.path == QLatin1String("/api/hosts/scan"));
         const bool discovery = req.path == QLatin1String("/api/hosts/discovery") &&
                                (req.method == "GET" || req.method == "POST");
-        if (segments.size() >= 4 && !createOrScan && !discovery) {
+        const bool candidates =
+            (req.method == "GET" && req.path == "/api/hosts/discovery/candidates") ||
+            (req.method == "POST" && segments.size() == 7 && segments[3] == "discovery" &&
+             segments[4] == "candidates" && !segments[5].isEmpty() && segments[6] == "add");
+        if (segments.size() >= 4 && !createOrScan && !discovery && !candidates) {
             const NvComputer* host = computers.getHost(segments[3]);
             if (!host || !UserAccess::owns(req.userId, host->ownerId))
                 return HttpResponse::error(404, "Host not found");

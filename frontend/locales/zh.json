@@ -105,8 +105,8 @@
         "nativePermOnTheMac": "只能在这台 Mac 本机上打开此设置——请在 Mac 上操作。",
         "title": "应用库",
         "addManually": "手动添加",
-        "empty": "未找到主机",
-        "emptyHint": "本网络上的主机会自动出现。你也可以手动添加一台。",
+        "empty": "暂无已注册电脑",
+        "emptyHint": "添加上方检测到的电脑，或手动添加。仅发现电脑不会将其注册。",
         "emptyNeedsHost": "串流一台电脑，需要在那台电脑上安装主机端软件。MoonlightWeb 配合 Sunshine 使用——它是独立的程序，由你自行下载并安装。",
         "emptyGetSunshine": "下载 Sunshine",
         "connectionLost": "连接已断开",
@@ -145,7 +145,10 @@
         "backendSetup": "设置后端…",
         "backendManage": "后端：{{type}}",
         "discoveryOn": "自动发现：开启",
-        "discoveryOff": "自动发现：关闭"
+        "discoveryOff": "自动发现：关闭",
+        "candidatesTitle": "检测到的电脑 — 待添加",
+        "candidatesHint": "发现不会注册或配对电脑。选择添加以注册到您的账户。",
+        "addCandidate": "添加"
     },
     "selfStream": {
         "title": "要串流你自己的电脑吗？",

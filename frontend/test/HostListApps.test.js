@@ -1,3 +1,4 @@
+import { acceptAccount } from '../js/util/authAccountState.js';
 /*
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
@@ -53,6 +54,25 @@ describe('HostListView app grid', () => {
         view.hosts = [new Host(READY_HOST)];
         view.renderList();
     };
+
+
+    it('never stores a late app list after changing accounts', async () => {
+        acceptAccount({id:'alice'});
+        let resolve;
+        BackendClient.getAppList.mockReturnValue(new Promise(r=>resolve=r));
+        mount();
+        acceptAccount({id:'bob'});
+        resolve(ok([{id:1,name:'Alice secret app'}]));await settle();
+        expect(localStorage.getItem('mw-host-apps')).toBeNull();
+        expect(container.textContent).not.toContain('Alice secret app');
+    });
+    it('never stores an app list that completes after its view is destroyed', async () => {
+        let resolve;
+        BackendClient.getAppList.mockReturnValue(new Promise(r=>resolve=r));
+        mount();view.destroy();
+        resolve(ok([{id:1,name:'Late app'}]));await settle();
+        expect(localStorage.getItem('mw-host-apps')).toBeNull();
+    });
 
     const remember = (apps, art) =>
         localStorage.setItem(

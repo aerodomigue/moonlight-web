@@ -1,4 +1,5 @@
 #include "test_framework.h"
+#include "backend/DiscoveryCandidates.h"
 #include "server/AuthConfig.h"
 #include "server/AuthManager.h"
 #include "server/RequestGuard.h"
@@ -15,6 +16,35 @@
 
 void run_user_identity_tests()
 {
+    SECTION("Discovery observations are isolated, expiring, bounded and non-authoritative");
+    qint64 discoveryTime = 10;
+    DiscoveryCandidates candidates([&] { return discoveryTime; });
+    candidates.observe("alice", "pc", "Desk", "127.0.0.1", 47989);
+    candidates.observe("bob", "pc", "Desk", "127.0.0.1", 47989);
+    const auto aliceCandidate = candidates.list("alice").first().id;
+    const auto bobCandidate = candidates.list("bob").first().id;
+    CHECK(aliceCandidate != bobCandidate);
+    CHECK(!candidates.find("bob", aliceCandidate));
+    discoveryTime += 119999;
+    CHECK(candidates.find("alice", aliceCandidate).has_value());
+    candidates.observe("bob", "pc", "Renamed", "127.0.0.2", 47990);
+    ++discoveryTime;
+    CHECK(!candidates.find("alice", aliceCandidate));
+    CHECK_EQ(candidates.find("bob", bobCandidate)->name, QString("Renamed"));
+    CHECK_EQ(candidates.find("bob", bobCandidate)->port, quint16(47990));
+    candidates.clear("alice");
+    CHECK_EQ(candidates.list("bob").size(), 1);
+    candidates.clear("bob");
+    CHECK(candidates.list("bob").isEmpty());
+    candidates.observe("", "pc", "Desk", "127.0.0.1", 1);
+    candidates.observe("alice", "", "Desk", "127.0.0.1", 1);
+    CHECK(candidates.list("alice").isEmpty());
+    for (int i = 0; i < 130; ++i)
+        candidates.observe("alice", QString::number(i), "Desk", "127.0.0.1", 1);
+    CHECK_EQ(candidates.list("alice").size(), 128);
+    discoveryTime += DiscoveryCandidates::LifetimeMs;
+    CHECK(candidates.list("alice").isEmpty());
+
     SECTION("RFC 9421 request signatures and raw target integrity");
     const auto httpKey = PairingCrypto::generatePrivateKeyPem();
     const auto httpPublic = PairingCrypto::publicKeySpkiFromPrivatePem(httpKey);
