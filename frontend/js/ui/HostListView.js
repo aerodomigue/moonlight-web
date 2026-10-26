@@ -176,9 +176,18 @@ export class HostListView {
             if (!e.target.closest('.host-card-menu')) this._closeAllMenus();
         };
         document.addEventListener('click', this._docClickHandler);
-        this._menuViewportHandler = () => {
+        this._menuViewportHandler = (event) => {
             const menu = this.container.querySelector('.host-menu:not([hidden])');
-            if (menu) this._positionMenu(menu);
+            // Scrolling the bounded menu itself must not reset its scroll position.
+            if (
+                menu &&
+                !(
+                    event.type === 'scroll' &&
+                    event.target instanceof Node &&
+                    menu.contains(event.target)
+                )
+            )
+                this._positionMenu(menu);
         };
         window.addEventListener('resize', this._menuViewportHandler);
         window.addEventListener('scroll', this._menuViewportHandler, true);

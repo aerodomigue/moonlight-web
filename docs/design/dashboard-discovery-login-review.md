@@ -55,3 +55,6 @@ Advisory TypeScript comparison: 136 distinct diagnostics before and after, none 
 Final review also caught a quick leave/return during preference loading: the old
 request was discarded but the new dashboard could remain uninitialized. A targeted
 regression now verifies a fresh authority read without executing the obsolete scan.
+The bounded menu's own scroll events are excluded from viewport repositioning:
+resetting its height during an internal scroll could otherwise move the scroll
+position. A regression covers internal scroll versus window resize.
