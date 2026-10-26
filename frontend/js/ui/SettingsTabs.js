@@ -2,7 +2,12 @@ import { t } from '../i18n/i18n.js';
 
 /** Moves existing controls, preserving draft values and handlers across tab changes. */
 export class SettingsTabs {
-    constructor(root, definitions, selected, onChange = () => {}) {
+    constructor(
+        root,
+        definitions,
+        selected,
+        onChange = /** @type {(key: string) => void} */ (() => {}),
+    ) {
         this.root = root;
         this.panels = new Map();
         this.buttons = new Map();

@@ -4,7 +4,7 @@ import { escapeHtml } from '../util/escapeHtml.js';
 import { t } from '../i18n/i18n.js';
 
 export class AdminUsersPanel {
-    constructor(container, onHosts = () => {}) {
+    constructor(container, onHosts = /** @type {(id: string) => void} */ (() => {})) {
         this.onHosts = onHosts;
         this.search = '';
         this.container = container;
