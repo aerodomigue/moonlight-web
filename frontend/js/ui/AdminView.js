@@ -1,3 +1,4 @@
+import { AdminHostsPanel } from './AdminHostsPanel.js';
 import { SettingsTabs, moveSettingsFields } from './SettingsTabs.js';
 /*
  * MoonlightWeb — browser-based Sunshine/GameStream client.
@@ -1471,7 +1472,13 @@ export class AdminView {
                         this.bindEvents();
                         Toast.success(t('adminAccounts.saved'));
                     }),
-                    new AdminUsersPanel(users),
+                    new AdminUsersPanel(users, (id) => {
+                        this._tabs.select('hosts');
+                        this._hostsPanel.showOwner(id);
+                    }),
+                    (this._hostsPanel = new AdminHostsPanel(
+                        this.container.querySelector('#admin-hosts-panel'),
+                    )),
                 ];
                 this._accountPanels.forEach((panel) => panel.start());
             }

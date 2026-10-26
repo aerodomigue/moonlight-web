@@ -84,6 +84,28 @@ void registerAdminUserRoutes(HttpServer& server, AuthManager& auth, ComputerMana
     QObject::connect(retry, &QTimer::timeout, &server, recover);
     retry->start(10000);
     auto* router = server.router();
+    router->get("/api/admin/hosts", [&auth, &computers, &pool](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Administrator access required");
+        QJsonArray hosts;
+        for (const auto& user : auth.users().all()) {
+            for (const auto& value : computers.getHostsJson(user.id)) {
+                const auto source = value.toObject();
+                const auto id = source["uuid"].toString();
+                const auto* host = computers.getHost(id);
+                if (!host) continue;
+                QJsonObject item;
+                for (const auto* key : {"uuid", "name", "customName", "state", "backendType"})
+                    item[key] = source[key];
+                item["owner_id"] = user.id;
+                item["enabled"] = true;
+                const bool occupied = busy(id, computers, pool);
+                item["busy"] = occupied;
+                item["blocked_reason"] = host->isNativeEngine() ? "native" : occupied ? "busy" : "";
+                hosts.append(item);
+            }
+        }
+        return HttpResponse::json({{"hosts", hosts}});
+    });
     router->get("/api/admin/users", [&auth, &computers](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Administrator access required");
         QJsonArray users;

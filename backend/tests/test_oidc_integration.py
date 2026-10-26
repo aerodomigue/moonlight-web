@@ -581,6 +581,7 @@ class OidcIsolation(unittest.TestCase):
         visitor = Browser(self.base)
         self.assertEqual(visitor.request("/api/auth/validate", {"pin": body["pin"], "remember": True})[0], 200)
         self.assertEqual(visitor.request("/api/auth/status")[1]["user"]["id"], alice["id"])
+        self.assertEqual(visitor.request("/api/admin/hosts")[0], 403)
         self.assertEqual(visitor.request("/api/admin/users")[0], 403)
         self.assertEqual(visitor.request("/api/admin/auth-config")[0], 403)
         self.assertEqual(visitor.request("/api/auth/admin-unlock", {"password": "irrelevant"})[0], 403)
@@ -589,6 +590,10 @@ class OidcIsolation(unittest.TestCase):
         address = "127.0.0.1:" + str(self.pc.server_port)
         source = visitor.request("/api/hosts/manual", {"address": address})[1]["hosts"][0]["uuid"]
         self.assertEqual(admin.request(path + "/hosts")[1]["hosts"][0]["uuid"], source)
+        listed = next(h for h in admin.request("/api/admin/hosts")[1]["hosts"] if h["uuid"] == source)
+        self.assertEqual(listed["owner_id"], alice["id"])
+        self.assertTrue(listed["enabled"])
+        self.assertEqual(set(listed), {"uuid", "name", "customName", "state", "backendType", "owner_id", "enabled", "busy", "blocked_reason"})
         self.assertEqual(visitor.request("/api/hosts/" + source + "/pair/start", {})[0], 200)
         for _ in range(100):
             code, body, _ = admin.request("/api/admin/hosts/" + source + "/duplicate", {"user_id": bob["id"]}, extra_headers=headers)

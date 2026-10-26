@@ -1232,6 +1232,25 @@
         "ssoAutomatic": "SSO 用户将在首次登录时自动创建。角色由 Authentik 提供。",
         "searchUsers": "搜索用户",
         "noResults": "无结果",
-        "viewHosts": "查看电脑"
+        "viewHosts": "查看电脑",
+        "searchHosts": "搜索电脑",
+        "owner": "所有者",
+        "state": "状态",
+        "all": "全部",
+        "enabled": "已启用",
+        "disabled": "已禁用",
+        "online": "在线",
+        "offline": "离线",
+        "busy": "忙碌",
+        "refresh": "刷新",
+        "nativeProtected": "本地捕获仍归本地所有者。",
+        "busyReason": "请先停止此电脑上的流或操作。",
+        "actions": "操作",
+        "enable": "启用",
+        "disable": "禁用",
+        "transfer": "移动",
+        "duplicate": "克隆",
+        "delete": "删除",
+        "disabledByAdmin": "已被管理员禁用"
     }
 }

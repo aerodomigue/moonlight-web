@@ -1232,6 +1232,25 @@
         "ssoAutomatic": "Les comptes SSO sont créés automatiquement à leur première connexion. Les rôles sont fournis par Authentik.",
         "searchUsers": "Rechercher un utilisateur",
         "noResults": "Aucun résultat",
-        "viewHosts": "Voir les PC"
+        "viewHosts": "Voir les PC",
+        "searchHosts": "Rechercher un PC",
+        "owner": "Propriétaire",
+        "state": "État",
+        "all": "Tous",
+        "enabled": "Activé",
+        "disabled": "Désactivé",
+        "online": "En ligne",
+        "offline": "Hors ligne",
+        "busy": "Occupé",
+        "refresh": "Actualiser",
+        "nativeProtected": "La capture native reste attachée au propriétaire local.",
+        "busyReason": "Arrêtez le flux ou l’opération en cours sur ce PC avant de le modifier.",
+        "actions": "Actions",
+        "enable": "Réactiver",
+        "disable": "Désactiver",
+        "transfer": "Déplacer",
+        "duplicate": "Cloner",
+        "delete": "Supprimer",
+        "disabledByAdmin": "Désactivé par un administrateur"
     }
 }

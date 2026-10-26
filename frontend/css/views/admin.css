@@ -421,3 +421,12 @@
 .admin-account-row[hidden] { display: none; }
 .admin-account-row strong { min-width: 10rem; }
 .admin-account-row span { font-size: .85rem; }
+
+.admin-host-filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
+.admin-host-filters label { flex: 1 1 10rem; }
+.admin-host-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; padding: 1rem; margin: .75rem 0; border: 1px solid #28434b; }
+.admin-host-row[hidden] { display: none; }
+.admin-host-row details { min-width: 10rem; }
+.admin-host-row summary { cursor: pointer; padding: .5rem; }
+.admin-host-row details[open] { display: grid; gap: .5rem; }
+.admin-host-row details button { display: block; width: 100%; margin: .5rem 0; }
