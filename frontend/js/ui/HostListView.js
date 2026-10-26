@@ -176,6 +176,12 @@ export class HostListView {
             if (!e.target.closest('.host-card-menu')) this._closeAllMenus();
         };
         document.addEventListener('click', this._docClickHandler);
+        this._menuViewportHandler = () => {
+            const menu = this.container.querySelector('.host-menu:not([hidden])');
+            if (menu) this._positionMenu(menu);
+        };
+        window.addEventListener('resize', this._menuViewportHandler);
+        window.addEventListener('scroll', this._menuViewportHandler, true);
 
         // Button delegation — bound once, cleaned up in destroy()
         this._clickHandler = (e) => {
@@ -245,6 +251,8 @@ export class HostListView {
                 if (wasHidden) {
                     menu.removeAttribute('hidden');
                     menuBtn.setAttribute('aria-expanded', 'true');
+                    card.classList.add('menu-open');
+                    this._positionMenu(menu);
                 }
                 return;
             }
@@ -731,6 +739,8 @@ export class HostListView {
     destroy() {
         this._active = false;
         this._destroyed = true;
+        window.removeEventListener('resize', this._menuViewportHandler);
+        window.removeEventListener('scroll', this._menuViewportHandler, true);
         this._ssoImageUrls?.forEach((url) => URL.revokeObjectURL(url));
         this._ssoImageUrls?.clear();
         this._ssoImageCache?.clear();
@@ -1709,9 +1719,33 @@ export class HostListView {
         return true;
     }
 
+    _positionMenu(menu) {
+        const margin = 8;
+        const anchor = menu.parentElement.getBoundingClientRect();
+        const width = document.documentElement.clientWidth || window.innerWidth;
+        const height = document.documentElement.clientHeight || window.innerHeight;
+        menu.style.maxWidth = `${Math.max(0, width - margin * 2)}px`;
+        menu.style.right = '0px';
+        menu.style.top = 'calc(100% + 4px)';
+        menu.style.bottom = 'auto';
+        menu.style.maxHeight = `${Math.max(0, height - margin * 2)}px`;
+        const rect = menu.getBoundingClientRect();
+        const below = Math.max(0, height - anchor.bottom - margin - 4);
+        const above = Math.max(0, anchor.top - margin - 4);
+        const upward = rect.height > below && above > below;
+        menu.style.maxHeight = `${upward ? above : below}px`;
+        if (upward) {
+            menu.style.top = 'auto';
+            menu.style.bottom = 'calc(100% + 4px)';
+        }
+        if (rect.right > width - margin) menu.style.right = `${rect.right - width + margin}px`;
+        else if (rect.left < margin) menu.style.right = `${rect.left - margin}px`;
+    }
+
     _closeAllMenus() {
         this.container.querySelectorAll('.host-menu:not([hidden])').forEach((m) => {
             m.setAttribute('hidden', '');
+            m.closest('.host-card')?.classList.remove('menu-open');
         });
         this.container
             .querySelectorAll('.btn-host-menu[aria-expanded="true"]')
