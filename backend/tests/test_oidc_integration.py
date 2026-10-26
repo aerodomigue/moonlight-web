@@ -772,6 +772,36 @@ class OidcIsolation(unittest.TestCase):
         self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
         self.assertEqual(alice.request("/api/hosts/" + host["uuid"] + "/apps")[0], 404)
 
+    def test_readding_a_candidate_never_reuses_a_retained_clone_identity(self):
+        import configparser
+        alice = self.start(); self.login(alice)
+        bob = Browser(self.base); bob_id = self.login(bob, "bob-sub")["user"]["id"]
+        candidate = self.discover_candidate(alice)
+        path = "/api/hosts/discovery/candidates/" + candidate["id"] + "/add"
+        source = alice.request(path, {})[1]["hosts"][0]["uuid"]
+        admin, headers = self.administrator()
+        copied = admin.request("/api/admin/hosts/" + source + "/duplicate", {"user_id": bob_id}, extra_headers=headers)
+        self.assertEqual(copied[0], 200)
+        copy_id = copied[1]["host"]["uuid"]
+        def seats():
+            config = configparser.ConfigParser(interpolation=None)
+            config.read(self.state / "config/MoonlightWeb/MoonlightWeb.conf")
+            return {value: config["hosts"].get(key[:-4] + "identityseat", "")
+                    for key, value in config["hosts"].items() if key.endswith("\\uuid")}
+        previous = seats()
+        self.assertTrue(previous[source])
+        self.assertEqual(previous[source], previous[copy_id])
+        self.assertEqual(admin.request("/api/admin/hosts/" + source, method="DELETE", extra_headers=headers)[0], 200)
+        candidate = self.discover_candidate(alice)
+        fresh = alice.request("/api/hosts/discovery/candidates/" + candidate["id"] + "/add", {})
+        self.assertEqual(fresh[0], 200)
+        self.assertEqual(fresh[1]["hosts"][0]["uuid"], source)
+        self.assertEqual(fresh[1]["hosts"][0]["pairState"], "not_paired")
+        current = seats()
+        self.assertNotEqual(current[source], previous[source])
+        self.assertEqual(current[copy_id], previous[copy_id])
+        self.assertEqual(bob.request("/api/hosts")[1]["hosts"][0]["uuid"], copy_id)
+
     def test_candidate_rechecks_identity_and_registration_collision(self):
         alice = self.start(); self.login(alice)
         candidate = self.discover_candidate(alice)
