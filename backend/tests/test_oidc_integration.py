@@ -648,6 +648,95 @@ class OidcIsolation(unittest.TestCase):
         local_admin.base = self.base
         self.assertTrue(local_admin.request("/api/auth/status")[1]["is_localhost"])
 
+    def test_discovery_preference_is_authoritative_per_account(self):
+        alice = self.start()
+        self.login(alice)
+        bob = Browser(self.base)
+        self.login(bob, "bob-sub")
+        path = "/api/hosts/discovery"
+        self.assertEqual(Browser(self.base).request(path)[0], 401)
+        self.assertEqual(alice.request(path)[1], {"enabled": True})
+        address = "127.0.0.1:" + str(self.pc.server_port)
+        host = alice.request("/api/hosts/manual", {"address": address})[1]["hosts"][0]
+        self.assertEqual(alice.request(path)[1], {"enabled": False})
+        self.assertEqual(alice.request("/api/hosts/scan", {})[0], 403)
+        self.assertEqual(bob.request(path)[1], {"enabled": True})
+        for value in (None, "false", 0, [], {}):
+            self.assertEqual(alice.request(path, {"enabled": value})[0], 400)
+        self.assertEqual(alice.request(path, {"enabled": True})[0], 200)
+        self.assertEqual(alice.request("/api/hosts/scan", {})[0], 200)
+        other = Browser(self.base)
+        self.login(other)
+        self.assertTrue(other.request(path)[1]["enabled"])
+        self.assertEqual(other.request(path, {"enabled": False})[0], 200)
+        self.assertFalse(alice.request(path)[1]["enabled"])
+        self.assertTrue(bob.request(path)[1]["enabled"])
+        admin, headers = self.administrator()
+        admin.request("/api/admin/hosts/" + host["uuid"] + "/enabled", {"enabled": False}, extra_headers=headers)
+        self.assertFalse(alice.request(path)[1]["enabled"], "Explicit preference beats default")
+        self.start(); alice.base = self.base; self.login(alice)
+        self.assertFalse(alice.request(path)[1]["enabled"])
+        # Missing signatures cannot read or mutate the preference with a copied cookie.
+        alice.signing = False
+        self.assertEqual(alice.request(path)[0], 401)
+        self.assertEqual(alice.request(path, {"enabled": True})[0], 401)
+
+    def test_discovery_disable_discards_inflight_reply_without_affecting_other_owner(self):
+        import struct
+        alice = self.start(); self.login(alice)
+        bob = Browser(self.base); self.login(bob, "bob-sub")
+        path = "/api/hosts/discovery"
+        for browser in (alice, bob):
+            self.assertEqual(browser.request(path, {"enabled": True})[0], 200)
+            self.assertEqual(browser.request("/api/hosts/scan", {})[0], 200)
+        self.pc.info_gate = threading.Event()
+        self.pc.info_entered = threading.Event()
+        def name(value):
+            return b"".join(bytes([len(label)]) + label.encode() for label in value.split(".")) + b"\0"
+        instance = "fixture-" + secrets.token_hex(4) + "._nvstream._tcp.local"
+        hostname = "fixture-" + secrets.token_hex(4) + ".local"
+        def rr(owner, kind, data):
+            return name(owner) + struct.pack("!HHIH", kind, 1, 60, len(data)) + data
+        packet = struct.pack("!HHHHHH", 0, 0x8400, 0, 3, 0, 0)
+        packet += rr("_nvstream._tcp.local", 12, name(instance))
+        packet += rr(instance, 33, struct.pack("!HHH", 0, 0, self.pc.server_port) + name(hostname))
+        packet += rr(hostname, 1, socket.inet_aton("127.0.0.1"))
+        try:
+            # Unicast only to the fixture's local discovery socket, never to the LAN.
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                for _ in range(60):
+                    sender.sendto(packet, ("127.0.0.1", 5353))
+                    if self.pc.info_entered.wait(0.1): break
+            self.assertTrue(self.pc.info_entered.is_set(), "Discovery must reach the delayed PC fixture")
+            self.assertEqual(alice.request(path, {"enabled": False})[0], 200)
+            # Turning back on does not resurrect work from the cancelled generation.
+            self.assertEqual(alice.request(path, {"enabled": True})[0], 200)
+            self.pc.info_gate.set()
+            for _ in range(100):
+                if bob.request("/api/hosts")[1]["hosts"]: break
+                time.sleep(0.02)
+            self.assertEqual(len(bob.request("/api/hosts")[1]["hosts"]), 1)
+            self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
+        finally:
+            self.pc.info_gate.set()
+            del self.pc.info_gate
+            del self.pc.info_entered
+
+    def test_discovery_save_failure_keeps_previous_choice(self):
+        alice = self.start()
+        self.login(alice)
+        path = "/api/hosts/discovery"
+        self.assertEqual(alice.request(path, {"enabled": False})[0], 200)
+        store = self.state / "data/MoonlightWeb/MoonlightWeb/users.json"
+        permissions = store.parent.stat().st_mode & 0o777
+        store.parent.chmod(0o500)
+        try:
+            self.assertEqual(alice.request(path, {"enabled": True})[0], 503)
+            self.assertFalse(alice.request(path)[1]["enabled"])
+            self.assertEqual(alice.request("/api/hosts/scan", {})[0], 403)
+        finally:
+            store.parent.chmod(permissions)
+
     def test_disabled_host_registration_isolation_and_persistence(self):
         alice = self.start()
         alice_id = self.login(alice)["user"]["id"]

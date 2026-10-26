@@ -96,6 +96,7 @@ export class BackendClient {
        was one to begin with. */
     static _hadSession = false;
     static currentUser = null;
+    static _loggingOut = false;
     static pinEnabled = true;
 
     /**
@@ -178,7 +179,7 @@ export class BackendClient {
             msg === 'authentication_required' ||
             msg === 'sso_revalidation_required' ||
             (resp.status === 401 && !msg);
-        if (this._hadSession && !isAuthEndpoint && isSessionLost) {
+        if (this._hadSession && !this._loggingOut && !isAuthEndpoint && isSessionLost) {
             if (!sessionStorage.getItem('mw_auth_reload')) {
                 sessionStorage.setItem('mw_auth_reload', '1');
                 console.warn('[MW] Authentication required — reloading page');
@@ -281,6 +282,12 @@ export class BackendClient {
 
     static async getHosts() {
         return this.get('/api/hosts');
+    }
+    static async getDiscovery() {
+        return this.get('/api/hosts/discovery');
+    }
+    static async setDiscovery(enabled) {
+        return this.post('/api/hosts/discovery', { enabled });
     }
     static async scanHosts() {
         return this.post('/api/hosts/scan');
@@ -791,7 +798,25 @@ export class BackendClient {
     /** End this browser's own session and clear its cookie. Works from anywhere
      *  (no localhost gate) — it is the visitor's way out of a public machine. */
     static async logout() {
-        const result = await this.post('/api/auth/logout');
+        this._loggingOut = true;
+        let result;
+        try {
+            result = await this.post('/api/auth/logout');
+        } catch (error) {
+            this._loggingOut = false;
+            throw error;
+        }
+        this._hadSession = false;
+        this._loggingOut = false;
+        this.currentUser = null;
+        this.canManageShares = false;
+        SsoSession.reset();
+        try {
+            localStorage.removeItem('mw-host-apps');
+            localStorage.removeItem('mw-host-usage');
+        } catch {
+            /* optional browser caches; authorization is server-side */
+        }
         try {
             sessionStorage.setItem('mw-sso-logged-out', '1');
         } catch {

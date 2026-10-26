@@ -72,6 +72,12 @@ public:
     {
         m_OwnerActive = std::move(predicate);
     }
+    void setDiscoveryPredicate(std::function<bool(const QString&)> predicate)
+    {
+        m_DiscoveryAllowed = std::move(predicate);
+    }
+    bool discoveryEnabled(const QString& ownerId) const;
+    void cancelDiscovery(const QString& ownerId);
     // REST API methods
     QJsonArray getHostsJson(const QString& ownerId = QStringLiteral("local-owner")) const;
     void handleScanRequest(const QString& ownerId = QStringLiteral("local-owner"));
@@ -252,6 +258,8 @@ private:
     QHash<QString, std::weak_ptr<void>> m_HostRequests;
     std::function<bool(const QString&)> m_OwnerActive;
     QSet<QString> m_ScanOwners;
+    QMap<QString, quint64> m_DiscoveryGeneration;
+    std::function<bool(const QString&)> m_DiscoveryAllowed;
     QMap<QString, NvComputer*> m_Hosts; // uuid → host, all pointers owned here
 
     // False until loadHosts() has run once. saveHosts() uses it to tell a

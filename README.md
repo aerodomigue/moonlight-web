@@ -40,6 +40,22 @@ Le serveur Moonlight-Web local reste nécessaire pour joindre Apollo/Sunshine
 et adapter leur flux au navigateur. L'hôte natif et le partage de session hérités
 du projet amont restent disponibles selon les capacités du matériel et du navigateur.
 
+## Dashboard et connexion
+
+Le bouton **Découverte automatique** enregistre un choix par utilisateur, partagé
+entre ses navigateurs. Sans choix explicite, la découverte est désactivée dès
+qu’un PC activé est enregistré, même hors ligne. Sinon, elle est activée. Les
+recherches sont limitées dans le temps et démarrent à l’ouverture du dashboard,
+au retour au premier plan ou lors de l’activation du bouton. Désactiver la
+découverte n’arrête pas la surveillance des PC enregistrés ni leur Wake-on-LAN.
+
+Les menus **…** restent accessibles au-delà des cartes, y compris sur mobile.
+**Se déconnecter**, dans Paramètres → Général, ferme la session Moonlight-Web et
+revient au choix PIN/SSO autorisé. Une déconnexion volontaire n’entraîne pas de
+reconnexion SSO automatique, mais ne ferme pas la session globale Authentik.
+L’option **Rester connecté** appartient au PIN ; en SSO, le contrôle Authentik à
+chaque ouverture et la durée maximale de huit heures restent obligatoires.
+
 ## Paramètres et administration
 
 Les paramètres personnels sont organisés en **Vidéo et audio**, **Contrôles** et

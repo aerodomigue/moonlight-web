@@ -84,7 +84,11 @@ export const SsoSession = {
             history.replaceState({}, '', '/?auth_error=sso');
             return true;
         }
-        if (new URLSearchParams(location.search).has('auth_error')) return true;
+        if (
+            new URLSearchParams(location.search).has('auth_error') ||
+            new URLSearchParams(location.search).get('logged_out') === '1'
+        )
+            return true;
         const identity = await loadOrCreateIdentity();
         if (!identity) {
             history.replaceState({}, '', '/?auth_error=sso');

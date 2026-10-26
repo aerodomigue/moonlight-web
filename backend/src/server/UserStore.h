@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QString>
+#include <optional>
 
 struct UserAccount
 {
@@ -10,6 +11,7 @@ struct UserAccount
     QString role = QStringLiteral("user");
     bool enabled = true;
     bool deleting = false;
+    std::optional<bool> discoveryEnabled;
     bool managedRole = false;
     bool managedName = false;
     QString verifiedConfig;

@@ -143,7 +143,9 @@
         "stopSessionWorking": "正在停止...",
         "stopSessionConfirm": "要停止该主机上正在运行的程序吗？所有正在串流的人（包括受邀玩家）都会被断开。",
         "backendSetup": "设置后端…",
-        "backendManage": "后端：{{type}}"
+        "backendManage": "后端：{{type}}",
+        "discoveryOn": "自动发现：开启",
+        "discoveryOff": "自动发现：关闭"
     },
     "selfStream": {
         "title": "要串流你自己的电脑吗？",
@@ -491,8 +493,8 @@
         "shortcutsDesc": "串流过程中各项操作的作用。串流开始时同样的列表会在画面上短暂显示，然后自动隐藏。",
         "session": "会话",
         "logout": "退出登录",
-        "logoutDesc": "结束此浏览器的会话并停止正在进行的串流。此设备下次访问需要重新输入 PIN 码。您的其他设备仍保持登录。",
-        "logoutConfirm": "要退出此服务器吗？正在进行的串流将停止，此设备需要新的 PIN 码才能重新连接。",
+        "logoutDesc": "结束此浏览器会话及其串流，并返回配置的 PIN、SSO 或两者登录页面。其他设备保持登录。",
+        "logoutConfirm": "退出 Moonlight-Web 并返回登录页面？此会话的串流将停止。",
         "saved": "已保存",
         "settingsReset": "设置已恢复为默认值",
         "powerSave": "省电",

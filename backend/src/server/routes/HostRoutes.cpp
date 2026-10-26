@@ -18,6 +18,7 @@
 #include "server/routes/HostRoutes.h"
 
 #include "server/ClientUniqueId.h"
+#include "server/AuthManager.h"
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "backend/ComputerManager.h"
@@ -34,7 +35,32 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(obj);
     });
 
+    server.router()->get("/api/hosts/discovery", [&computerManager](const HttpRequest& req) {
+        return HttpResponse::json(
+            QJsonObject{{"enabled", computerManager.discoveryEnabled(req.userId)}});
+    });
+    server.router()->post(
+        "/api/hosts/discovery", [&server, &computerManager](const HttpRequest& req) {
+            const auto body = QJsonDocument::fromJson(req.body).object();
+            if (!body.value("enabled").isBool())
+                return HttpResponse::error(400, "Expected boolean enabled");
+            auto* auth = server.authManager();
+            if (!auth || !auth->users().active(req.userId))
+                return HttpResponse::error(401, "Not authenticated");
+            auto user = auth->users().get(req.userId);
+            user.discoveryEnabled = body["enabled"].toBool();
+            try {
+                auth->users().update(user);
+            } catch (const std::exception&) {
+                return HttpResponse::error(503, "Cannot save discovery preference");
+            }
+            if (!*user.discoveryEnabled) computerManager.cancelDiscovery(req.userId);
+            return HttpResponse::json(QJsonObject{{"enabled", *user.discoveryEnabled}});
+        });
+
     server.router()->post("/api/hosts/scan", [&computerManager](const HttpRequest& req) {
+        if (!computerManager.discoveryEnabled(req.userId))
+            return HttpResponse::error(403, "Automatic discovery is disabled");
         computerManager.handleScanRequest(req.userId);
         QJsonObject obj;
         obj["status"] = "scanning";

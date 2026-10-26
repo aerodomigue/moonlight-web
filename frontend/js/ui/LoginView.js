@@ -117,9 +117,9 @@ export class LoginView {
             this.render();
             this.bindEvents();
             this._focusInput();
-            let loggedOut = false;
+            let loggedOut = query.get('logged_out') === '1';
             try {
-                loggedOut = sessionStorage.getItem('mw-sso-logged-out') === '1';
+                loggedOut ||= sessionStorage.getItem('mw-sso-logged-out') === '1';
             } catch {
                 /* optional storage */
             }
@@ -439,7 +439,7 @@ export class LoginView {
     }
 
     /**
-     * "Remember me", shared by both authentication forms. Checked by default —
+     * Choose between the enabled authentication methods. Checked by default —
      * unchecking is the deliberate act of someone on a machine they are about to
      * walk away from, and the hint spells out what they get for it.
      */
@@ -451,8 +451,7 @@ export class LoginView {
     }
 
     _renderSsoForm() {
-        return `${this._renderRememberField()}
-            ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
+        return `${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
             <button id="btn-login-sso" class="btn btn-neutral" ${this._submitting ? 'disabled' : ''}>${t('login.useSso')}</button>`;
     }
 
@@ -472,7 +471,7 @@ export class LoginView {
         this.render();
         this.bindEvents();
         try {
-            const url = await BackendClient.beginSso(this._machineName, this._remember);
+            const url = await BackendClient.beginSso(this._machineName, true);
             if (this._destroyed) return;
             if (!url || new URL(url).protocol !== 'https:') throw new Error('Invalid SSO URL');
             this._navigate(url);

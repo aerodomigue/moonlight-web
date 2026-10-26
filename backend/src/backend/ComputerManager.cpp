@@ -928,26 +928,34 @@ void ComputerManager::onMdnsResolved(MdnsPendingComputer* computer,
 void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns,
                                             const QString& name, const QString& ownerId)
 {
-    Q_UNUSED(fromMdns)
     Q_UNUSED(name)
+    if (fromMdns && !discoveryEnabled(ownerId)) return;
+    const auto generation = m_DiscoveryGeneration.value(ownerId);
 
     QNetworkReply* reply = m_Http->getServerInfoAsync(addr, clientUniqueId());
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, addr, ownerId]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QString xml = QString::fromUtf8(reply->readAll());
-
-            try {
-                NvHTTP::verifyResponseStatus(xml);
-                addOrUpdateHost(xml, addr, ownerId);
-            } catch (const std::exception& e) {
-                Logger::warning(
-                    QString("Failed to query host at %1: %2").arg(addr.toString(), e.what()));
+    connect(
+        reply, &QNetworkReply::finished, this,
+        [this, reply, addr, ownerId, fromMdns, generation]() {
+            if (fromMdns && (generation != m_DiscoveryGeneration.value(ownerId) ||
+                             !discoveryEnabled(ownerId))) {
+                reply->deleteLater();
+                return;
             }
-        }
+            if (reply->error() == QNetworkReply::NoError) {
+                QString xml = QString::fromUtf8(reply->readAll());
 
-        reply->deleteLater();
-    });
+                try {
+                    NvHTTP::verifyResponseStatus(xml);
+                    addOrUpdateHost(xml, addr, ownerId);
+                } catch (const std::exception& e) {
+                    Logger::warning(
+                        QString("Failed to query host at %1: %2").arg(addr.toString(), e.what()));
+                }
+            }
+
+            reply->deleteLater();
+        });
 
     QPointer<QNetworkReply> guard(reply);
     QTimer::singleShot(NvHTTP::REQUEST_TIMEOUT_MS, reply, [guard]() {
@@ -1143,13 +1151,26 @@ QJsonArray ComputerManager::getHostsJson(const QString& ownerId) const
     return arr;
 }
 
+bool ComputerManager::discoveryEnabled(const QString& ownerId) const
+{
+    return !ownerId.isEmpty() && (!m_OwnerActive || m_OwnerActive(ownerId)) &&
+           (!m_DiscoveryAllowed || m_DiscoveryAllowed(ownerId));
+}
+
+void ComputerManager::cancelDiscovery(const QString& ownerId)
+{
+    ++m_DiscoveryGeneration[ownerId];
+    m_ScanOwners.remove(ownerId);
+    if (m_ScanOwners.isEmpty()) stopMdnsDiscovery();
+}
+
 void ComputerManager::handleScanRequest(const QString& ownerId)
 {
-    if (ownerId.isEmpty()) return;
+    if (!discoveryEnabled(ownerId)) return;
     m_ScanOwners.insert(ownerId);
     // Prevent overlapping scans (3 s cooldown)
     QDateTime now = QDateTime::currentDateTime();
-    if (m_LastScanTime.isValid() && m_LastScanTime.msecsTo(now) < 3000) {
+    if (m_MdnsActive && m_LastScanTime.isValid() && m_LastScanTime.msecsTo(now) < 3000) {
         Logger::info("Scan request skipped — cooldown active");
         return;
     }

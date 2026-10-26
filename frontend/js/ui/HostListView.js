@@ -152,6 +152,9 @@ export class HostListView {
         this._updateWarmupTries = 0;
         this._updateInfo = null;
         this._hostsLoaded = false;
+        this._discoveryEnabled = null;
+        this._discoveryBusy = false;
+        this._discoveryRevision = 0;
         this.renderShell();
         // An update under way (started here or from Settings) owns the banner.
         // After the shell: the banner it paints into is part of it.
@@ -173,9 +176,28 @@ export class HostListView {
             if (!e.target.closest('.host-card-menu')) this._closeAllMenus();
         };
         document.addEventListener('click', this._docClickHandler);
+        this._menuViewportHandler = (event) => {
+            const menu = this.container.querySelector('.host-menu:not([hidden])');
+            // Scrolling the bounded menu itself must not reset its scroll position.
+            if (
+                menu &&
+                !(
+                    event.type === 'scroll' &&
+                    event.target instanceof Node &&
+                    menu.contains(event.target)
+                )
+            )
+                this._positionMenu(menu);
+        };
+        window.addEventListener('resize', this._menuViewportHandler);
+        window.addEventListener('scroll', this._menuViewportHandler, true);
 
         // Button delegation — bound once, cleaned up in destroy()
         this._clickHandler = (e) => {
+            if (e.target.closest('#btn-discovery')) {
+                this._toggleDiscovery();
+                return;
+            }
             if (this._destroyed) return;
 
             // ── Update banner: apply on the host ───────────────────────────
@@ -238,6 +260,8 @@ export class HostListView {
                 if (wasHidden) {
                     menu.removeAttribute('hidden');
                     menuBtn.setAttribute('aria-expanded', 'true');
+                    card.classList.add('menu-open');
+                    this._positionMenu(menu);
                 }
                 return;
             }
@@ -658,17 +682,55 @@ export class HostListView {
         banner.hidden = false;
     }
 
+    _paintDiscovery() {
+        const button = this.container.querySelector('#btn-discovery');
+        if (!button) return;
+        button.disabled = this._discoveryBusy || this._discoveryEnabled === null;
+        button.setAttribute('aria-pressed', String(this._discoveryEnabled === true));
+        button.textContent = t(this._discoveryEnabled ? 'hosts.discoveryOn' : 'hosts.discoveryOff');
+    }
+
     async _autoScan() {
-        // A booth offers the hosts it was given; discovery would add others.
-        if (!this._active || BackendClient.adminLocked) return;
+        if (!this._active || this._destroyed || BackendClient.adminLocked || this._discoveryBusy)
+            return;
+        this._discoveryBusy = true;
+        const revision = this._discoveryRevision;
+        this._paintDiscovery();
         try {
-            await BackendClient.scanHosts();
-        } catch (err) {
-            // Silent — scan is best-effort, errors are expected
+            const state = await BackendClient.getDiscovery();
+            if (!this._active || this._destroyed || revision !== this._discoveryRevision) return;
+            this._discoveryEnabled = state.enabled === true;
+            if (this._discoveryEnabled) await BackendClient.scanHosts();
+        } catch {
+            // No scan on an unavailable preference; a later focus retries.
+        } finally {
+            this._discoveryBusy = false;
+            if (!this._destroyed) this._paintDiscovery();
+            // A new dashboard visit may have started while the old request was pending.
+            if (!this._destroyed && this._active && revision !== this._discoveryRevision)
+                this._autoScan();
+        }
+    }
+
+    async _toggleDiscovery() {
+        if (this._discoveryBusy || this._discoveryEnabled === null || !this._active) return;
+        this._discoveryBusy = true;
+        this._paintDiscovery();
+        try {
+            const state = await BackendClient.setDiscovery(!this._discoveryEnabled);
+            if (this._destroyed || !this._active) return;
+            this._discoveryEnabled = state.enabled === true;
+            if (this._discoveryEnabled) await BackendClient.scanHosts();
+        } catch (error) {
+            if (!this._destroyed) Toast.error(error.message);
+        } finally {
+            this._discoveryBusy = false;
+            if (!this._destroyed) this._paintDiscovery();
         }
     }
 
     stop() {
+        ++this._discoveryRevision;
         this._active = false;
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
@@ -689,6 +751,8 @@ export class HostListView {
     destroy() {
         this._active = false;
         this._destroyed = true;
+        window.removeEventListener('resize', this._menuViewportHandler);
+        window.removeEventListener('scroll', this._menuViewportHandler, true);
         this._ssoImageUrls?.forEach((url) => URL.revokeObjectURL(url));
         this._ssoImageUrls?.clear();
         this._ssoImageCache?.clear();
@@ -863,7 +927,7 @@ export class HostListView {
                         ${
                             BackendClient.adminLocked
                                 ? ''
-                                : `<button class="btn btn-neutral" id="btn-manual">${t('hosts.addManually')}</button>`
+                                : `<button class="btn btn-neutral" id="btn-discovery" aria-pressed="false" disabled>${t('hosts.discoveryOff')}</button><button class="btn btn-neutral" id="btn-manual">${t('hosts.addManually')}</button>`
                         }
                     </div>
                 </div>
@@ -1667,9 +1731,33 @@ export class HostListView {
         return true;
     }
 
+    _positionMenu(menu) {
+        const margin = 8;
+        const anchor = menu.parentElement.getBoundingClientRect();
+        const width = document.documentElement.clientWidth || window.innerWidth;
+        const height = document.documentElement.clientHeight || window.innerHeight;
+        menu.style.maxWidth = `${Math.max(0, width - margin * 2)}px`;
+        menu.style.right = '0px';
+        menu.style.top = 'calc(100% + 4px)';
+        menu.style.bottom = 'auto';
+        menu.style.maxHeight = `${Math.max(0, height - margin * 2)}px`;
+        const rect = menu.getBoundingClientRect();
+        const below = Math.max(0, height - anchor.bottom - margin - 4);
+        const above = Math.max(0, anchor.top - margin - 4);
+        const upward = rect.height > below && above > below;
+        menu.style.maxHeight = `${upward ? above : below}px`;
+        if (upward) {
+            menu.style.top = 'auto';
+            menu.style.bottom = 'calc(100% + 4px)';
+        }
+        if (rect.right > width - margin) menu.style.right = `${rect.right - width + margin}px`;
+        else if (rect.left < margin) menu.style.right = `${rect.left - margin}px`;
+    }
+
     _closeAllMenus() {
         this.container.querySelectorAll('.host-menu:not([hidden])').forEach((m) => {
             m.setAttribute('hidden', '');
+            m.closest('.host-card')?.classList.remove('menu-open');
         });
         this.container
             .querySelectorAll('.btn-host-menu[aria-expanded="true"]')
