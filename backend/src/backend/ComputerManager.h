@@ -16,6 +16,7 @@
  */
 
 #pragma once
+#include "DiscoveryCandidates.h"
 
 #include <QObject>
 #include <QMap>
@@ -78,6 +79,9 @@ public:
     }
     bool discoveryEnabled(const QString& ownerId) const;
     void cancelDiscovery(const QString& ownerId);
+    QJsonArray discoveryCandidates(const QString& ownerId);
+    void confirmDiscoveryCandidate(const QString& ownerId, const QString& id,
+                                   ResponseCallback respond);
     // REST API methods
     QJsonArray getHostsJson(const QString& ownerId = QStringLiteral("local-owner")) const;
     void handleScanRequest(const QString& ownerId = QStringLiteral("local-owner"));
@@ -258,6 +262,8 @@ private:
     QHash<QString, std::weak_ptr<void>> m_HostRequests;
     std::function<bool(const QString&)> m_OwnerActive;
     QSet<QString> m_ScanOwners;
+    DiscoveryCandidates m_DiscoveryCandidates;
+    QSet<QString> m_CandidateConfirmations;
     QMap<QString, quint64> m_DiscoveryGeneration;
     std::function<bool(const QString&)> m_DiscoveryAllowed;
     QMap<QString, NvComputer*> m_Hosts; // uuid → host, all pointers owned here

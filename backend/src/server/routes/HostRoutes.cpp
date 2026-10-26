@@ -58,6 +58,18 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
             return HttpResponse::json(QJsonObject{{"enabled", *user.discoveryEnabled}});
         });
 
+    server.router()->get(
+        "/api/hosts/discovery/candidates", [&computerManager](const HttpRequest& req) {
+            return HttpResponse::json(
+                QJsonObject{{"candidates", computerManager.discoveryCandidates(req.userId)}});
+        });
+    server.router()->postAsync(
+        "/api/hosts/discovery/candidates/:id/add",
+        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+            computerManager.confirmDiscoveryCandidate(req.userId, req.pathParams.value("id"),
+                                                      std::move(respond));
+        });
+
     server.router()->post("/api/hosts/scan", [&computerManager](const HttpRequest& req) {
         if (!computerManager.discoveryEnabled(req.userId))
             return HttpResponse::error(403, "Automatic discovery is disabled");
