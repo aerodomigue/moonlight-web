@@ -977,7 +977,7 @@ bool ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
     if (existing) {
         // Legacy IDs are raw physical UUIDs. Never merge a legacy/private ID
         // collision across owners, even when a peer deliberately reports it.
-        if (existing->ownerId != ownerId) return false;
+        if (existing->ownerId != ownerId || !existing->enabled) return false;
         if (ownerId != UserStore::localId() || !existing->identitySeat.isEmpty())
             newHost.pairState = existing->pairState;
         // Merge new data into existing host
@@ -1009,9 +1009,45 @@ std::shared_ptr<void> ComputerManager::acquireHostLease(const QString& uuid,
                                                         const QString& ownerId) const
 {
     const auto* host = getHost(uuid);
-    if (!host || host->ownerId != ownerId) return {};
+    if (!host || !host->enabled || host->ownerId != ownerId) return {};
     return m_HostLeases.acquire(host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid,
                                 ownerId);
+}
+
+// HTTP completion retains this shared marker even for asynchronous reads. It
+// prevents administrative mutation while any request still uses this PC, without
+// making reads from separate owners mutually exclusive.
+std::shared_ptr<void> ComputerManager::trackHostRequest(const QString& uuid)
+{
+    const auto* host = getHost(uuid);
+    if (!host || !host->enabled) return {};
+    const auto physical = host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid;
+    auto marker = m_HostRequests.value(physical).lock();
+    if (!marker) {
+        marker = std::make_shared<int>(0);
+        m_HostRequests[physical] = marker;
+    }
+    return marker;
+}
+
+std::pair<int, QJsonObject> ComputerManager::setHostEnabled(const QString& uuid, bool enabled)
+{
+    auto* host = getHost(uuid);
+    if (!host) return {404, {{"message", "Host not found"}}};
+    if (host->isNativeEngine())
+        return {403, {{"message", "Native capture belongs to the local owner"}}};
+    if (hostOperationBusy(uuid))
+        return {409, {{"message", "Stop the active host operation first"}}};
+    if (host->enabled == enabled) return {200, {{"status", "ok"}, {"host", host->toJson()}}};
+    const bool previous = host->enabled;
+    host->enabled = enabled;
+    if (!saveHosts()) {
+        host->enabled = previous;
+        saveHosts(); // Restore Qt's pending settings cache too; never replay a failed grant.
+        return {500, {{"message", "Could not persist host activation"}}};
+    }
+    emit hostsChanged();
+    return {200, {{"status", "ok"}, {"host", host->toJson()}}};
 }
 
 bool ComputerManager::hostOperationBusy(const QString& uuid) const
@@ -1019,7 +1055,7 @@ bool ComputerManager::hostOperationBusy(const QString& uuid) const
     const auto* host = getHost(uuid);
     if (!host) return false;
     const auto physical = host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid;
-    if (m_HostLeases.busy(physical)) return true;
+    if (m_HostLeases.busy(physical) || !m_HostRequests.value(physical).expired()) return true;
     for (const auto* other : m_Hosts) {
         if ((other->physicalUuid.isEmpty() ? other->uuid : other->physicalUuid) == physical &&
             m_SubmitInFlight.contains(other->uuid))

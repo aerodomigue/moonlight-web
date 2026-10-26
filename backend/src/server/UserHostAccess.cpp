@@ -31,13 +31,13 @@ void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManage
                 return HttpResponse::error(
                     403, "Invitations are currently restricted to the local owner");
             const auto* primary = computers.getHost(pool.at(0).hostUuid);
-            if (primary && primary->ownerId != req.userId)
+            if (primary && (!primary->enabled || primary->ownerId != req.userId))
                 return HttpResponse::error(403, "Not authorised for this sharing board");
             const auto body = QJsonDocument::fromJson(req.body).object();
             const QString id = body.value("host_uuid").toString(req.queryParams.value("host"));
             if (!id.isEmpty()) {
                 const auto* host = computers.getHost(id);
-                if (!host || host->ownerId != req.userId)
+                if (!host || !host->enabled || host->ownerId != req.userId)
                     return HttpResponse::error(404, "Host not found");
             }
         }
@@ -51,6 +51,8 @@ void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManage
             const NvComputer* host = computers.getHost(segments[3]);
             if (!host || !UserAccess::owns(req.userId, host->ownerId))
                 return HttpResponse::error(404, "Host not found");
+            if (!host->enabled)
+                return HttpResponse::error(403, "Host disabled by an administrator");
             if (req.method == QLatin1String("DELETE") && computers.hostOperationBusy(host->uuid))
                 return HttpResponse::error(
                     409, "Stop the active host operation before deleting this registration");
@@ -103,6 +105,10 @@ void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManage
                                                    "This standby slot belongs to another session");
                 }
             }
+            if (!(req.method == QLatin1String("DELETE") && segments.size() == 4))
+                req.authorizationLease =
+                    std::make_shared<std::pair<std::shared_ptr<void>, std::shared_ptr<void>>>(
+                        req.authorizationLease, computers.trackHostRequest(host->uuid));
         }
         const QString device = req.queryParams.value("client_uniqueid");
         if (!device.isEmpty())
@@ -118,13 +124,15 @@ void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManage
         return std::nullopt;
     });
 
-    server.setOwnerSlotAuthorizer([&auth, &pool](const HttpRequest& req, int slot) {
+    server.setOwnerSlotAuthorizer([&auth, &pool, &computers](const HttpRequest& req, int slot) {
         const QString token = HttpServer::sessionTokenFromRequest(req);
         if (slot < 0) // /ws/control drives the administration UI, not a stream.
             return localPeer(req) || auth.isHostSession(token) || auth.isAdminSession(token) ||
                    auth.isSsoAdmin(token);
         if (!pool.isValid(slot)) return false;
         const auto& owned = pool.at(slot);
+        const auto* host = computers.getHost(owned.hostUuid);
+        if (host && !host->enabled) return false;
         if (!owned.sessionToken.isEmpty())
             return auth.validateSession(token) && token == owned.sessionToken;
         // The legacy local-only path may run without a stream worker/session.

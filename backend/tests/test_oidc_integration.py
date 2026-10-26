@@ -648,6 +648,73 @@ class OidcIsolation(unittest.TestCase):
         local_admin.base = self.base
         self.assertTrue(local_admin.request("/api/auth/status")[1]["is_localhost"])
 
+    def test_disabled_host_registration_isolation_and_persistence(self):
+        alice = self.start()
+        alice_id = self.login(alice)["user"]["id"]
+        bob = Browser(self.base)
+        bob_id = self.login(bob, "bob-sub")["user"]["id"]
+        admin, headers = self.administrator()
+        address = "127.0.0.1:" + str(self.pc.server_port)
+        source = alice.request("/api/hosts/manual", {"address": address})[1]["hosts"][0]["uuid"]
+        api = "/api/admin/hosts/" + source
+        self.assertEqual(alice.request(api + "/enabled", {"enabled": False})[0], 403)
+        self.assertEqual(admin.request(api + "/enabled", {"enabled": False})[0], 403)
+        for bad in (None, "false", 0, [], {}):
+            self.assertEqual(admin.request(api + "/enabled", {"enabled": bad}, extra_headers=headers)[0], 400)
+        self.assertEqual(admin.request(api + "/enabled", {"enabled": False}, extra_headers=headers)[0], 200)
+        self.assertFalse(alice.request("/api/hosts")[1]["hosts"][0]["enabled"])
+        # Every functional route is guarded, including cached resources and deletion.
+        for method, suffix, body in [("GET", "/apps", None), ("GET", "/appasset?appid=1", None),
+                                    ("GET", "/backend", None), ("POST", "/start", {"appId": 1}),
+                                    ("POST", "/resume", {}), ("POST", "/stop-session", {}),
+                                    ("POST", "/wol", {}), ("POST", "/pair/start", {}),
+                                    ("POST", "/pair", {}), ("POST", "/restart", {}),
+                                    ("DELETE", "", None)]:
+            self.assertEqual(alice.request("/api/hosts/" + source + suffix, body, method=method)[0], 403, suffix)
+        alice.request("/api/hosts/manual", {"address": address})
+        alice.request("/api/hosts/scan", {})
+        self.assertFalse(alice.request("/api/hosts")[1]["hosts"][0]["enabled"])
+        # Clones inherit disabled state; enabling a copy never enables its source.
+        code, copied, _ = admin.request(api + "/duplicate", {"user_id": bob_id}, extra_headers=headers)
+        self.assertEqual(code, 200)
+        clone = copied["host"]["uuid"]
+        self.assertFalse(copied["host"]["enabled"])
+        self.assertEqual(admin.request(api + "/duplicate", {"user_id": bob_id}, extra_headers=headers)[0], 409)
+        self.assertEqual(admin.request("/api/admin/hosts/" + clone + "/enabled", {"enabled": True}, extra_headers=headers)[0], 200)
+        self.assertTrue(bob.request("/api/hosts")[1]["hosts"][0]["enabled"])
+        self.assertFalse(alice.request("/api/hosts")[1]["hosts"][0]["enabled"])
+        self.start(); alice.base = self.base; bob.base = self.base
+        self.login(alice); self.login(bob, "bob-sub")
+        admin, headers = self.administrator()
+        self.assertFalse(alice.request("/api/hosts")[1]["hosts"][0]["enabled"])
+        self.assertTrue(bob.request("/api/hosts")[1]["hosts"][0]["enabled"])
+        moved = admin.request(api + "/transfer", {"user_id": "local-owner"}, extra_headers=headers)
+        self.assertEqual(moved[0], 200)
+        self.assertFalse(moved[1]["host"]["enabled"])
+        self.assertEqual(alice.request("/api/hosts")[1]["hosts"], [])
+        self.assertEqual(admin.request("/api/admin/hosts/" + moved[1]["host"]["uuid"], method="DELETE", extra_headers=headers)[0], 200)
+        self.assertEqual(bob.request("/api/hosts")[1]["hosts"][0]["uuid"], clone)
+
+    def test_host_activation_storage_failure_restores_memory(self):
+        alice = self.start()
+        self.login(alice)
+        admin, headers = self.administrator()
+        address = "127.0.0.1:" + str(self.pc.server_port)
+        source = alice.request("/api/hosts/manual", {"address": address})[1]["hosts"][0]["uuid"]
+        api = "/api/admin/hosts/" + source + "/enabled"
+        self.assertEqual(admin.request(api, {"enabled": False}, extra_headers=headers)[0], 200)
+        config = self.state / "config/MoonlightWeb/MoonlightWeb.conf"
+        mode = config.stat().st_mode & 0o777
+        directory_mode = config.parent.stat().st_mode & 0o777
+        config.chmod(0o400); config.parent.chmod(0o500)
+        try:
+            self.assertEqual(admin.request(api, {"enabled": True}, extra_headers=headers)[0], 500)
+            self.assertFalse(alice.request("/api/hosts")[1]["hosts"][0]["enabled"])
+        finally:
+            config.parent.chmod(directory_mode); config.chmod(mode)
+        self.start(); alice.base = self.base; self.login(alice)
+        self.assertFalse(alice.request("/api/hosts")[1]["hosts"][0]["enabled"])
+
     def test_disabled_local_admin_keeps_its_assigned_role(self):
         self.start()
         admin, headers = self.administrator()
@@ -1126,6 +1193,10 @@ class OidcIsolation(unittest.TestCase):
                 self.assertEqual(alice.request("/api/hosts/" + alice_pc, method="DELETE")[0], 409)
                 for operation in ("transfer", "duplicate"):
                     self.assertEqual(admin.request("/api/admin/hosts/" + alice_pc + "/" + operation, {"user_id": "local-owner"}, extra_headers=headers)[0], 409)
+                self.assertEqual(admin.request("/api/admin/hosts/" + alice_pc + "/enabled", {"enabled": False}, extra_headers=headers)[0], 409)
+                row = next(h for h in admin.request("/api/admin/hosts")[1]["hosts"] if h["uuid"] == alice_pc)
+                self.assertTrue(row["busy"])
+                self.assertEqual(row["blocked_reason"], "busy")
                 self.assertEqual(admin.request("/api/admin/hosts/" + alice_pc, method="DELETE", extra_headers=headers)[0], 409)
                 self.assertEqual(admin.request("/api/admin/users/" + alice_user, method="DELETE", extra_headers=headers)[0], 409)
                 self.issuer_server.cancel_gate.set()

@@ -776,7 +776,8 @@ export class HostListView {
     _refreshDeviceRunning() {
         const now = Date.now();
         for (const host of this.hosts) {
-            if (!host.runningAppPerDevice || host.state !== 'online') continue;
+            if (host.enabled === false || !host.runningAppPerDevice || host.state !== 'online')
+                continue;
             const at = this._deviceRunningAt.get(host.uuid);
             if (at !== undefined && now - at < HostListView.DEVICE_RUNNING_MS) continue;
             this._deviceRunningAt.set(host.uuid, now);
@@ -812,6 +813,7 @@ export class HostListView {
                 h.state,
                 h.reachable,
                 h.pairState,
+                h.enabled,
                 h.name,
                 h.customName,
                 h.port,
@@ -830,6 +832,7 @@ export class HostListView {
     _cardFingerprint(host) {
         return [
             host.uuid,
+            host.enabled,
             host.state,
             host.reachable,
             host.pairState,
@@ -971,7 +974,7 @@ export class HostListView {
                 //
                 // The stale card keeps its old fingerprint, so it is rebuilt by
                 // the render that follows the menu closing.
-                if (card.querySelector('.host-menu:not([hidden])')) {
+                if (host.enabled !== false && card.querySelector('.host-menu:not([hidden])')) {
                     this._staleCards = true;
                 } else {
                     const tmp = document.createElement('div');
@@ -996,6 +999,8 @@ export class HostListView {
     }
 
     renderCard(host) {
+        if (host.enabled === false)
+            return `<div class="host-card disabled" data-uuid="${host.uuid}"><div class="host-card-head"><div class="host-card-info"><div class="host-name">${this.esc(host.displayName)}</div></div><span class="status-badge">${t('adminManagement.disabled')}</span></div><div class="host-card-body"><p>${t('adminManagement.disabledByAdmin')}</p></div></div>`;
         const cls = host.statusClass;
         // Booth mode leaves the menu one entry, Stop session, and hides it
         // while there is no app to stop.

@@ -45,6 +45,7 @@ public:
         CS_OFFLINE
     };
 
+    bool enabled = true; // Administrative access to this private registration.
     QString ownerId = QStringLiteral("local-owner");
     QString physicalUuid; // Original GameStream UUID; uuid is the private registration ID.
     QString identitySeat; // Empty only for the legacy local-owner certificate.

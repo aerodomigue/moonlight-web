@@ -117,6 +117,7 @@ NvComputer::NvComputer(QSettings& settings)
     name = settings.value("hostname").toString();
     customName = settings.value("customName").toString();
     uuid = settings.value("uuid").toString();
+    enabled = settings.value("enabled", true).toBool();
     ownerId = settings.value("ownerId", QStringLiteral("local-owner")).toString();
     physicalUuid = settings.value("physicalUuid", uuid).toString();
     identitySeat = settings.value("identitySeat").toString();
@@ -160,6 +161,7 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("hostname", name);
     settings.setValue("customName", customName);
     settings.setValue("uuid", uuid);
+    settings.setValue("enabled", enabled);
     settings.setValue("ownerId", ownerId);
     settings.setValue("physicalUuid", physicalUuid.isEmpty() ? uuid : physicalUuid);
     settings.setValue("identitySeat", identitySeat);
@@ -186,12 +188,12 @@ void NvComputer::serialize(QSettings& settings) const
 
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
 {
-    return name == that.name && customName == that.customName && uuid == that.uuid &&
-           wakeAddress == that.wakeAddress && wakeMacOverride == that.wakeMacOverride &&
-           macAddress == that.macAddress && activeAddress == that.activeAddress &&
-           localAddress == that.localAddress && remoteAddress == that.remoteAddress &&
-           manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
-           activeHttpsPort == that.activeHttpsPort;
+    return enabled == that.enabled && name == that.name && customName == that.customName &&
+           uuid == that.uuid && wakeAddress == that.wakeAddress &&
+           wakeMacOverride == that.wakeMacOverride && macAddress == that.macAddress &&
+           activeAddress == that.activeAddress && localAddress == that.localAddress &&
+           remoteAddress == that.remoteAddress && manualAddress == that.manualAddress &&
+           serverCertPem == that.serverCertPem && activeHttpsPort == that.activeHttpsPort;
 }
 
 // --- Merge polling data -----------------------------------------------------
@@ -397,6 +399,7 @@ QJsonObject NvComputer::toJson() const
 {
     QJsonObject obj;
     obj["uuid"] = uuid;
+    obj["enabled"] = enabled;
     obj["name"] = name;
     // The alias, sent alongside the reported name rather than instead of it: the
     // rename dialog needs to show what the host calls itself when the field is
