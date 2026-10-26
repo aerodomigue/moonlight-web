@@ -282,6 +282,12 @@ export class BackendClient {
     static async getHosts() {
         return this.get('/api/hosts');
     }
+    static async getDiscovery() {
+        return this.get('/api/hosts/discovery');
+    }
+    static async setDiscovery(enabled) {
+        return this.post('/api/hosts/discovery', { enabled });
+    }
     static async scanHosts() {
         return this.post('/api/hosts/scan');
     }

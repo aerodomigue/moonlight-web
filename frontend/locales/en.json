@@ -143,7 +143,9 @@
         "stopSessionWorking": "Stopping...",
         "stopSessionConfirm": "Stop the running app on this host? Anyone streaming from it, including invited players, will be disconnected.",
         "backendSetup": "Set up backend…",
-        "backendManage": "Backend: {{type}}"
+        "backendManage": "Backend: {{type}}",
+        "discoveryOn": "Automatic discovery: on",
+        "discoveryOff": "Automatic discovery: off"
     },
     "selfStream": {
         "title": "Streaming your own PC?",

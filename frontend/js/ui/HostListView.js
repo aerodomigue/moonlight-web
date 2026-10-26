@@ -152,6 +152,9 @@ export class HostListView {
         this._updateWarmupTries = 0;
         this._updateInfo = null;
         this._hostsLoaded = false;
+        this._discoveryEnabled = null;
+        this._discoveryBusy = false;
+        this._discoveryRevision = 0;
         this.renderShell();
         // An update under way (started here or from Settings) owns the banner.
         // After the shell: the banner it paints into is part of it.
@@ -176,6 +179,10 @@ export class HostListView {
 
         // Button delegation — bound once, cleaned up in destroy()
         this._clickHandler = (e) => {
+            if (e.target.closest('#btn-discovery')) {
+                this._toggleDiscovery();
+                return;
+            }
             if (this._destroyed) return;
 
             // ── Update banner: apply on the host ───────────────────────────
@@ -658,17 +665,52 @@ export class HostListView {
         banner.hidden = false;
     }
 
+    _paintDiscovery() {
+        const button = this.container.querySelector('#btn-discovery');
+        if (!button) return;
+        button.disabled = this._discoveryBusy || this._discoveryEnabled === null;
+        button.setAttribute('aria-pressed', String(this._discoveryEnabled === true));
+        button.textContent = t(this._discoveryEnabled ? 'hosts.discoveryOn' : 'hosts.discoveryOff');
+    }
+
     async _autoScan() {
-        // A booth offers the hosts it was given; discovery would add others.
-        if (!this._active || BackendClient.adminLocked) return;
+        if (!this._active || this._destroyed || BackendClient.adminLocked || this._discoveryBusy)
+            return;
+        this._discoveryBusy = true;
+        const revision = this._discoveryRevision;
+        this._paintDiscovery();
         try {
-            await BackendClient.scanHosts();
-        } catch (err) {
-            // Silent — scan is best-effort, errors are expected
+            const state = await BackendClient.getDiscovery();
+            if (!this._active || this._destroyed || revision !== this._discoveryRevision) return;
+            this._discoveryEnabled = state.enabled === true;
+            if (this._discoveryEnabled) await BackendClient.scanHosts();
+        } catch {
+            // No scan on an unavailable preference; a later focus retries.
+        } finally {
+            this._discoveryBusy = false;
+            if (!this._destroyed) this._paintDiscovery();
+        }
+    }
+
+    async _toggleDiscovery() {
+        if (this._discoveryBusy || this._discoveryEnabled === null || !this._active) return;
+        this._discoveryBusy = true;
+        this._paintDiscovery();
+        try {
+            const state = await BackendClient.setDiscovery(!this._discoveryEnabled);
+            if (this._destroyed || !this._active) return;
+            this._discoveryEnabled = state.enabled === true;
+            if (this._discoveryEnabled) await BackendClient.scanHosts();
+        } catch (error) {
+            if (!this._destroyed) Toast.error(error.message);
+        } finally {
+            this._discoveryBusy = false;
+            if (!this._destroyed) this._paintDiscovery();
         }
     }
 
     stop() {
+        ++this._discoveryRevision;
         this._active = false;
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
@@ -863,7 +905,7 @@ export class HostListView {
                         ${
                             BackendClient.adminLocked
                                 ? ''
-                                : `<button class="btn btn-neutral" id="btn-manual">${t('hosts.addManually')}</button>`
+                                : `<button class="btn btn-neutral" id="btn-discovery" aria-pressed="false" disabled>${t('hosts.discoveryOff')}</button><button class="btn btn-neutral" id="btn-manual">${t('hosts.addManually')}</button>`
                         }
                     </div>
                 </div>

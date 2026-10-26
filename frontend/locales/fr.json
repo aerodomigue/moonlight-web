@@ -143,7 +143,9 @@
         "stopSessionWorking": "Arrêt...",
         "stopSessionConfirm": "Arrêter l'application en cours sur cet hôte ? Toute personne qui streame dessus, joueurs invités compris, sera déconnectée.",
         "backendSetup": "Configurer le backend…",
-        "backendManage": "Backend : {{type}}"
+        "backendManage": "Backend : {{type}}",
+        "discoveryOn": "Découverte automatique : activée",
+        "discoveryOff": "Découverte automatique : désactivée"
     },
     "selfStream": {
         "title": "Streamer ton propre PC ?",

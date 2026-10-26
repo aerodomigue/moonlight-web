@@ -24,6 +24,13 @@ void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManage
 {
     computers.setOwnerActivePredicate(
         [&auth](const QString& id) { return auth.users().active(id); });
+    computers.setDiscoveryPredicate([&auth, &computers](const QString& id) {
+        const auto user = auth.users().get(id);
+        if (user.discoveryEnabled.has_value()) return *user.discoveryEnabled;
+        for (const auto& value : computers.getHostsJson(id))
+            if (value.toObject().value("enabled").toBool(true)) return false;
+        return true;
+    });
     server.setRequestAuthorizer([&computers,
                                  &pool](HttpRequest& req) -> std::optional<HttpResponse> {
         if (req.path.startsWith("/api/share/") && !req.path.startsWith("/api/share/player/")) {
@@ -47,7 +54,9 @@ void installUserHostAccess(HttpServer& server, AuthManager& auth, ComputerManage
         const bool createOrScan = req.method == QLatin1String("POST") &&
                                   (req.path == QLatin1String("/api/hosts/manual") ||
                                    req.path == QLatin1String("/api/hosts/scan"));
-        if (segments.size() >= 4 && !createOrScan) {
+        const bool discovery = req.path == QLatin1String("/api/hosts/discovery") &&
+                               (req.method == "GET" || req.method == "POST");
+        if (segments.size() >= 4 && !createOrScan && !discovery) {
             const NvComputer* host = computers.getHost(segments[3]);
             if (!host || !UserAccess::owns(req.userId, host->ownerId))
                 return HttpResponse::error(404, "Host not found");

@@ -53,7 +53,7 @@ UserStore::UserStore(QString path)
     if (error.error != QJsonParseError::NoError || !doc.isObject() || !doc["users"].isArray())
         throw std::runtime_error("Invalid user store; refusing to discard accounts");
     const int version = doc["version"].toInt(1);
-    if (version != 1 && version != 2 && version != 3)
+    if (version != 1 && version != 2 && version != 3 && version != 4)
         throw std::runtime_error("Unsupported user store version");
     QMap<QString, bool> seen;
     for (const auto& value : doc["users"].toArray()) {
@@ -79,6 +79,11 @@ UserStore::UserStore(QString path)
         if (u.role != "admin" && u.role != "user") throw std::runtime_error("Invalid user role");
         u.enabled = o.value("enabled").toBool(true);
         u.deleting = o.value("deleting").toBool(false);
+        if (o.contains("discovery_enabled")) {
+            if (!o["discovery_enabled"].isBool())
+                throw std::runtime_error("Invalid discovery preference");
+            u.discoveryEnabled = o["discovery_enabled"].toBool();
+        }
         u.managedRole = o.value("managed_role").toBool(false);
         u.managedName = o.value("managed_name").toBool(false);
         u.verifiedConfig = o.value("verified_config").toString();
@@ -177,6 +182,7 @@ void UserStore::commit(const QMap<QString, UserAccount>& users)
         QJsonArray entries;
         for (const auto& u : users) {
             auto o = u.adminJson();
+            if (u.discoveryEnabled.has_value()) o["discovery_enabled"] = *u.discoveryEnabled;
             o["managed_role"] = u.managedRole;
             o["managed_name"] = u.managedName;
             o["verified_config"] = u.verifiedConfig;
@@ -186,7 +192,7 @@ void UserStore::commit(const QMap<QString, UserAccount>& users)
         QSaveFile file(m_path);
         if (!file.open(QIODevice::WriteOnly)) throw std::runtime_error("Cannot write user store");
         file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-        const auto bytes = QJsonDocument(QJsonObject{{"version", 3}, {"users", entries}}).toJson();
+        const auto bytes = QJsonDocument(QJsonObject{{"version", 4}, {"users", entries}}).toJson();
         if (file.write(bytes) != bytes.size() || !file.commit())
             throw std::runtime_error("Cannot commit user store");
     }

@@ -141,6 +141,18 @@ void run_user_identity_tests()
     CHECK_EQ(restored.get(alice.id).subject, QString("alice-sub"));
     CHECK_EQ(restored.get(bob.id).name, QString("Bob"));
     CHECK(!restored.contains("invented-account"));
+    SECTION("Per-account discovery preference survives restart and identity updates");
+    CHECK(!restored.get(alice.id).discoveryEnabled.has_value());
+    auto preference = store.get(alice.id);
+    preference.discoveryEnabled = false;
+    store.update(preference);
+    CHECK(store.upsert(config.issuer, "alice-sub", "Alice renamed").discoveryEnabled == false);
+    CHECK(UserStore(path).get(alice.id).discoveryEnabled == false);
+    CHECK(!UserStore(path).get(bob.id).discoveryEnabled.has_value());
+    preference.discoveryEnabled = true;
+    store.update(preference);
+    CHECK(UserStore(path).get(alice.id).discoveryEnabled == true);
+
     CHECK(UserAccess::owns(alice.id, alice.id));
     CHECK(!UserAccess::owns(alice.id, bob.id));
     CHECK(!UserAccess::owns({}, {}));
@@ -301,6 +313,17 @@ void run_user_identity_tests()
     }
     CHECK(failedSave);
     CHECK_EQ(failing.all().size(), 1);
+    auto unsavedPreference = failing.get(UserStore::localId());
+    unsavedPreference.discoveryEnabled = false;
+    failedSave = false;
+    try {
+        failing.update(unsavedPreference);
+    } catch (const std::exception&) {
+        failedSave = true;
+    }
+    CHECK(failedSave);
+    CHECK(!failing.get(UserStore::localId()).discoveryEnabled.has_value());
+
     failedSave = false;
     try {
         saved.save(blockedPath + "/auth-config.json");
