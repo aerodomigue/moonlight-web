@@ -478,7 +478,7 @@ body.streaming-active::after {
     color: rgba(255, 255, 255, 0.92);
 }
 
-/* ── Streaming stats overlay (top-LEFT, discreet glass card) ───────── */
+/* ── Streaming stats overlay (top-LEFT, high-contrast card) ───────── */
 .stream-stats-overlay {
     position: fixed;
     /* Honor the safe-area insets so the card never sits under the iOS notch /
@@ -495,10 +495,9 @@ body.streaming-active::after {
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
-    background: rgba(8, 8, 14, 0.45);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    /* Keep text readable over bright moving content without a backdrop blur. */
+    background: rgba(8, 10, 16, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 10px;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
     /* Extra right padding reserves room for the absolute × close button so it
@@ -507,7 +506,7 @@ body.streaming-active::after {
     min-width: 168px;
     font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
     line-height: 1.45;
-    color: rgba(255, 255, 255, 0.7);
+    color: #fff;
     transition: opacity 0.2s ease;
 }
 
@@ -619,7 +618,11 @@ body.streaming-active::after {
         color 0.15s ease,
         background 0.15s ease;
 }
-.overlay-close-btn:hover {
+.stream-stats-overlay .overlay-close-btn {
+    color: #c1c9d4;
+}
+.overlay-close-btn:hover,
+.stream-stats-overlay .overlay-close-btn:hover {
     color: #fff;
     background: rgba(255, 255, 255, 0.12);
 }
@@ -677,7 +680,7 @@ body.streaming-active::after {
     justify-content: space-between;
     gap: 14px;
     font-size: 10.5px;
-    color: rgba(255, 255, 255, 0.5);
+    color: #dce4ef;
     white-space: nowrap;
 }
 
@@ -685,11 +688,11 @@ body.streaming-active::after {
     font-size: 11.5px;
     margin-top: 3px;
     padding-top: 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .stats-label {
-    color: rgba(255, 255, 255, 0.32);
+    color: #c1c9d4;
     text-transform: uppercase;
     font-size: 0.88em;
     letter-spacing: 0.4px;
@@ -697,14 +700,14 @@ body.streaming-active::after {
 
 .stats-value {
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.68);
+    color: #fff;
     font-variant-numeric: tabular-nums;
 }
 
 /* The dotted underline is the only hint that a breakdown is one click (or one
    tap) away — no permanent affordance cluttering the card. */
 .stats-latency {
-    color: #f0c040;
+    color: #ffd76a;
     font-weight: 600;
     border-bottom: 1px dotted rgba(240, 192, 64, 0.4);
 }
@@ -721,7 +724,7 @@ body.streaming-active::after {
     row-gap: 1px;
     margin-top: 3px;
     padding-top: 3px;
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
     font-size: 10px;
     white-space: nowrap;
 }
@@ -734,7 +737,7 @@ body.streaming-active::after {
 
 .stats-leg-row .stats-value {
     text-align: right;
-    color: rgba(240, 192, 64, 0.75);
+    color: #ffd76a;
 }
 
 /* Pipeline observations, revealed with the latency breakdown. One dense
@@ -743,11 +746,11 @@ body.streaming-active::after {
 .stats-diag {
     margin-top: 3px;
     padding-top: 3px;
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
     max-width: 260px;
     font-size: 9px;
     line-height: 1.35;
-    color: rgba(255, 255, 255, 0.55);
+    color: #dce4ef;
     white-space: normal;
     word-break: break-word;
 }

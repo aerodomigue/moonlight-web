@@ -96,15 +96,15 @@ const C_FPS = '#5ad2f0';
 const C_BITRATE = '#b58bff';
 const C_LOSS = '#ff6b6b';
 /** The "arrived late", not "never arrived", series: neutral, not a fifth hue. */
-const C_LOSS_SOFT = 'rgba(255,255,255,0.45)';
+const C_LOSS_SOFT = '#dce4ef';
 
-const INK_LABEL = 'rgba(255,255,255,0.32)';
-const INK_UNIT = 'rgba(255,255,255,0.22)';
-const INK_AXIS = 'rgba(255,255,255,0.10)';
-const INK_CEIL = 'rgba(255,255,255,0.26)';
+const INK_LABEL = '#c1c9d4';
+const INK_UNIT = '#adb8c8';
+const INK_AXIS = 'rgba(255,255,255,0.24)';
+const INK_CEIL = '#adb8c8';
 /** The mean line, its figure, and the band under it down to zero. */
-const INK_MEAN = 'rgba(255,255,255,0.16)';
-const INK_MEAN_TEXT = 'rgba(255,255,255,0.5)';
+const INK_MEAN = 'rgba(255,255,255,0.3)';
+const INK_MEAN_TEXT = '#c1c9d4';
 const INK_BAND = 'rgba(255,255,255,0.035)';
 /** Card surface, behind every figure written over a curve. */
 const HALO = 'rgba(8,8,14,0.7)';
@@ -540,7 +540,7 @@ export class StatsGraph {
         // is a warning: a loss lane sitting at 0.00 must not be written in red,
         // or the card cries about nothing for the whole session.
         const quiet = lane.quiet && lane.quiet();
-        ctx.fillStyle = quiet ? 'rgba(255,255,255,0.55)' : lane.series[0].color;
+        ctx.fillStyle = quiet ? '#dce4ef' : lane.series[0].color;
         ctx.font = `10px ${FONT_STACK}`;
         ctx.fillText(lane.value(), w, y + 9);
 
