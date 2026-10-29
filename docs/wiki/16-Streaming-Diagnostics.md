@@ -5,14 +5,18 @@ les images sont affichées. Le rendu vidéo distingue maintenant les images acce
 et abandonnées ; les paramètres manuels ne sont plus remplacés par l'adaptation à
 la congestion. Les paramètres laissés en Auto restent adaptatifs.
 
-Pour une mesure temporaire, ouvrir la console du navigateur et exécuter :
+Pour une mesure temporaire, terminer la connexion PIN/SSO, revenir au dashboard,
+puis ouvrir la console du navigateur et exécuter :
 
 ```js
 localStorage.setItem('mw_perf_diag', '1');
 ```
 
-Le résultat `undefined` est normal. Recharger la page, relancer le flux, conserver
-les statistiques activées pour les lignes `[perf]`, puis afficher une scène animée.
+Le résultat `undefined` est normal. Lancer ensuite le flux **sans recharger la page** :
+le réglage est lu à sa création. Un changement de compte peut effacer ce réglage de
+diagnostic. Pour les lignes `[perf]` historiques, activer les statistiques et garder
+leur panneau ouvert ; le nouvel export fonctionne aussi avec ce panneau masqué.
+Afficher ensuite une scène animée.
 Après dix secondes de chauffe et soixante secondes de mesure, **avant de quitter
 le flux**, copier le diagnostic dans Chromium :
 
