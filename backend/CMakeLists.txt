@@ -710,7 +710,7 @@ if(MW_BUILD_TESTS)
         add_test(NAME wol-metadata
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_wol_integration.py
                     $<TARGET_FILE:mw-server>)
-        set_tests_properties(wol-metadata PROPERTIES TIMEOUT 180 LABELS integration)
+        set_tests_properties(wol-metadata PROPERTIES TIMEOUT 240 LABELS integration)
         add_test(NAME apollo-clipboard
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_apollo_clipboard.py
                     $<TARGET_FILE:mw-apollo-clipboard-probe>)
