@@ -157,4 +157,5 @@ private:
     QList<QByteArray> m_PendingVideoFrames;
     QList<QByteArray> m_PendingAudioFrames;
     int m_FrameCount = 0;
+    qint64 m_RelayReceivedFrames = 0;
 };

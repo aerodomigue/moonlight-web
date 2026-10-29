@@ -125,7 +125,7 @@ export class PipelineDiag {
         this._renderPath = '';
         // Cumulative, by cause — deltas are computed by the reader so the
         // display can show a per-second rate without resetting shared state.
-        this._drops = { stale: 0, queueFull: 0, backpressure: 0 };
+        this._drops = { stale: 0, queueFull: 0, backpressure: 0, render: 0 };
         // Recoveries, cumulative too. A collapse that feeds itself — a drop asks
         // for a keyframe, the keyframe flushes or resets the decoder, the
         // decoder restarts late and the queue fills again — reads in the
@@ -192,7 +192,7 @@ export class PipelineDiag {
 
     /**
      * A frame was dropped.
-     * @param {'stale'|'queueFull'|'backpressure'} cause
+     * @param {'stale'|'queueFull'|'backpressure'|'render'} cause
      *   stale        — superseded in the render queue (drop-to-latest)
      *   queueFull    — decoder output arrived with the queue already full
      *   backpressure — never submitted: decoder input queue saturated / no reference
@@ -202,7 +202,7 @@ export class PipelineDiag {
     }
 
     /** Flat snapshot — postMessage-safe (structured clone of plain numbers). */
-    snapshot() {
+    snapshot(includeArrivalTails = false) {
         // Per-frame cost of the render stage: the whole draw latency spread
         // over the draws that were overlapping. This — not the raw wait — is
         // what has to fit inside a frame interval, so it is what the enhancer
@@ -214,6 +214,13 @@ export class PipelineDiag {
             renderServiceMs: drawLatency / concurrency,
             arrivalAvgMs: this._arrival.avg,
             arrivalMaxMs: this._arrival.max,
+            ...(includeArrivalTails
+                ? {
+                      arrivalP50Ms: this._arrival.quantile(0.5),
+                      arrivalP95Ms: this._arrival.quantile(0.95),
+                      arrivalP99Ms: this._arrival.quantile(0.99),
+                  }
+                : {}),
             frameBytesAvg: this._frameBytes.avg,
             frameBytesMax: this._frameBytes.max,
             decodeQueueAvg: this._decodeQueue.avg,
@@ -226,6 +233,7 @@ export class PipelineDiag {
             dropStale: this._drops.stale,
             dropQueueFull: this._drops.queueFull,
             dropBackpressure: this._drops.backpressure,
+            dropRender: this._drops.render,
             recoverIdr: this._recoveries.idr,
             recoverFlush: this._recoveries.flush,
             recoverReset: this._recoveries.reset,

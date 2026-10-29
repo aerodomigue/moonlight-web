@@ -1,3 +1,5 @@
+import { StreamDiagnostics, numericFields } from '../stream/StreamDiagnostics.js';
+import { DRAW_ACCEPTED, drawVideoFrame } from '../stream/renderers/VideoRenderer.js';
 /*
  * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
@@ -1252,7 +1254,8 @@ export class StreamView {
         // Stats
         // networkLost: frames the backend sent that never arrived (frameId gaps).
         // Denominator for the loss rate is the frameId span, tracked separately
-        // because `received` counts only what the pipeline actually got.
+        // because the legacy `received` counter counts decoder submissions.
+        this._completeVideoFrames = 0;
         this.stats = {
             received: 0,
             decoded: 0,
@@ -2172,6 +2175,11 @@ export class StreamView {
         // The video never receives pointer/touch events directly: input is
         // handled by the overlay (touch) and canvas (mouse). This also blocks
         // iOS gestures that would drag or zoom the <video> element.
+        if (this._perfDiag) {
+            this._streamDiagnostics = new StreamDiagnostics(this.videoEl);
+            this._diagnosticHandle = { export: () => this._streamDiagnostics.export() };
+            if (!this._standby) window.mwStreamingDiagnostics = this._diagnosticHandle;
+        }
         this.videoEl.style.touchAction = 'none';
         this.videoEl.style.pointerEvents = 'none';
         if (this._transport === 'webrtc-media') {
@@ -2359,6 +2367,7 @@ export class StreamView {
             this._checkSilentDecoder();
             this._checkRendererCost();
             this._runPipelineGovernors(performance.now());
+            this._sampleStreamDiagnostics();
             this._updateOverlay();
         }, 500);
 
@@ -4044,6 +4053,7 @@ export class StreamView {
         if (this._latencyProbe) window.mwLatency = this._latencyProbe;
         window.mwContentAge = this._contentAge;
         window.mwFrameLog = this._frameLog;
+        if (this._diagnosticHandle) window.mwStreamingDiagnostics = this._diagnosticHandle;
         window.mwAudio = this._audioStats;
         window.mwVsyncGrid = this._vsyncGrid;
         if (this._rootEl) this._rootEl.style.visibility = '';
@@ -4385,10 +4395,12 @@ export class StreamView {
 
     // Swap the visible surface to match the active renderer: the VideoElement
     // (HDR) renderer presents on <video>, every canvas renderer on <canvas>.
-    // Decode + the rAF render loop still run on the main thread (draw() writes
-    // each frame to the renderer's sink), so this only toggles visibility.
+    // A video sink already has compositor pacing. Feed it on decode, without
+    // a second page-rAF gate (which can be slower than the video source).
     _applyRendererSink(r) {
         if (!r) return;
+        this._immediateRender =
+            this._tearing || this._tvSink === true || r.kind === 'video-element';
         if (r.kind === 'video-element') {
             if (this.canvas) this.canvas.style.display = 'none';
             if (this.videoEl) this.videoEl.style.display = 'block';
@@ -4622,10 +4634,11 @@ export class StreamView {
         // detection. Tearing off (default): the rAF loop paces rendering to the
         // display refresh (VSync).
         //
-        // A TV's <video> sink is fed on decode too: the compositor paces the
-        // element on its own vsync, so nothing tears, and the page's rAF —
-        // ~35 a second on a Freebox under a 50 fps stream — no longer caps it.
-        this._immediateRender = this._tearing || this._tvSink === true;
+        // Every <video> sink, including desktop HEVC HDR, is paced by the
+        // compositor. Page rAF may be slower: gating it twice drops frames
+        // before the sink can see them. The serial writer and queue bound stay.
+        this._immediateRender =
+            this._tearing || this._tvSink === true || this._renderer?.kind === 'video-element';
 
         const loop = (now) => {
             if (!this.renderRunning) return;
@@ -4799,9 +4812,16 @@ export class StreamView {
         // A PyroWave frame the player presented itself (B2.1): already on its
         // way to the screen, only the bookkeeping is left.
         const presented = frame.presented === true;
-        const drawn = presented ? Promise.resolve() : this._renderer.draw(frame);
+        const renderer = this._renderer;
+        const drawn = presented ? Promise.resolve(DRAW_ACCEPTED) : drawVideoFrame(renderer, frame);
         drawn
-            .then(() => {
+            .then((result) => {
+                if (!this.renderRunning || this._renderer !== renderer) return;
+                if (!result.accepted) {
+                    this.stats.dropped++;
+                    this._diag.noteDrop('render');
+                    return;
+                }
                 this.stats.rendered++;
                 // Render stage: the GPU/canvas draw itself, same clock.
                 const renderMs = performance.now() - drawStart;
@@ -5319,6 +5339,14 @@ export class StreamView {
                     }
                 });
                 if (!inbound) return;
+                this._mediaDiagnosticCounters = numericFields(
+                    {
+                        received: inbound.framesReceived,
+                        decoded: inbound.framesDecoded,
+                        dropped: inbound.framesDropped,
+                    },
+                    ['received', 'decoded', 'dropped'],
+                );
 
                 const now = performance.now();
                 // Resolution
@@ -6213,6 +6241,53 @@ export class StreamView {
     }
 
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────
+
+    _sampleStreamDiagnostics() {
+        if (
+            !this._streamDiagnostics ||
+            performance.now() - this._streamDiagnostics.lastSample < 1000
+        )
+            return;
+        const latency = {};
+        for (const [name, stats] of Object.entries({
+            decode: this._clientDecodeStats,
+            queue: this._clientQueueStats,
+            render: this._clientRenderStats,
+        })) {
+            if (this._useWorker) {
+                const stage = this._clientStages?.[name];
+                if (stage?.n > 0) latency[name + 'P99'] = stage.p99;
+            } else if (stats?.count) {
+                for (const q of [50, 95, 99]) latency[name + 'P' + q] = stats.percentile(q / 100);
+            }
+        }
+        this._streamDiagnostics.sample(performance.now(), {
+            counters:
+                this._transport === 'webrtc-media'
+                    ? this._mediaDiagnosticCounters
+                    : {
+                          ...this.stats,
+                          received: this._completeVideoFrames,
+                          decodeSubmitted: this.stats.received,
+                      },
+            backend: this._backendPipeline,
+            requestedFps: this._streamFps,
+            width: Number((this._resolution || '').split(/[x×]/)[0]),
+            height: Number((this._resolution || '').split(/[x×]/)[1]),
+            bitrateMbps:
+                this._transport === 'webrtc-media' ? this._mediaBitrateMbps : this._byteRate.mbps(),
+            codec: this.videoCodec,
+            pipeline: this._workerDiag || this._diag.snapshot(true),
+            mainThread: this._mainThreadProbe?.snapshot(),
+            latency,
+            renderer: this._renderer?.kind,
+            transport: this._transport,
+            hdr: this._hdrNegotiated,
+            worker: this._useWorker,
+            visible: document.visibilityState === 'visible',
+            fullscreen: !!document.fullscreenElement,
+        });
+    }
 
     _updateOverlay() {
         // Refresh the capture shortcut reminder on the same 500ms tick so it
@@ -7341,6 +7416,16 @@ export class StreamView {
                 this._browserRttStats.addSample(browserRtt);
             }
         } else if (msg.type === 'stats') {
+            this._backendPipeline = numericFields(msg.pipeline, [
+                'relayReceived',
+                'submitted',
+                'workerDrops',
+                'senderQueueDrops',
+                'bpDrops',
+                'pendingFrames',
+                'bufferedBytes',
+                'sendWaitUs',
+            ]);
             if (msg.hostRttMs !== undefined && msg.hostRttMs > 0) {
                 this._hostRttStats.addSample(msg.hostRttMs);
             }
@@ -7412,7 +7497,13 @@ export class StreamView {
         const now = performance.now();
         if (!this._stepper) {
             if (!this._autostep || this._standby || this._quitting || !this._nativeHost) return;
-            if (!this._immediateRender || this._useWorker || this._framePacer) return;
+            if (
+                !this._immediateRender ||
+                this._useWorker ||
+                this._framePacer ||
+                this._renderer?.kind === 'video-element'
+            )
+                return;
             this._stepper = new CadenceStepper({
                 baseFps: this._streamFps,
                 send: (msg) => {
@@ -7443,6 +7534,9 @@ export class StreamView {
         // Stop processing frames once quit() has started.  The DC may still
         // deliver queued messages during the async HTTP /quit call.
         if (this._quitting) return;
+        // Count complete transport deliveries before stale/reference/decoder
+        // gates. Decoder submissions alone conceal losses at these gates.
+        this._completeVideoFrames++;
         // Terminal decoder failure (e.g. broken AV1 in Safari): the stream
         // keeps delivering frames — drop them silently, the error is displayed.
         if (this._fatalDecodeError) return;
@@ -12443,6 +12537,9 @@ export class StreamView {
         if (this._contentAge.running) this._contentAge.stop();
         if (window.mwContentAge === this._contentAge) window.mwContentAge = null;
         if (window.mwFrameLog === this._frameLog) window.mwFrameLog = null;
+        this._streamDiagnostics?.stop();
+        if (window.mwStreamingDiagnostics === this._diagnosticHandle)
+            window.mwStreamingDiagnostics = null;
         if (window.mwAudio === this._audioStats) window.mwAudio = null;
         this._vsyncGrid.stop();
         if (window.mwVsyncGrid === this._vsyncGrid) window.mwVsyncGrid = null;

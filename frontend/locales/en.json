@@ -794,6 +794,7 @@
         "degradeBitrate": "Unstable network — bitrate reduced to {{mbps}} Mbps",
         "degradeBitrateFps": "Unstable network — bitrate reduced to {{mbps}} Mbps, capped at 60 fps",
         "degradeMedia": "Unstable network — switching to the native video transport",
+        "congestionManual": "Congestion detected — manual quality settings preserved. Check the stream diagnostics.",
         "degradeRestart": "Unstable network — restarting the video transport",
         "degradeResolution": "Unstable network — resolution reduced to {{res}}p",
         "degradeResolutionUpscale": "Unstable network — resolution reduced to {{res}}p, upscaling enabled",

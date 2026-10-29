@@ -54,7 +54,13 @@
  * backlog because draws are serialised by RenderPacing when the renderer asks
  * for it — this one does not, WebGL commands execute in submission order.
  */
-import { VideoRenderer } from './VideoRenderer.js';
+import {
+    VideoRenderer,
+    DRAW_ACCEPTED,
+    DRAW_NOT_READY,
+    DRAW_INVALID,
+    DRAW_FAILED,
+} from './VideoRenderer.js';
 import { nisConfig, nisCoefTexture, readNisSharpness, nisScaleInRange } from './NisTables.js';
 
 // ── Shaders ─────────────────────────────────────────────────────────────────
@@ -962,7 +968,7 @@ export class WebGlRenderer extends VideoRenderer {
             try {
                 frame.close();
             } catch (e) {}
-            return;
+            return DRAW_NOT_READY;
         }
         const drawStart = performance.now();
         let waitMs = 0;
@@ -976,7 +982,7 @@ export class WebGlRenderer extends VideoRenderer {
             try {
                 frame.close();
             } catch (e) {}
-            return;
+            return DRAW_INVALID;
         }
 
         // Canvas backing = frame-aspect rect fitting the output box (same rule
@@ -1029,7 +1035,7 @@ export class WebGlRenderer extends VideoRenderer {
             console.error('[WebGlRenderer] upload failed: ' + e.message);
             frame.close();
             this._noteDraw(drawStart, waitMs, 'failed');
-            return;
+            return DRAW_FAILED;
         }
         frame.close();
 
@@ -1116,6 +1122,7 @@ export class WebGlRenderer extends VideoRenderer {
 
         this._rendered++;
         this._noteDraw(drawStart, waitMs, this._algo + ':' + path);
+        return path === 'failed' ? DRAW_FAILED : DRAW_ACCEPTED;
     }
 
     /** Record the draw split for PipelineDiag (see VideoRenderer.lastDraw). */

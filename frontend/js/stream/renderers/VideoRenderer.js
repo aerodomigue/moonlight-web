@@ -15,6 +15,27 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+/** A submitted image is not proof of physical display by the compositor. */
+export const DRAW_ACCEPTED = Object.freeze({ accepted: true });
+export const DRAW_DISPOSED = Object.freeze({ accepted: false, reason: 'disposed' });
+export const DRAW_NOT_READY = Object.freeze({ accepted: false, reason: 'not-ready' });
+export const DRAW_INVALID = Object.freeze({ accepted: false, reason: 'invalid-frame' });
+export const DRAW_BACKPRESSURE = Object.freeze({ accepted: false, reason: 'backpressure' });
+export const DRAW_FAILED = Object.freeze({ accepted: false, reason: 'failed' });
+
+/** Normalize failures at the ownership boundary, including unexpected GPU errors. */
+export async function drawVideoFrame(renderer, frame) {
+    try {
+        if (renderer) return (await renderer.draw(frame)) || DRAW_FAILED;
+    } catch (e) {
+        // VideoFrame.close() is idempotent, including a renderer that threw after closing it.
+    }
+    try {
+        frame.close();
+    } catch (e) {}
+    return DRAW_FAILED;
+}
+
 /**
  * VideoRenderer — common interface for the video output strategies.
  *
@@ -123,7 +144,7 @@ export class VideoRenderer {
      * promise that resolves when the frame has been consumed. Does NOT touch
      * the caller's stats counters.
      * @param {VideoFrame} frame
-     * @returns {Promise<void>}
+     * @returns {Promise<{accepted: boolean, reason?: string}>}
      */
     async draw(frame) {
         throw new Error('VideoRenderer.draw is abstract');

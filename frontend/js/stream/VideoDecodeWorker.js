@@ -1,3 +1,4 @@
+import { drawVideoFrame } from './renderers/VideoRenderer.js';
 /*
  * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
@@ -968,6 +969,7 @@ function pump() {
     if (decodedPerf !== undefined) addStageSample(S._queueSamples, drawStart - decodedPerf);
     drawFrame(frame)
         .then((ok) => {
+            if (S.stopped) return;
             if (ok) {
                 S.stats.rendered++;
                 addStageSample(S._renderSamples, performance.now() - drawStart);
@@ -976,6 +978,9 @@ function pump() {
                     if (performance.now() < S.probeUntil) post({ type: 'probe-frame' });
                     else S.probeUntil = 0;
                 }
+            } else {
+                S.stats.dropped++;
+                S.diag.noteDrop('render');
             }
         })
         .finally(() => {
@@ -994,8 +999,7 @@ async function drawFrame(frame) {
         } catch (e) {}
         return false;
     }
-    await S.renderer.draw(frame);
-    return true;
+    return (await drawVideoFrame(S.renderer, frame)).accepted;
 }
 
 // ── Main-thread message handling ─────────────────────────────────────────────

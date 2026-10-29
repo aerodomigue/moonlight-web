@@ -135,6 +135,8 @@ interface RTCRtpReceiver {
 }
 
 interface Window {
+    /** Opt-in numeric stream diagnostics, cleared when the stream ends. */
+    mwStreamingDiagnostics?: { export: () => object } | null;
     /** Legacy constructor still required to unlock audio on older iOS Safari. */
     webkitAudioContext?: typeof AudioContext;
     /** Click-to-photon probe of the visible stream (debug builds, Windows host). */
