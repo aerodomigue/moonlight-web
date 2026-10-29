@@ -732,7 +732,7 @@ install(TARGETS mw-server RUNTIME DESTINATION . BUNDLE DESTINATION .)
 # Ship only the served assets: dev tooling (node_modules, tests, lint/TS configs,
 # internal .claude notes) must never reach user machines — and trips codesign on
 # macOS. Top-level dirs are excluded by REGEX so e.g. js/ subtrees stay intact.
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../frontend" DESTINATION .
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../frontend" DESTINATION . COMPONENT Frontend
     REGEX "/frontend/(\\.claude|node_modules|test|scripts|build|coverage)$" EXCLUDE
     PATTERN ".prettierignore" EXCLUDE
     PATTERN ".prettierrc.json" EXCLUDE
@@ -744,6 +744,10 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../frontend" DESTINATION .
     PATTERN "tsconfig.json" EXCLUDE
     PATTERN "vitest.config.js" EXCLUDE
 )
+set(MW_SOURCE_REVISION "" CACHE STRING "Full source revision for builds without .git")
+# Stamp at install time so a frontend-only change cannot retain the binary's SHA.
+configure_file(cmake/InstallFrontendBuild.cmake.in InstallFrontendBuild.cmake @ONLY)
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallFrontendBuild.cmake" COMPONENT Frontend)
 if(WIN32 AND _mw_ssl_prebuilt)
     install(FILES ${_mw_ssl_dlls} DESTINATION .)
 endif()

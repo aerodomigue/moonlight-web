@@ -47,6 +47,7 @@
  */
 // First, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
+import { showBuildIdentity } from './util/buildIdentity.js';
 import { watchAccountChanges } from './util/authAccountState.js';
 import { exclusiveSettings } from './stream/ExclusiveInput.js';
 import { SsoSession, authenticatedFetch } from './api/SsoSession.js';
@@ -1196,21 +1197,12 @@ export const MoonlightApp = {
     // =========================================================================
 
     async _initAsync() {
+        showBuildIdentity(document.querySelector('.app-header .version'));
         try {
             const health = await BackendClient.get('/api/health');
             console.log('[MW] Server:', health);
-            // Reflect the real backend version in the header. The HTML ships an
-            // empty, hidden placeholder so we never flash a stale/wrong number:
-            // the tag stays invisible until the real version arrives here.
-            if (health && health.version) {
-                const versionEl = /** @type {HTMLElement} */ (
-                    document.querySelector('.app-header .version')
-                );
-                if (versionEl) {
-                    versionEl.textContent = 'v' + health.version;
-                    versionEl.hidden = false;
-                }
-            }
+            // The loaded assets carry their own revision, including hot deployments.
+            showBuildIdentity(document.querySelector('.app-header .version'), health?.version);
             // The name this machine calls itself, from the same answer. Written
             // to the register first and drawn from it second, so the menu
             // includes the machine it is being drawn on — and so a machine

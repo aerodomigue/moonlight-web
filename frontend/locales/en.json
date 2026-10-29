@@ -24,7 +24,11 @@
         "instances": "Your machines",
         "instanceSwitch": "Switch to another machine",
         "adminLabel": "Admin",
-        "settingsLabel": "Settings"
+        "settingsLabel": "Settings",
+        "frontendBuild": "UI",
+        "backendBuild": "Server",
+        "buildModified": "modified",
+        "buildUnknown": "development"
     },
     "setup": {
         "title": "Welcome to MoonlightWeb",
