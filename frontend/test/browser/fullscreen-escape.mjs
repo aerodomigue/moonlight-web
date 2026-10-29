@@ -1,5 +1,5 @@
 // Native Escape coverage: run under xvfb-run with MW_NATIVE_KEYBOARD=1,
-// full Chromium and xdotool. The default uses Playwright key events.
+// full Chromium, xdotool and xmessage. The default uses Playwright key events.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -7,6 +7,45 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const { chromium } = await import(process.env.MW_PLAYWRIGHT_MODULE || 'playwright');
 const nativeKeyboard = process.env.MW_NATIVE_KEYBOARD === '1';
+// Headless Chromium may require a fresh gesture for pointer recapture after
+// fullscreen. Validate the documented one-shot M recovery, not a bypass of it.
+async function settleCapture(page, mode, fullscreen) {
+    await page.waitForFunction(
+        ({ mode, fullscreen }) => {
+            const c = window.streamFixture._exclusive;
+            return (
+                !!document.fullscreenElement === fullscreen &&
+                c.enabled &&
+                !c.pointerPending &&
+                !c.keyboardPending &&
+                (c.needsGesture ||
+                    (c.keyboardLocked === (fullscreen && mode !== 'mouse') &&
+                        (document.pointerLockElement === window.streamFixture.inputEl) ===
+                            (mode !== 'keyboard')))
+            );
+        },
+        { mode, fullscreen },
+    );
+    if (await page.evaluate(() => window.streamFixture._exclusive.needsGesture)) {
+        // Chromium can impose a short cooldown after a browser unlock.
+        // No application retry loop: a later, explicit user gesture retries.
+        await page.waitForTimeout(1100);
+        await page.keyboard.press('Control+Alt+Shift+M');
+    }
+    await page.waitForFunction(
+        ({ mode, fullscreen }) => {
+            const c = window.streamFixture._exclusive;
+            return (
+                !!document.fullscreenElement === fullscreen &&
+                c.enabled &&
+                c.keyboardLocked === (fullscreen && mode !== 'mouse') &&
+                (document.pointerLockElement === window.streamFixture.inputEl) ===
+                    (mode !== 'keyboard')
+            );
+        },
+        { mode, fullscreen },
+    );
+}
 let nativeProcess, profile;
 let browser;
 if (nativeKeyboard) {
@@ -16,6 +55,7 @@ if (nativeKeyboard) {
         [
             '--no-sandbox',
             '--no-first-run',
+            '--ignore-certificate-errors',
             '--remote-debugging-port=0',
             '--user-data-dir=' + profile,
             '--lang=fr-FR',
@@ -44,6 +84,12 @@ try {
               locale: 'fr-FR',
               extraHTTPHeaders: { 'X-Forwarded-For': '203.0.113.20', 'X-Forwarded-Proto': 'https' },
           });
+    if (nativeKeyboard) {
+        await context.setExtraHTTPHeaders({
+            'X-Forwarded-For': '203.0.113.20',
+            'X-Forwarded-Proto': 'https',
+        });
+    }
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     const errors = [];
@@ -188,18 +234,7 @@ try {
                 (expected) => !!document.fullscreenElement === expected,
                 fullscreen,
             );
-            await page.waitForFunction(
-                ({ mode, fullscreen }) => {
-                    const capture = window.streamFixture._exclusive;
-                    return (
-                        capture.enabled &&
-                        capture.keyboardLocked === fullscreen &&
-                        (document.pointerLockElement === window.streamFixture.inputEl) ===
-                            (mode === 'both')
-                    );
-                },
-                { mode, fullscreen },
-            );
+            await settleCapture(page, mode, fullscreen);
         }
         if (nativeKeyboard) {
             // A real second browser window changes OS focus without changing the
@@ -340,19 +375,7 @@ try {
         await page.keyboard.press('Control+Alt+Shift+M');
         for (const fullscreen of [true, false, true, false]) {
             await page.keyboard.press('Control+Alt+Shift+X');
-            await page.waitForFunction(
-                ({ mode, fullscreen }) => {
-                    const capture = window.streamFixture._exclusive;
-                    return (
-                        !!document.fullscreenElement === fullscreen &&
-                        capture.enabled &&
-                        capture.keyboardLocked === (fullscreen && mode !== 'mouse') &&
-                        (document.pointerLockElement === window.streamFixture.inputEl) ===
-                            (mode !== 'keyboard')
-                    );
-                },
-                { mode, fullscreen },
-            );
+            await settleCapture(page, mode, fullscreen);
         }
         await page.keyboard.press('Control+Alt+Shift+Z');
         assert.equal(
