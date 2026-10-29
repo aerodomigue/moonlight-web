@@ -303,3 +303,80 @@ describe('exclusive capture shortcuts', () => {
         expect(v.sent).toEqual([]);
     });
 });
+
+describe('Apple Caps Lock transitions', () => {
+    function caps(v, type, state, extra = {}) {
+        v[type](
+            ev('CapsLock', 'CapsLock', {
+                getModifierState: (name) => name === 'CapsLock' && state,
+                ...extra,
+            }),
+        );
+    }
+    it('turns Chrome macOS down-only/on and up-only/off into complete taps', () => {
+        const v = keySink();
+        caps(v, 'handleKeyDown', true);
+        caps(v, 'handleKeyUp', false);
+        caps(v, 'handleKeyDown', true);
+        expect(v.sent.map((m) => [m.type, m.keyCode])).toEqual(
+            Array.from({ length: 3 }, () => [
+                ['keydown', 20],
+                ['keyup', 20],
+            ]).flat(),
+        );
+        expect(v._heldPhysKeys.size).toBe(0);
+    });
+    it('does not toggle twice for paired events or repeated keydown', () => {
+        const v = keySink();
+        caps(v, 'handleKeyDown', true);
+        caps(v, 'handleKeyDown', true, { repeat: true });
+        caps(v, 'handleKeyUp', true);
+        caps(v, 'handleKeyDown', false);
+        caps(v, 'handleKeyUp', false);
+        expect(v.sent.map((m) => m.type)).toEqual(['keydown', 'keyup', 'keydown', 'keyup']);
+        expect(v._heldPhysKeys.size).toBe(0);
+    });
+    it('supports Firefox macOS keydown-only toggles', () => {
+        const v = keySink();
+        caps(v, 'handleKeyDown', true);
+        caps(v, 'handleKeyDown', false);
+        expect(v.sent.map((m) => m.type)).toEqual(['keydown', 'keyup', 'keydown', 'keyup']);
+    });
+    it('syncs the pre-toggle state when the first event is a macOS keyup', () => {
+        const v = keySink({
+            _locksSynced: false,
+            _syncLockState: StreamView.prototype._syncLockState,
+        });
+        caps(v, 'handleKeyUp', false);
+        expect(v.sent[0]).toMatchObject({ type: 'locksync', capsLock: true });
+        expect(v.sent.slice(1).map((m) => m.type)).toEqual(['keydown', 'keyup']);
+    });
+    it('keeps conventional Windows/Linux down/up behavior', () => {
+        const v = keySink({ _appleKeyboard: false });
+        caps(v, 'handleKeyDown', true);
+        expect(v._heldPhysKeys.has('CapsLock')).toBe(true);
+        caps(v, 'handleKeyUp', true);
+        expect(v.sent.map((m) => m.type)).toEqual(['keydown', 'keyup']);
+    });
+    it('accepts a fresh transition after focus loss and an external toggle', () => {
+        const v = keySink();
+        caps(v, 'handleKeyDown', true);
+        StreamView.prototype._releaseAllPhysKeys.call(v);
+        // Local Caps Lock was switched off in another window, then on here.
+        caps(v, 'handleKeyDown', true);
+        expect(v.sent.filter((m) => m.keyCode === 20).map((m) => m.type)).toEqual([
+            'keydown',
+            'keyup',
+            'keydown',
+            'keyup',
+        ]);
+        expect(v._heldPhysKeys.size).toBe(0);
+    });
+    it('never forwards Caps Lock from a local dialog', () => {
+        const v = keySink();
+        const target = document.createElement('input');
+        caps(v, 'handleKeyDown', true, { target });
+        caps(v, 'handleKeyUp', false, { target });
+        expect(v.sent).toEqual([]);
+    });
+});
