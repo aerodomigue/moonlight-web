@@ -51,5 +51,5 @@ private:
     QByteArray m_LastText, m_Assembly;
     QString m_AssemblyId;
     int m_NextChunk = 0, m_TotalChunks = 0;
-    bool m_HaveText = false;
+    bool m_HaveText = false, m_CopyRequested = false;
 };

@@ -133,6 +133,10 @@ permanent arrête les rafraîchissements du menu.
 Avec **Apollo distant**, le presse-papiers texte est bidirectionnel (Unicode,
 multilignes, maximum **256 Kio en UTF-8**). Les permissions Apollo de lecture,
 d’écriture et de clavier s’appliquent séparément au certificat déjà appairé.
+À l’arrivée dans le flux, le presse-papiers du client reste intact : le contenu
+initial d’Apollo sert uniquement de référence, même s’il est vide. Une copie
+explicite sur le PC distant remonte ensuite, y compris si son texte est inchangé.
+Aucun contenu local n’est envoyé automatiquement à l’ouverture : utilisez Coller.
 Le presse-papiers fonctionne sans contrôle supplémentaire dans le flux. Le collage
 attend l’écriture réussie sur Apollo avant d’envoyer le raccourci ; un échec ne colle
 pas l’ancien contenu. La lecture ne s’effectue que pendant un flux au premier
@@ -141,6 +145,11 @@ locale, le texte reste en mémoire et la copie est retentée lors des gestes uti
 existants ; aucune action de secours n’est affichée. Les images/fichiers, les invités
 restreints et Sunshine sans cette extension ne sont pas pris en charge par cet
 adaptateur. Le presse-papiers de la capture locale reste disponible.
+
+Sur macOS, les événements particuliers de Verr. Maj sont convertis en appuis
+complets : une activation ou désactivation ne nécessite pas un second appui.
+La synchronisation initiale reste limitée par GameStream, qui ne fournit pas
+l’état réel de Verr. Maj du PC distant.
 
 Le **Mode exclusif** propose **Souris**, **Clavier** ou **Souris + clavier**,
 avec une activation au démarrage indépendante du choix, dans les paramètres.

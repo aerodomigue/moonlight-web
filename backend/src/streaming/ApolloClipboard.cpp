@@ -169,35 +169,49 @@ void ApolloClipboard::handle(const QJsonObject& msg)
     if (type == "clipboardread") {
         if (!m_Read || m_Reply || (m_LastRead.isValid() && m_LastRead.elapsed() < 1000)) return;
         m_LastRead.restart();
-        request("/actions/clipboard", nullptr, [this](int status, const QByteArray& bytes) {
-            if (status == 200) {
-                QStringDecoder decoder(QStringDecoder::Utf8);
-                decoder(bytes);
-                if (decoder.hasError()) {
-                    m_Read = false;
-                    caps();
-                    error("invalid_text");
-                    return;
-                }
-                if (!m_HaveText || bytes != m_LastText) {
-                    m_HaveText = true;
-                    m_LastText = bytes;
-                    sendText(bytes);
-                }
-            } else if (status == 413) {
-                m_Read = false;
-                caps();
-                error("too_large");
-            } else if (status == 401 || status == 403 || status == 404) {
-                m_Read = false;
-                caps();
-            }
-            // Transient read failures retry only on the next foreground poll.
-        });
+        const bool explicitCopy = m_CopyRequested;
+        m_CopyRequested = false;
+        request("/actions/clipboard", nullptr,
+                [this, explicitCopy](int status, const QByteArray& bytes) {
+                    if (status == 200) {
+                        QStringDecoder decoder(QStringDecoder::Utf8);
+                        decoder(bytes);
+                        if (decoder.hasError()) {
+                            m_Read = false;
+                            caps();
+                            error("invalid_text");
+                            return;
+                        }
+                        // The client owns its clipboard when joining. Observe the
+                        // first passive snapshot without publishing it (even empty).
+                        // An explicit remote copy must still deliver identical text.
+                        const bool publish = explicitCopy || (m_HaveText && bytes != m_LastText);
+                        m_HaveText = true;
+                        m_LastText = bytes;
+                        if (publish && !m_CopyRequested) sendText(bytes);
+                    } else if (status == 413) {
+                        m_Read = false;
+                        caps();
+                        error("too_large");
+                    } else if (status == 401 || status == 403 || status == 404) {
+                        m_Read = false;
+                        caps();
+                    } else if (explicitCopy) {
+                        m_CopyRequested = true;
+                    }
+                    // Transient read failures retry only on the next foreground poll.
+                });
         return;
     }
     if (type == "clipboardcopy") {
-        if (m_Read && m_Keyboard) emit chord(msg["cut"].toBool() ? 0x58 : 0x43);
+        if (m_Read && m_Keyboard) {
+            if (m_Post) {
+                error("busy");
+                return;
+            }
+            m_CopyRequested = true;
+            emit chord(msg["cut"].toBool() ? 0x58 : 0x43);
+        }
         return;
     }
     if (type != "clipboardchunk" || !m_Write) return;
@@ -255,6 +269,7 @@ void ApolloClipboard::handle(const QJsonObject& msg)
         m_Reply->deleteLater();
         m_Reply = nullptr;
     }
+    m_CopyRequested = false;
     m_Post = true;
     request("/actions/clipboard", &text, [this, text](int status, const QByteArray&) {
         m_Post = false;
