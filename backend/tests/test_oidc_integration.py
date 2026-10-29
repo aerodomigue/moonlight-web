@@ -174,6 +174,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                    '<GfeVersion>3.23.0.74</GfeVersion><PairStatus>1</PairStatus>'
                    '<LocalIP>127.0.0.1</LocalIP><mac>02:11:22:33:44:55</mac>'
                    f'<HttpsPort>{self.server.https_port}</HttpsPort></root>')
+            xml = xml.replace("02:11:22:33:44:55", getattr(self.server, "mac", "02:11:22:33:44:55"))
             xml = xml.replace("fixture-physical-pc", getattr(self.server, "physical_uuid", "fixture-physical-pc"))
             self.reply(xml.encode(), content_type="application/xml")
         else:

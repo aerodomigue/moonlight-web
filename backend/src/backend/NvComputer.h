@@ -67,6 +67,7 @@ public:
 
     // REST API output
     QJsonObject toJson() const;
+    QJsonObject wakeConfigJson() const;
 
     // Helpers for address iteration during polling
     QVector<NvAddress> uniqueAddresses() const;
@@ -133,6 +134,7 @@ public:
     NvAddress remoteAddress;
     NvAddress manualAddress;
     QByteArray macAddress;
+    QString macSource; // https (paired), http, arp, or legacy unknown.
     // Optional operator overrides; polling never overwrites these.
     QString wakeAddress;
     QByteArray wakeMacOverride;

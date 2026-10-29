@@ -66,6 +66,8 @@ NvComputer::NvComputer(const QString& serverInfo, const NvAddress& activeAddr)
 
     macAddress = WakeOnLan::parseMac(NvHTTP::getXmlString(serverInfo, "mac"));
 
+    if (!macAddress.isEmpty()) macSource = QStringLiteral("http");
+
     // Pair status
     pairState = pairStateFromString(NvHTTP::getXmlString(serverInfo, "PairStatus"));
 
@@ -122,6 +124,7 @@ NvComputer::NvComputer(QSettings& settings)
     physicalUuid = settings.value("physicalUuid", uuid).toString();
     identitySeat = settings.value("identitySeat").toString();
     macAddress = settings.value("mac").toByteArray();
+    macSource = settings.value("macSource").toString();
     wakeAddress = settings.value("wakeAddress").toString();
     wakeMacOverride = settings.value("wakeMacOverride").toByteArray();
 
@@ -166,6 +169,7 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("physicalUuid", physicalUuid.isEmpty() ? uuid : physicalUuid);
     settings.setValue("identitySeat", identitySeat);
     settings.setValue("mac", macAddress);
+    settings.setValue("macSource", macSource);
     settings.setValue("wakeAddress", wakeAddress);
     settings.setValue("wakeMacOverride", wakeMacOverride);
     settings.setValue("activeaddress", activeAddress.address());
@@ -191,9 +195,10 @@ bool NvComputer::isEqualSerialized(const NvComputer& that) const
     return enabled == that.enabled && name == that.name && customName == that.customName &&
            uuid == that.uuid && wakeAddress == that.wakeAddress &&
            wakeMacOverride == that.wakeMacOverride && macAddress == that.macAddress &&
-           activeAddress == that.activeAddress && localAddress == that.localAddress &&
-           remoteAddress == that.remoteAddress && manualAddress == that.manualAddress &&
-           serverCertPem == that.serverCertPem && activeHttpsPort == that.activeHttpsPort;
+           macSource == that.macSource && activeAddress == that.activeAddress &&
+           localAddress == that.localAddress && remoteAddress == that.remoteAddress &&
+           manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
+           activeHttpsPort == that.activeHttpsPort;
 }
 
 // --- Merge polling data -----------------------------------------------------
@@ -234,8 +239,11 @@ bool NvComputer::update(const NvComputer& that)
     ASSIGN_IF_CHANGED_NONEMPTY(gpuModel)
     ASSIGN_IF_CHANGED_NONEMPTY(name)
 
-    if (WakeOnLan::isValidMac(that.macAddress) && this->macAddress != that.macAddress) {
+    if (WakeOnLan::isValidMac(that.macAddress) &&
+        (macSource != QLatin1String("https") || that.macSource == QLatin1String("https")) &&
+        (macAddress != that.macAddress || macSource != that.macSource)) {
         this->macAddress = that.macAddress;
+        macSource = that.macSource;
         changed = true;
     }
 
@@ -501,4 +509,39 @@ QStringList NvComputer::wakeAddresses() const
 QByteArray NvComputer::wakeMac() const
 {
     return wakeMacOverride.isEmpty() ? macAddress : wakeMacOverride;
+}
+
+// Only the owner-authorized configuration endpoint exposes network metadata.
+QJsonObject NvComputer::wakeConfigJson() const
+{
+    const auto entries = WakeOnLan::lanEntries();
+    QString detectedAddress;
+    for (const auto& address : {localAddress, manualAddress, activeAddress}) {
+        if (!WakeOnLan::isLocalIpv4(address.address())) continue;
+        if (detectedAddress.isEmpty()) detectedAddress = address.address();
+        if (!WakeOnLan::targets({address.address()}, entries).isEmpty()) {
+            detectedAddress = address.address();
+            break;
+        }
+    }
+    const auto detectedMac = QString::fromLatin1(macAddress.toHex(':'));
+    const auto effectiveAddress = wakeAddress.isEmpty() ? detectedAddress : wakeAddress;
+    const auto effectiveMac = QString::fromLatin1(wakeMac().toHex(':'));
+    QString reason = QStringLiteral("available");
+    if (!WakeOnLan::isValidMac(wakeMac()))
+        reason = pairState != PS_PAIRED ? QStringLiteral("pairing_required")
+                                        : QStringLiteral("metadata_unavailable");
+    else if (effectiveAddress.isEmpty())
+        reason = QStringLiteral("metadata_unavailable");
+    else if (WakeOnLan::targets({effectiveAddress}, entries).isEmpty())
+        reason = QStringLiteral("network_unreachable");
+    return {{"mode", wakeAddress.isEmpty() ? "automatic" : "manual"},
+            {"detected", QJsonObject{{"address", detectedAddress},
+                                     {"mac", detectedMac},
+                                     {"source", macSource.isEmpty() ? "unknown" : macSource}}},
+            {"manual", QJsonObject{{"address", wakeAddress},
+                                   {"mac", QString::fromLatin1(wakeMacOverride.toHex(':'))}}},
+            {"effective", QJsonObject{{"address", effectiveAddress}, {"mac", effectiveMac}}},
+            {"available", reason == QLatin1String("available")},
+            {"reason", reason}};
 }

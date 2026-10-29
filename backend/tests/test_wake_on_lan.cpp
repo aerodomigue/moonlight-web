@@ -82,6 +82,26 @@ void run_wake_on_lan_tests()
     restored.update(polled);
     CHECK_EQ(restored.wakeMac(), mac);
 
+    SECTION("Authenticated MAC precedence and persisted provenance");
+    restored.macSource = "https";
+    polled.macAddress = WakeOnLan::parseMac("02:aa:bb:cc:dd:ee");
+    polled.macSource = "http";
+    restored.update(polled);
+    CHECK_EQ(restored.wakeMac(), mac);
+    CHECK_EQ(restored.macSource, QString("https"));
+    restored.serialize(settings);
+    NvComputer verified(settings);
+    CHECK_EQ(verified.macSource, QString("https"));
+    CHECK_EQ(verified.wakeMac(), mac);
+    auto autoConfig = verified.wakeConfigJson();
+    CHECK_EQ(autoConfig["mode"].toString(), QString("automatic"));
+    CHECK_EQ(autoConfig["detected"].toObject()["mac"].toString(), QString("02:11:22:33:44:55"));
+    CHECK_EQ(autoConfig["detected"].toObject()["address"].toString(), QString("10.2.10.20"));
+    CHECK(!autoConfig.contains("serverCert"));
+    verified.localAddress = NvAddress(QStringLiteral("8.8.8.8"), 47989);
+    verified.activeAddress = NvAddress(QStringLiteral("198.51.100.20"), 47989);
+    CHECK(verified.wakeConfigJson()["effective"].toObject()["address"].toString().isEmpty());
+
     host.wakeAddress = "10.2.10.30";
     host.wakeMacOverride = WakeOnLan::parseMac("02:aa:bb:cc:dd:ee");
     host.serialize(settings);

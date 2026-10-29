@@ -75,7 +75,8 @@ public:
     QNetworkReply* getServerInfoAsyncHttps(const NvAddress& address, const QString& uniqueId,
                                            const QByteArray& clientCertPem,
                                            const QByteArray& clientKeyPem,
-                                           quint16 httpsPort = MW_HTTPS_PORT);
+                                           quint16 httpsPort = MW_HTTPS_PORT,
+                                           const QByteArray& pinnedServerCert = {});
 
     // App list (HTTPS, requires client cert, async)
     QNetworkReply* getAppListAsync(const NvAddress& address, quint16 httpsPort,

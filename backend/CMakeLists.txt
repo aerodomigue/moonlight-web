@@ -707,6 +707,10 @@ if(MW_BUILD_TESTS)
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_oidc_integration.py"
                     "$<TARGET_FILE:mw-server>")
         set_tests_properties(oidc-user-isolation PROPERTIES TIMEOUT 90 LABELS integration)
+        add_test(NAME wol-metadata
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_wol_integration.py
+                    $<TARGET_FILE:mw-server>)
+        set_tests_properties(wol-metadata PROPERTIES TIMEOUT 180 LABELS integration)
         add_test(NAME apollo-clipboard
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_apollo_clipboard.py
                     $<TARGET_FILE:mw-apollo-clipboard-probe>)
