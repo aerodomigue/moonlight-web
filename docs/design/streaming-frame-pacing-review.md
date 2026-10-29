@@ -88,6 +88,22 @@ on a 240 Hz display, uneven refresh occupancy alone is not a dropped-frame count
 Do not accept an apparent smoothness gain produced by growing latency or reduced
 quality. The broad review does not close previously tracked unrelated audit findings.
 
+## Real-client observation before deployment
+
+The supplied Mac trace settles near 103 decoded/submitted FPS, with approximately
+9.7 ms between complete frame arrivals, no counted client drops and usually no
+decode queue. A transient event-loop stall is visible, but not a continuous render
+backlog. The video writer's old `draw 0+0` was an unpopulated split: it now measures
+its waits, and a rejected ready promise clears its timeout (two regression tests).
+
+Production negotiated `0x800`, HEVC RExt 4:4:4 10-bit, at 3840×2160/144, HDR on,
+150000 kbit/s configured. Relay logs show no growing worker/sender/SCTP drop count
+after startup. This narrows the sustained deficit to before browser decoding; it
+does **not** establish the host, network or receiver as its cause. A comparison
+with only 4:4:4 disabled was requested to isolate profile cost. The user settings
+are not changed automatically, and native Moonlight must use the same profile for
+a meaningful comparison. The new relay counters will resolve the remaining hop.
+
 ## Validation and delivery
 
 Frontend tests cover refusal/teardown/error paths, counters, bounded/private capture,

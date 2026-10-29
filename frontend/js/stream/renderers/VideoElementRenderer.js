@@ -148,18 +148,26 @@ export class VideoElementRenderer extends VideoRenderer {
             } catch (e) {}
             return DRAW_DISPOSED;
         }
+        const started = performance.now();
+        let waitMs = 0;
         try {
             // Honor backpressure so we never queue ahead of the compositor —
             // for a while: see READY_WAIT_MS.
             if (this._writer.desiredSize !== null && this._writer.desiredSize <= 0) {
                 let timer = null;
-                const ready = await Promise.race([
-                    this._writer.ready.then(() => true),
-                    new Promise((resolve) => {
-                        timer = setTimeout(() => resolve(false), READY_WAIT_MS);
-                    }),
-                ]);
-                clearTimeout(timer);
+                let ready;
+                const waitStarted = performance.now();
+                try {
+                    ready = await Promise.race([
+                        this._writer.ready.then(() => true),
+                        new Promise((resolve) => {
+                            timer = setTimeout(() => resolve(false), READY_WAIT_MS);
+                        }),
+                    ]);
+                } finally {
+                    clearTimeout(timer);
+                    waitMs += performance.now() - waitStarted;
+                }
                 if (!ready || this._disposed || !this._writer) {
                     if (!ready && !this._readyTimedOut) {
                         this._readyTimedOut = true;
@@ -174,7 +182,12 @@ export class VideoElementRenderer extends VideoRenderer {
                 }
             }
             // The generator's writable takes ownership of the frame and closes it.
-            await this._writer.write(frame);
+            const writeStarted = performance.now();
+            try {
+                await this._writer.write(frame);
+            } finally {
+                waitMs += performance.now() - writeStarted;
+            }
             if (this._wrote < 3) {
                 this._wrote++;
                 // Re-arm play() now that a frame is available (some browsers keep
@@ -198,6 +211,10 @@ export class VideoElementRenderer extends VideoRenderer {
                 frame.close();
             } catch (e2) {}
             return DRAW_FAILED;
+        } finally {
+            this.lastDraw.submitMs = Math.max(0, performance.now() - started - waitMs);
+            this.lastDraw.waitMs = waitMs;
+            this.lastDraw.path = 'video-writer';
         }
     }
 

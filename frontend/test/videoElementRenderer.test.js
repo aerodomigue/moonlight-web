@@ -88,6 +88,27 @@ describe('VideoElementRenderer.draw', () => {
 });
 
 describe('failed video writes', () => {
+    it('clears the timeout when the ready promise rejects', async () => {
+        vi.useFakeTimers();
+        const r = renderer({ desiredSize: 0, ready: Promise.reject(new Error('closed')) });
+        expect((await r.draw(frame())).accepted).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+    it('records asynchronous writer wait instead of reporting a zero-cost draw', async () => {
+        const r = renderer();
+        let now = 100;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+        r._writer.write.mockImplementation(async () => {
+            now += 7;
+        });
+        try {
+            expect((await r.draw(frame())).accepted).toBe(true);
+            expect(r.lastDraw.waitMs).toBe(7);
+            expect(r.lastDraw.submitMs).toBe(0);
+        } finally {
+            clock.mockRestore();
+        }
+    });
     it('does not report a rejected write as a submitted image', async () => {
         const r = renderer();
         r._writer.write.mockRejectedValue(new Error('sink failed'));
