@@ -2207,6 +2207,7 @@ export const MoonlightApp = {
         const fpsAuto = !(streamingSettings.stream_fps > 0);
         this._applyResolvedFps(streamingSettings);
         const choice = readResolutionChoice(streamingSettings);
+        this._resolutionAuto = choice.mode === 'auto';
         const size = resolveStreamSize(
             {
                 mode: choice.mode,
@@ -4260,11 +4261,10 @@ export const MoonlightApp = {
      * Escalation ladder — one knob per congestion event, in order (state-based,
      * so a knob that is already at its floor is skipped naturally):
      *   1. bitrate −30%
-     *   2. resolution one rung down (2160→1440→1080→720), bitrate aligned to
-     *      the new height; the upscaler is auto-enabled when the user streams
-     *      without video enhancement so the drop stays visually discreet
+     *   2. Auto resolution one rung down (2160→1440→1080→720), Auto bitrate
+     *      aligned to the new height. Explicit settings are never replaced.
      *   3. switch to the native media transport (RTP: no SCTP queueing/cwnd)
-     *   4. cap at 60 fps (+ bitrate −30%)
+     *   4. Auto FPS capped at 60 (+ Auto bitrate −30%)
      *   5+ bitrate −30% … floor at 2 Mbps, then remaining resolution rungs
      * Once every knob is at its floor, keep restarting the transport — a fresh
      * SCTP/ICE state is exactly what a manual stop/start fixes.
@@ -4306,6 +4306,11 @@ export const MoonlightApp = {
             );
         }
 
+        const bitrateAuto = this._lastStreamingSettings?.stream_bitrate_auto !== false;
+        if (!bitrateAuto && !this._fpsAuto && !this._resolutionAuto) {
+            Toast.warning(t('stream.congestionManual'));
+            return;
+        }
         this._degradeOverrides = this._degradeOverrides || {};
         const o = this._degradeOverrides;
         const effective = { ...this._lastStreamingSettings, ...o };
@@ -4327,9 +4332,9 @@ export const MoonlightApp = {
         // −50% (bite hard while the network is actively hurting), following
         // rungs −30%. Floor at 2 Mbps.
         const factor = this._degradeLevel === 1 ? 0.5 : 0.7;
-        let newBitrate = Math.max(2000, Math.round(curBitrate * factor));
+        let newBitrate = bitrateAuto ? Math.max(2000, Math.round(curBitrate * factor)) : curBitrate;
 
-        if (curHeight > 720) {
+        if (this._resolutionAuto && curHeight > 720) {
             // Resolution one rung down alongside the bitrate cut, never below
             // 720p (the bitrate alone keeps descending once 720p is reached).
             const next = [2160, 1440, 1080, 720].find((r) => r < curHeight);
@@ -4347,39 +4352,15 @@ export const MoonlightApp = {
                     effective.hdr_enabled === true,
                     IS_HANDHELD,
                 ) * 1000;
-            newBitrate = Math.max(2000, Math.min(newBitrate, autoKbps));
+            if (bitrateAuto) newBitrate = Math.max(2000, Math.min(newBitrate, autoKbps));
             toastKey = 'stream.degradeResolution';
             toastParams.res = String(next);
-            // Upscaler auto-enable: scale the reduced stream back to the
-            // display size so the drop stays visually discreet. Session-only
-            // override — the user's Settings checkbox is never touched. Not
-            // applicable on the media transport (<video> element, no canvas).
-            //
-            // 'auto', never a named algorithm: the renderer routes it (F0e) —
-            // FSR1/SGSR on WebGL2 in SDR, WebGPU only in HDR. This used to name
-            // 'sgsr', which forced the WebGPU pass on a stream the user had
-            // chosen to run on Canvas2D — the pass that costs 20 ms in a worker
-            // on macOS (F0), on exactly the link that was already struggling.
-            //
-            // Not on a device of a gigabyte or less: its GPU is of the same
-            // class (a Mi TV's Mali-G31 lost the WebGL context to the pass,
-            // 01/10/2026), and the smaller stream is the relief.
-            if (
-                effective.video_enhancement !== 'on' &&
-                !onMedia &&
-                !o.transport_mode &&
-                !IS_LOW_MEMORY
-            ) {
-                o.video_enhancement = 'on';
-                o.video_enhancement_algo = 'auto';
-                this._enhancementAutoForced = true;
-                toastKey = 'stream.degradeResolutionUpscale';
-            }
+            // Enhancement is a user preference, not a congestion control.
         } else if (!onMedia && !o.transport_mode) {
             o.transport_mode = 'webrtc-media-udp';
             relaunchIndex = 0; // forced mode is first in the recomputed chain
             toastKey = 'stream.degradeMedia';
-        } else if (o.stream_fps === undefined && curFps > 60) {
+        } else if (this._fpsAuto && o.stream_fps === undefined && curFps > 60) {
             o.stream_fps = 60;
             toastParams.mbps = (newBitrate / 1000).toFixed(1);
             toastKey = 'stream.degradeBitrateFps';

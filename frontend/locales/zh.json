@@ -794,6 +794,7 @@
         "degradeBitrate": "网络不稳定——码率已降至 {{mbps}} Mbps",
         "degradeBitrateFps": "网络不稳定——码率已降至 {{mbps}} Mbps，帧率限制为 60 fps",
         "degradeMedia": "网络不稳定——正在切换到原生视频传输",
+        "congestionManual": "检测到拥塞 — 保留手动画质设置。请查看串流诊断。",
         "degradeRestart": "网络不稳定——正在重启视频传输",
         "degradeResolution": "网络不稳定——分辨率已降至 {{res}}p",
         "degradeResolutionUpscale": "网络不稳定——分辨率已降至 {{res}}p，已启用超分",
