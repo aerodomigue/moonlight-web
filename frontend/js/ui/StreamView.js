@@ -4394,10 +4394,12 @@ export class StreamView {
 
     // Swap the visible surface to match the active renderer: the VideoElement
     // (HDR) renderer presents on <video>, every canvas renderer on <canvas>.
-    // Decode + the rAF render loop still run on the main thread (draw() writes
-    // each frame to the renderer's sink), so this only toggles visibility.
+    // A video sink already has compositor pacing. Feed it on decode, without
+    // a second page-rAF gate (which can be slower than the video source).
     _applyRendererSink(r) {
         if (!r) return;
+        this._immediateRender =
+            this._tearing || this._tvSink === true || r.kind === 'video-element';
         if (r.kind === 'video-element') {
             if (this.canvas) this.canvas.style.display = 'none';
             if (this.videoEl) this.videoEl.style.display = 'block';
@@ -4631,10 +4633,11 @@ export class StreamView {
         // detection. Tearing off (default): the rAF loop paces rendering to the
         // display refresh (VSync).
         //
-        // A TV's <video> sink is fed on decode too: the compositor paces the
-        // element on its own vsync, so nothing tears, and the page's rAF —
-        // ~35 a second on a Freebox under a 50 fps stream — no longer caps it.
-        this._immediateRender = this._tearing || this._tvSink === true;
+        // Every <video> sink, including desktop HEVC HDR, is paced by the
+        // compositor. Page rAF may be slower: gating it twice drops frames
+        // before the sink can see them. The serial writer and queue bound stay.
+        this._immediateRender =
+            this._tearing || this._tvSink === true || this._renderer?.kind === 'video-element';
 
         const loop = (now) => {
             if (!this.renderRunning) return;
@@ -7478,7 +7481,13 @@ export class StreamView {
         const now = performance.now();
         if (!this._stepper) {
             if (!this._autostep || this._standby || this._quitting || !this._nativeHost) return;
-            if (!this._immediateRender || this._useWorker || this._framePacer) return;
+            if (
+                !this._immediateRender ||
+                this._useWorker ||
+                this._framePacer ||
+                this._renderer?.kind === 'video-element'
+            )
+                return;
             this._stepper = new CadenceStepper({
                 baseFps: this._streamFps,
                 send: (msg) => {
