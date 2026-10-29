@@ -48,7 +48,13 @@
  *   - External texture expires each task → its blit bind group is per-frame.
  *   - Perceptual space: non-srgb formats only.
  */
-import { VideoRenderer } from './VideoRenderer.js';
+import {
+    VideoRenderer,
+    DRAW_ACCEPTED,
+    DRAW_NOT_READY,
+    DRAW_INVALID,
+    DRAW_FAILED,
+} from './VideoRenderer.js';
 import { nisConfig, nisCoefTexture, readNisSharpness, nisScaleInRange } from './NisTables.js';
 
 // Full-screen triangle (uv 0..1, v down — matches texture sampling).
@@ -1742,7 +1748,7 @@ export class WebGpuRenderer extends VideoRenderer {
             try {
                 frame.close();
             } catch (e) {}
-            return;
+            return DRAW_NOT_READY;
         }
 
         // Diagnostics: split the encode/submit work from the GPU wait below.
@@ -1759,7 +1765,7 @@ export class WebGpuRenderer extends VideoRenderer {
             try {
                 frame.close();
             } catch (e) {}
-            return;
+            return DRAW_INVALID;
         }
 
         // Canvas backing = frame-aspect rect fitting the output box (else frame res).
@@ -1877,7 +1883,7 @@ export class WebGpuRenderer extends VideoRenderer {
                     await this._device.queue.onSubmittedWorkDone();
                 } catch (e) {}
                 this._noteDraw(drawStart, uploadMs + (performance.now() - gpuStart), 'off');
-                return;
+                return DRAW_ACCEPTED;
             }
 
             this._ensureInputTex(inW, inH);
@@ -2033,6 +2039,8 @@ export class WebGpuRenderer extends VideoRenderer {
             if (probing) this._mapProbeRead();
         } catch (e) {
             console.error('[WebGpuRenderer] draw failed:', e.message);
+            frame.close();
+            return DRAW_FAILED;
         }
 
         frame.close();
@@ -2049,6 +2057,7 @@ export class WebGpuRenderer extends VideoRenderer {
             uploadMs + (performance.now() - gpuStart),
             this._algo + (useYuv ? '+yuv' : ''),
         );
+        return DRAW_ACCEPTED;
     }
 
     /** Record the draw split for PipelineDiag (see VideoRenderer.lastDraw). */

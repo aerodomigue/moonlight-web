@@ -39,7 +39,7 @@ describe('VideoElementRenderer.draw', () => {
     it('writes a frame when the sink has room', async () => {
         const r = renderer();
         const f = frame();
-        await r.draw(f);
+        expect(await r.draw(f)).toEqual({ accepted: true });
         expect(r._writer.write).toHaveBeenCalledWith(f);
         expect(f.close).not.toHaveBeenCalled();
     });
@@ -50,7 +50,7 @@ describe('VideoElementRenderer.draw', () => {
         const f = frame();
         const drawn = r.draw(f);
         free();
-        await drawn;
+        expect(await drawn).toEqual({ accepted: true });
         expect(r._writer.write).toHaveBeenCalledWith(f);
     });
 
@@ -61,7 +61,7 @@ describe('VideoElementRenderer.draw', () => {
         const f = frame();
         const drawn = r.draw(f);
         await vi.advanceTimersByTimeAsync(READY_WAIT_MS);
-        await drawn;
+        expect(await drawn).toEqual({ accepted: false, reason: 'backpressure' });
         expect(r._writer.write).not.toHaveBeenCalled();
         expect(f.close).toHaveBeenCalledTimes(1);
         expect(warn).toHaveBeenCalledTimes(1);
@@ -82,7 +82,17 @@ describe('VideoElementRenderer.draw', () => {
         const drawn = r.draw(f);
         r.dispose();
         free();
-        await drawn;
+        expect(await drawn).toEqual({ accepted: false, reason: 'disposed' });
+        expect(f.close).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('failed video writes', () => {
+    it('does not report a rejected write as a submitted image', async () => {
+        const r = renderer();
+        r._writer.write.mockRejectedValue(new Error('sink failed'));
+        const f = frame();
+        expect(await r.draw(f)).toEqual({ accepted: false, reason: 'failed' });
         expect(f.close).toHaveBeenCalledTimes(1);
     });
 });

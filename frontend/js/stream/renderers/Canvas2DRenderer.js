@@ -30,7 +30,7 @@
  *   All other cases (H.264, AV1, Safari, Edge) : direct drawImage(VideoFrame)
  *     first (skips a per-frame GPU copy), createImageBitmap as fallback.
  */
-import { VideoRenderer } from './VideoRenderer.js';
+import { VideoRenderer, DRAW_ACCEPTED, DRAW_NOT_READY, DRAW_FAILED } from './VideoRenderer.js';
 import { CODEC_HEVC } from '../../util/Mp4Muxer.js';
 
 export class Canvas2DRenderer extends VideoRenderer {
@@ -196,7 +196,7 @@ export class Canvas2DRenderer extends VideoRenderer {
             try {
                 frame.close();
             } catch (e) {}
-            return;
+            return DRAW_NOT_READY;
         }
 
         // Diagnostics: everything awaited is "wait" (GPU upload / readback), the
@@ -300,7 +300,7 @@ export class Canvas2DRenderer extends VideoRenderer {
                 waitMs,
                 bitmap ? 'nv12-bitmap' : direct ? 'nv12-direct' : 'nv12-fallback',
             );
-            return;
+            return success ? DRAW_ACCEPTED : DRAW_FAILED;
         }
 
         // ── Standard path (H.264 / AV1 / non-NV12 / Safari) ──────────────────
@@ -358,6 +358,7 @@ export class Canvas2DRenderer extends VideoRenderer {
         frame.close();
         this._rendered++;
         this._noteDraw(drawStart, waitMs, rendered ? path : 'failed');
+        return rendered ? DRAW_ACCEPTED : DRAW_FAILED;
     }
 
     /**

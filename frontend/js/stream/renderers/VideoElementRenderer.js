@@ -39,7 +39,13 @@
  * Trade-off: no WebGPU enhancers (FSR1/SGSR) on this path — the frames bypass
  * the shader pipeline. HDR fidelity is the priority here.
  */
-import { VideoRenderer } from './VideoRenderer.js';
+import {
+    VideoRenderer,
+    DRAW_ACCEPTED,
+    DRAW_DISPOSED,
+    DRAW_BACKPRESSURE,
+    DRAW_FAILED,
+} from './VideoRenderer.js';
 import { videoSinkCtor } from './videoSink.js';
 
 /**
@@ -140,7 +146,7 @@ export class VideoElementRenderer extends VideoRenderer {
             try {
                 frame.close();
             } catch (e) {}
-            return;
+            return DRAW_DISPOSED;
         }
         try {
             // Honor backpressure so we never queue ahead of the compositor —
@@ -164,7 +170,7 @@ export class VideoElementRenderer extends VideoRenderer {
                         );
                     }
                     frame.close();
-                    return;
+                    return this._disposed || !this._writer ? DRAW_DISPOSED : DRAW_BACKPRESSURE;
                 }
             }
             // The generator's writable takes ownership of the frame and closes it.
@@ -185,11 +191,13 @@ export class VideoElementRenderer extends VideoRenderer {
                         (this._track ? this._track.readyState : '?'),
                 );
             }
+            return this._disposed ? DRAW_DISPOSED : DRAW_ACCEPTED;
         } catch (e) {
             console.warn('[VideoElementRenderer] write failed: ' + e.message);
             try {
                 frame.close();
             } catch (e2) {}
+            return DRAW_FAILED;
         }
     }
 

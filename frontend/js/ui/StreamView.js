@@ -1,3 +1,4 @@
+import { DRAW_ACCEPTED, drawVideoFrame } from '../stream/renderers/VideoRenderer.js';
 /*
  * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
@@ -4799,9 +4800,16 @@ export class StreamView {
         // A PyroWave frame the player presented itself (B2.1): already on its
         // way to the screen, only the bookkeeping is left.
         const presented = frame.presented === true;
-        const drawn = presented ? Promise.resolve() : this._renderer.draw(frame);
+        const renderer = this._renderer;
+        const drawn = presented ? Promise.resolve(DRAW_ACCEPTED) : drawVideoFrame(renderer, frame);
         drawn
-            .then(() => {
+            .then((result) => {
+                if (!this.renderRunning || this._renderer !== renderer) return;
+                if (!result.accepted) {
+                    this.stats.dropped++;
+                    this._diag.noteDrop('render');
+                    return;
+                }
                 this.stats.rendered++;
                 // Render stage: the GPU/canvas draw itself, same clock.
                 const renderMs = performance.now() - drawStart;
