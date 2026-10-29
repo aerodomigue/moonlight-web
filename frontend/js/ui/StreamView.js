@@ -1,3 +1,4 @@
+import { StreamDiagnostics, numericFields } from '../stream/StreamDiagnostics.js';
 import { DRAW_ACCEPTED, drawVideoFrame } from '../stream/renderers/VideoRenderer.js';
 /*
  * MoonlightWeb — browser-based Sunshine/GameStream client.
@@ -2173,6 +2174,11 @@ export class StreamView {
         // The video never receives pointer/touch events directly: input is
         // handled by the overlay (touch) and canvas (mouse). This also blocks
         // iOS gestures that would drag or zoom the <video> element.
+        if (this._perfDiag) {
+            this._streamDiagnostics = new StreamDiagnostics(this.videoEl);
+            this._diagnosticHandle = { export: () => this._streamDiagnostics.export() };
+            if (!this._standby) window.mwStreamingDiagnostics = this._diagnosticHandle;
+        }
         this.videoEl.style.touchAction = 'none';
         this.videoEl.style.pointerEvents = 'none';
         if (this._transport === 'webrtc-media') {
@@ -2360,6 +2366,7 @@ export class StreamView {
             this._checkSilentDecoder();
             this._checkRendererCost();
             this._runPipelineGovernors(performance.now());
+            this._sampleStreamDiagnostics();
             this._updateOverlay();
         }, 500);
 
@@ -4045,6 +4052,7 @@ export class StreamView {
         if (this._latencyProbe) window.mwLatency = this._latencyProbe;
         window.mwContentAge = this._contentAge;
         window.mwFrameLog = this._frameLog;
+        if (this._diagnosticHandle) window.mwStreamingDiagnostics = this._diagnosticHandle;
         window.mwAudio = this._audioStats;
         window.mwVsyncGrid = this._vsyncGrid;
         if (this._rootEl) this._rootEl.style.visibility = '';
@@ -6222,6 +6230,46 @@ export class StreamView {
 
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────
 
+    _sampleStreamDiagnostics() {
+        if (
+            !this._streamDiagnostics ||
+            performance.now() - this._streamDiagnostics.lastSample < 1000
+        )
+            return;
+        const latency = {};
+        for (const [name, stats] of [
+            ['decode', this._clientDecodeStats],
+            ['queue', this._clientQueueStats],
+            ['render', this._clientRenderStats],
+        ]) {
+            if (this._useWorker) {
+                const stage = this._clientStages?.[name];
+                if (stage?.n > 0) latency[name + 'P99'] = stage.p99;
+            } else if (stats?.count) {
+                for (const q of [50, 95, 99]) latency[name + 'P' + q] = stats.percentile(q / 100);
+            }
+        }
+        this._streamDiagnostics.sample(performance.now(), {
+            counters: this.stats,
+            backend: this._backendPipeline,
+            requestedFps: this._streamFps,
+            width: Number((this._resolution || '').split(/[x×]/)[0]),
+            height: Number((this._resolution || '').split(/[x×]/)[1]),
+            bitrateMbps:
+                this._transport === 'webrtc-media' ? this._mediaBitrateMbps : this._byteRate.mbps(),
+            codec: this.videoCodec,
+            pipeline: this._workerDiag || this._diag.snapshot(true),
+            mainThread: this._mainThreadProbe?.snapshot(),
+            latency,
+            renderer: this._renderer?.kind,
+            transport: this._transport,
+            hdr: this._hdrNegotiated,
+            worker: this._useWorker,
+            visible: document.visibilityState === 'visible',
+            fullscreen: !!document.fullscreenElement,
+        });
+    }
+
     _updateOverlay() {
         // Refresh the capture shortcut reminder on the same 500ms tick so it
         // appears once streaming starts, independent of the perf-stats setting.
@@ -7349,6 +7397,16 @@ export class StreamView {
                 this._browserRttStats.addSample(browserRtt);
             }
         } else if (msg.type === 'stats') {
+            this._backendPipeline = numericFields(msg.pipeline, [
+                'relayReceived',
+                'submitted',
+                'workerDrops',
+                'senderQueueDrops',
+                'bpDrops',
+                'pendingFrames',
+                'bufferedBytes',
+                'sendWaitUs',
+            ]);
             if (msg.hostRttMs !== undefined && msg.hostRttMs > 0) {
                 this._hostRttStats.addSample(msg.hostRttMs);
             }
@@ -12451,6 +12509,9 @@ export class StreamView {
         if (this._contentAge.running) this._contentAge.stop();
         if (window.mwContentAge === this._contentAge) window.mwContentAge = null;
         if (window.mwFrameLog === this._frameLog) window.mwFrameLog = null;
+        this._streamDiagnostics?.stop();
+        if (window.mwStreamingDiagnostics === this._diagnosticHandle)
+            window.mwStreamingDiagnostics = null;
         if (window.mwAudio === this._audioStats) window.mwAudio = null;
         this._vsyncGrid.stop();
         if (window.mwVsyncGrid === this._vsyncGrid) window.mwVsyncGrid = null;

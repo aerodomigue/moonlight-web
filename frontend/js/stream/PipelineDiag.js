@@ -202,7 +202,7 @@ export class PipelineDiag {
     }
 
     /** Flat snapshot — postMessage-safe (structured clone of plain numbers). */
-    snapshot() {
+    snapshot(includeArrivalTails = false) {
         // Per-frame cost of the render stage: the whole draw latency spread
         // over the draws that were overlapping. This — not the raw wait — is
         // what has to fit inside a frame interval, so it is what the enhancer
@@ -214,6 +214,13 @@ export class PipelineDiag {
             renderServiceMs: drawLatency / concurrency,
             arrivalAvgMs: this._arrival.avg,
             arrivalMaxMs: this._arrival.max,
+            ...(includeArrivalTails
+                ? {
+                      arrivalP50Ms: this._arrival.quantile(0.5),
+                      arrivalP95Ms: this._arrival.quantile(0.95),
+                      arrivalP99Ms: this._arrival.quantile(0.99),
+                  }
+                : {}),
             frameBytesAvg: this._frameBytes.avg,
             frameBytesMax: this._frameBytes.max,
             decodeQueueAvg: this._decodeQueue.avg,

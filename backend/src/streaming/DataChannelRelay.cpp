@@ -1534,6 +1534,7 @@ void DataChannelRelay::handleVideoFrame(const QByteArray& data, bool isKeyframe,
 
     // Re-check after acquiring the lock: stop() may have run while we waited.
     if (m_Stopping.load()) return;
+    ++m_RelayReceivedFrames;
 
     // A guest of the shared feed takes its pictures from the feed's pipe,
     // which can hand over two or three at once after a hiccup on either side
@@ -2746,11 +2747,23 @@ void DataChannelRelay::onStatsTimerTick()
     // direct mode — so the snapshot is taken under its lock. Once a second,
     // for a handful of loads: nothing the capture thread will notice.
     qint64 bpDrops = 0;
+    QJsonObject pipeline;
     {
         std::lock_guard<std::mutex> lk(m_VideoMutex);
         bpDrops = m_DeltaDroppedCount + m_KeyframeBackpressureWarnings + m_AwaitingIdrDropCount;
         const qint64 workerDrops = m_Shim ? m_Shim->workerDropCount() : 0;
         const qint64 senderDrops = m_Sender ? static_cast<qint64>(m_Sender->queueDropCount()) : 0;
+        pipeline["relayReceived"] = m_RelayReceivedFrames;
+        pipeline["workerDrops"] = workerDrops;
+        pipeline["senderQueueDrops"] = senderDrops;
+        pipeline["bpDrops"] = bpDrops;
+        pipeline["pendingFrames"] = m_Shim ? m_Shim->pendingVideoFrames() : 0;
+        if (m_VideoDc) pipeline["bufferedBytes"] = static_cast<qint64>(m_VideoDc->bufferedAmount());
+        if (m_Sender && !m_RtpVideoAccepted.load(std::memory_order_relaxed)) {
+            const auto sender = m_Sender->pacingStats();
+            pipeline["submitted"] = static_cast<qint64>(sender.frames);
+            pipeline["sendWaitUs"] = static_cast<qint64>(sender.waitedUs);
+        }
         const qint64 snapshot = workerDrops + senderDrops + bpDrops;
         if (snapshot != m_LastDropSnapshot) {
             m_LastDropSnapshot = snapshot;
@@ -2781,6 +2794,7 @@ void DataChannelRelay::onStatsTimerTick()
     // so this is its only signal that the link is saturated backend-side. It
     // drives the frontend's congestion monitor (automatic bitrate degradation).
     stats["bpDrops"] = bpDrops;
+    stats["pipeline"] = pipeline;
     // The receiver's own link report with the host's share taken out (see the
     // linkstats handler): what its LINK QUEUE leg shows instead of the raw rise,
     // which counts a slower encode twice. Absent until the first report.

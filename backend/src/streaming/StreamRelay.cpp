@@ -405,6 +405,7 @@ void StreamRelay::sendVideoFragmentedWss(const QByteArray& data, bool isKeyframe
 
 void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber)
 {
+    ++m_RelayReceivedFrames;
     // Balance the worker→main pending counter (incremented before each emit).
     // Consume the worker-drop flag: recovery on this transport relies on
     // client-side IDR requests (starvation/stale detection in the browser).
@@ -640,6 +641,13 @@ void StreamRelay::sendStats()
     QJsonObject stats;
     stats["type"] = "stats";
     stats["hostRttMs"] = hostRttMs;
+    QJsonObject pipeline;
+    pipeline["relayReceived"] = m_RelayReceivedFrames;
+    pipeline["submitted"] = m_FrameCount;
+    pipeline["workerDrops"] = static_cast<qint64>(m_Shim ? m_Shim->workerDropCount() : 0);
+    pipeline["pendingFrames"] = m_PendingVideoFrames.size();
+    pipeline["bufferedBytes"] = m_WsClient->bytesToWrite();
+    stats["pipeline"] = pipeline;
     // WSS has no per-frame decode-latency tracking; report 0.
     stats["decodeLatencyUs"] = 0;
     // Sunshine capture→encode latency (RTP extension), averaged over the frames
