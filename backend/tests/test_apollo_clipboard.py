@@ -34,7 +34,9 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             self.reply(200, body)
         else:
             time.sleep(self.server.read_delay)
-            self.reply(self.server.read_status, self.server.text)
+            status = self.server.read_statuses.pop(0) if self.server.read_statuses else self.server.read_status
+            text = self.server.read_texts.pop(0) if self.server.read_texts else self.server.text
+            self.reply(status, text)
     def do_POST(self):
         text = self.rfile.read(int(self.headers['Content-Length']))
         self.server.requests.append(('POST', text, bool(self.connection.getpeercert())))
@@ -71,6 +73,8 @@ class ClipboardTests(unittest.TestCase):
         self.server.read_status = self.server.write_status = 200
         self.server.read_delay = self.server.write_delay = 0
         self.server.requests = []
+        self.server.read_texts = []
+        self.server.read_statuses = []
     def run_adapter(self, commands=(), duration=1200, **overrides):
         config = dict(origin=f'https://127.0.0.1:{self.server.server_port}',
                       certificate=str(self.root/'client.pem'), key=str(self.root/'client.key'),
@@ -94,9 +98,62 @@ class ClipboardTests(unittest.TestCase):
     def test_unchanged_read_and_rate_limit(self):
         out = self.run_adapter([{'at': n, 'message': {'type':'clipboardread'}} for n in [250, 300, 350, 1300]], duration=1700)
         chunks = [x for x in out if x['type']=='clipboardchunk']
+        self.assertEqual(chunks, []) # initial Apollo contents never overwrite the client
+        self.assertEqual(sum(r[0]=='GET' and '/actions/' in r[1] for r in self.server.requests), 2)
+    def test_empty_initial_clipboard_never_clears_client(self):
+        self.server.text = b''
+        out = self.run_adapter([{'at':250, 'message':{'type':'clipboardread'}}])
+        self.assertFalse(any(x['type']=='clipboardchunk' for x in out))
+    def test_explicit_copy_returns_same_text_after_baseline(self):
+        out = self.run_adapter([
+            {'at':250, 'message':{'type':'clipboardread'}},
+            {'at':500, 'message':{'type':'clipboardcopy'}},
+            {'at':1350, 'message':{'type':'clipboardread'}}], duration=1700)
+        chunks = [x for x in out if x['type']=='clipboardchunk']
         self.assertEqual(len(chunks), 1)
         self.assertEqual(base64.b64decode(chunks[0]['data']), self.server.text)
-        self.assertEqual(sum(r[0]=='GET' and '/actions/' in r[1] for r in self.server.requests), 2)
+        self.assertEqual([x['key'] for x in out if x['type']=='injected'], [67])
+    def test_explicit_copy_before_first_poll_is_not_discarded(self):
+        out = self.run_adapter([
+            {'at':250, 'message':{'type':'clipboardcopy'}},
+            {'at':350, 'message':{'type':'clipboardread'}}])
+        self.assertEqual(sum(x['type']=='clipboardchunk' for x in out), 1)
+    def test_copy_during_initial_read_is_preserved_for_next_poll(self):
+        self.server.read_delay = .35
+        out = self.run_adapter([
+            {'at':250, 'message':{'type':'clipboardread'}},
+            {'at':400, 'message':{'type':'clipboardcopy'}},
+            {'at':1350, 'message':{'type':'clipboardread'}}], duration=2000)
+        self.assertEqual(sum(x['type']=='clipboardchunk' for x in out), 1)
+    def test_later_remote_changes_include_intentional_empty_clipboard(self):
+        self.server.read_texts = [b'initial', b'changed', b'']
+        out = self.run_adapter([{'at':n, 'message':{'type':'clipboardread'}}
+                                for n in [250,1350,2450]], duration=2800)
+        self.assertEqual([base64.b64decode(x['data']) for x in out if x['type']=='clipboardchunk'],
+                         [b'changed', b''])
+    def test_copy_survives_transient_read_failure(self):
+        self.server.read_statuses = [500,200]
+        out = self.run_adapter([
+            {'at':250, 'message':{'type':'clipboardcopy'}},
+            {'at':350, 'message':{'type':'clipboardread'}},
+            {'at':1450, 'message':{'type':'clipboardread'}}], duration=1800)
+        self.assertEqual(sum(x['type']=='clipboardchunk' for x in out), 1)
+    def test_client_paste_supersedes_pending_copy_and_slow_read(self):
+        self.server.read_delay = .4
+        out = self.run_adapter([
+            {'at':250, 'message':{'type':'clipboardcopy'}},
+            {'at':350, 'message':{'type':'clipboardread'}},
+            self.chunk(b'client wins', at=450),
+            {'at':1450, 'message':{'type':'clipboardread'}}], duration=2100)
+        self.assertEqual(self.server.text, b'client wins')
+        self.assertFalse(any(x['type']=='clipboardchunk' for x in out))
+        self.assertEqual([x['key'] for x in out if x['type']=='injected'],[67,86])
+    def test_copy_during_write_reports_busy_instead_of_copying_stale_text(self):
+        self.server.write_delay = .4
+        out = self.run_adapter([self.chunk(at=250),
+            {'at':400, 'message':{'type':'clipboardcopy'}}])
+        self.assertTrue(any(x.get('code')=='busy' for x in out))
+        self.assertEqual([x['key'] for x in out if x['type']=='injected'], [86])
     def test_permissions_are_independent_and_sunshine_is_silent(self):
         for perm, read, write in [(FULL & ~(1<<16), True, False), (FULL & ~(1<<17), False, True), (None, False, False)]:
             self.server.permission = perm
