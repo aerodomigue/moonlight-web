@@ -17,6 +17,8 @@
 
 #include "ComputerManager.h"
 #include "WakeOnLan.h"
+#include <QSslConfiguration>
+#include <QSslCertificate>
 
 #include "streambackend/BackendProbe.h"
 #include "streambackend/GameStreamBackend.h"
@@ -187,11 +189,13 @@ void ComputerManager::registerStreamBackends()
         [this](const QString& uuid, const QByteArray& serverCertPem) {
             NvComputer* host = findHostByUuid(uuid);
             if (!host) return;
+            cancelWakeMetadata(uuid);
             host->serverCertPem = serverCertPem;
             host->pairState = NvComputer::PS_PAIRED;
             host->state = NvComputer::CS_ONLINE;
             saveHosts();
             emit hostsChanged();
+            QTimer::singleShot(0, this, [this, uuid]() { refreshWakeMetadata(uuid, true); });
         });
 }
 
@@ -540,6 +544,11 @@ void ComputerManager::onPollTick()
         const QString& uuid = it.key();
         NvComputer* host = it.value();
 
+        if (!host->enabled || (m_OwnerActive && !m_OwnerActive(host->ownerId))) continue;
+        if (wakeMetadataPending(host)) continue;
+        refreshWakeMetadata(uuid);
+        if (wakeMetadataPending(host)) continue;
+
         // The native host has no address: it IS this process. Polling it would
         // mean asking ourselves over the network whether we are running.
         if (host->isNativeEngine()) continue;
@@ -615,6 +624,9 @@ void ComputerManager::onBackupPollTick()
         const QString& uuid = it.key();
         NvComputer* host = it.value();
 
+        if (!host->enabled || wakeMetadataPending(host) ||
+            (m_OwnerActive && !m_OwnerActive(host->ownerId)))
+            continue;
         if (m_PollingHosts.contains(uuid)) continue;
 
         const NvAddress addr = pollAddressFor(host);
@@ -657,6 +669,7 @@ void ComputerManager::onPollReplyFinished()
         return;
     }
 
+    const NvComputer previous = *host;
     bool changed = false;
 
     // Debounce: a single transient error (stale keep-alive, 2s abort, brief
@@ -732,6 +745,7 @@ void ComputerManager::onPollReplyFinished()
                     QByteArray mac = WakeOnLan::resolveMac(pollAddr.address());
                     if (!mac.isEmpty()) {
                         host->macAddress = mac;
+                        host->macSource = QStringLiteral("arp");
                         changed = true;
                     }
                 }
@@ -802,11 +816,20 @@ void ComputerManager::onPollReplyFinished()
     }
 
     if (changed) {
-        saveHosts();
+        if (!saveHosts()) {
+            host->macAddress = previous.macAddress;
+            host->macSource = previous.macSource;
+            host->localAddress = previous.localAddress;
+            host->remoteAddress = previous.remoteAddress;
+            host->activeAddress = previous.activeAddress;
+            host->activeHttpsPort = previous.activeHttpsPort;
+            saveHosts(true);
+        }
         emit hostsChanged();
     }
 
     reply->deleteLater();
+    refreshWakeMetadata(uuid);
 }
 
 // --- mDNS Discovery ---------------------------------------------------------
@@ -978,13 +1001,14 @@ void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns
     });
 }
 
-bool ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
-                                      const QString& ownerId)
+int ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
+                                     const QString& ownerId, bool manual)
 {
     NvComputer newHost(serverInfo, addr);
+    if (manual) newHost.manualAddress = addr;
 
-    if (newHost.uuid.isEmpty()) return false;
-    if (ownerId.isEmpty() || (m_OwnerActive && !m_OwnerActive(ownerId))) return false;
+    if (newHost.uuid.isEmpty()) return 409;
+    if (ownerId.isEmpty() || (m_OwnerActive && !m_OwnerActive(ownerId))) return 409;
     newHost.physicalUuid = newHost.uuid;
     newHost.ownerId = ownerId;
     newHost.uuid = UserAccess::hostId(ownerId, newHost.physicalUuid);
@@ -992,20 +1016,27 @@ bool ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
         newHost.identitySeat = newHost.uuid;
         newHost.pairState = NvComputer::PS_NOT_PAIRED;
     }
-    if (!WakeOnLan::isValidMac(newHost.macAddress))
+    if (!WakeOnLan::isValidMac(newHost.macAddress)) {
         newHost.macAddress = WakeOnLan::resolveMac(addr.address());
+        if (!newHost.macAddress.isEmpty()) newHost.macSource = QStringLiteral("arp");
+    }
 
     NvComputer* existing = findHostByUuid(newHost.uuid);
 
     if (existing) {
         // Legacy IDs are raw physical UUIDs. Never merge a legacy/private ID
         // collision across owners, even when a peer deliberately reports it.
-        if (existing->ownerId != ownerId || !existing->enabled) return false;
+        if (existing->ownerId != ownerId || !existing->enabled) return 409;
         if (ownerId != UserStore::localId() || !existing->identitySeat.isEmpty())
             newHost.pairState = existing->pairState;
         // Merge new data into existing host
+        const auto previous = *existing;
         if (existing->update(newHost)) {
-            saveHosts();
+            if (!saveHosts()) {
+                *existing = previous;
+                saveHosts(true);
+                return 503;
+            }
             emit hostsChanged();
 
             Logger::info(QString("Host updated: %1 (%2)").arg(existing->name, existing->uuid));
@@ -1014,13 +1045,18 @@ bool ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
         // New host discovered
         NvComputer* computer = new NvComputer(newHost);
         m_Hosts[computer->uuid] = computer;
-        saveHosts();
+        if (!saveHosts()) {
+            m_Hosts.remove(computer->uuid);
+            delete computer;
+            saveHosts(true);
+            return 503;
+        }
         emit hostsChanged();
 
         Logger::info(QString("Host added: %1 (%2) at %3")
                          .arg(computer->name, computer->uuid, addr.toString()));
     }
-    return true;
+    return 200;
 }
 
 NvComputer* ComputerManager::findHostByUuid(const QString& uuid) const
@@ -1062,6 +1098,7 @@ std::pair<int, QJsonObject> ComputerManager::setHostEnabled(const QString& uuid,
     if (hostOperationBusy(uuid))
         return {409, {{"message", "Stop the active host operation first"}}};
     if (host->enabled == enabled) return {200, {{"status", "ok"}, {"host", host->toJson()}}};
+    cancelWakeMetadata(uuid);
     const bool previous = host->enabled;
     host->enabled = enabled;
     if (!saveHosts()) {
@@ -1245,6 +1282,10 @@ void ComputerManager::confirmDiscoveryCandidate(const QString& ownerId, const QS
                 respond(HttpResponse::error(409, "PC identity changed or host already registered"));
                 return;
             }
+            if (!WakeOnLan::isValidMac(host->macAddress)) {
+                host->macAddress = WakeOnLan::resolveMac(address.address());
+                if (!host->macAddress.isEmpty()) host->macSource = QStringLiteral("arp");
+            }
             host->physicalUuid = host->uuid;
             host->uuid = uuid;
             host->ownerId = ownerId;
@@ -1377,10 +1418,13 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
         return {400, {{"status", "error"}, {"message", e.what()}}};
     }
 
-    if (!addOrUpdateHost(xml, nvAddr, ownerId))
-        return {409,
-                {{"status", "error"},
-                 {"message", "Host registration conflicts with an existing entry"}}};
+    const auto addStatus = addOrUpdateHost(xml, nvAddr, ownerId, true);
+    if (addStatus != 200)
+        return {
+            addStatus,
+            {{"status", "error"},
+             {"message", addStatus == 503 ? "Could not persist PC registration"
+                                          : "Host registration conflicts with an existing entry"}}};
 
     // Look up the resulting host to return its JSON
     NvComputer parsedHost(xml, nvAddr);
@@ -1388,14 +1432,6 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
     if (!host || host->ownerId != ownerId) {
         return {500,
                 {{"status", "error"}, {"message", "Host was added but could not be retrieved"}}};
-    }
-
-    // Remember it as the manual address. This is the operator's answer to a host
-    // discovery cannot reach, so it has to outlive the process — until now it
-    // only landed in activeAddress and was gone at the next restart.
-    if (host->manualAddress != nvAddr) {
-        host->manualAddress = nvAddr;
-        saveHosts();
     }
 
     Logger::info(
@@ -1413,6 +1449,7 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
     NvComputer* host = findHostByUuid(uuid);
     if (!host) return {404, {{"status", "error"}, {"message", "Host not found"}}};
 
+    cancelWakeMetadata(uuid);
     QString name = host->name;
     m_Hosts.remove(uuid);
     m_PollAddrIndex.remove(uuid);
@@ -1443,6 +1480,7 @@ std::pair<int, QJsonObject> ComputerManager::reassignHost(const QString& uuid, c
     const auto destination = UserAccess::hostId(owner, physical);
     if (owner.isEmpty() || m_Hosts.contains(destination))
         return {409, {{"message", "Destination already has this host"}}};
+    if (!duplicate) cancelWakeMetadata(uuid);
     auto* copy = new NvComputer(*source);
     copy->ownerId = owner;
     copy->uuid = destination;
@@ -1505,6 +1543,105 @@ std::pair<int, QJsonObject> ComputerManager::handleRenameHost(const QString& uui
     return {200, result};
 }
 
+void ComputerManager::cancelWakeMetadata(const QString& uuid)
+{
+    const auto reply = m_WakeRequests.take(uuid);
+    if (reply) reply->abort();
+    m_LastWakeAttempt.remove(uuid);
+    m_WakeNeedsRefresh.remove(uuid);
+}
+
+bool ComputerManager::wakeMetadataPending(const NvComputer* host) const
+{
+    const auto physical = host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid;
+    for (auto it = m_WakeRequests.cbegin(); it != m_WakeRequests.cend(); ++it) {
+        const auto* other = findHostByUuid(it.key());
+        if (other &&
+            (other->physicalUuid.isEmpty() ? other->uuid : other->physicalUuid) == physical)
+            return true;
+    }
+    return false;
+}
+
+void ComputerManager::refreshWakeMetadata(const QString& uuid, bool afterPairing)
+{
+    if (afterPairing) m_WakeNeedsRefresh.insert(uuid);
+    auto* host = findHostByUuid(uuid);
+    if (!host || !host->enabled || host->isNativeEngine() || host->state != NvComputer::CS_ONLINE ||
+        host->pairState != NvComputer::PS_PAIRED || host->serverCertPem.isEmpty() ||
+        (!m_WakeNeedsRefresh.contains(uuid) && host->macSource == QLatin1String("https") &&
+         WakeOnLan::isValidMac(host->macAddress)) ||
+        m_WakeRequests.contains(uuid) || m_PollingHosts.contains(uuid) ||
+        m_PendingPairChecks.contains(uuid) || hostOperationBusy(uuid) || inProcessStreamActive() ||
+        (m_OwnerActive && !m_OwnerActive(host->ownerId)))
+        return;
+    if (m_LastWakeAttempt.contains(uuid) && !m_LastWakeAttempt[uuid].hasExpired(300000)) return;
+    const auto address = pollAddressFor(host);
+    if (address.isNull()) return;
+    const auto owner = host->ownerId;
+    const auto seat = host->identitySeat;
+    const auto physical = host->physicalUuid.isEmpty() ? host->uuid : host->physicalUuid;
+    for (const auto* other : m_Hosts) {
+        if ((other->physicalUuid.isEmpty() ? other->uuid : other->physicalUuid) == physical &&
+            (m_WakeRequests.contains(other->uuid) || m_PollingHosts.contains(other->uuid) ||
+             m_PendingPairChecks.contains(other->uuid)))
+            return;
+    }
+    m_LastWakeAttempt[uuid].start();
+    const auto pinned = host->serverCertPem;
+    const auto identity = IdentityManager::get()->identityForSeat(seat);
+    auto* reply = m_Http->getServerInfoAsyncHttps(address, clientUniqueId(), identity.certPem,
+                                                  identity.keyPem, host->activeHttpsPort, pinned);
+    m_WakeRequests[uuid] = reply;
+    reply->setReadBufferSize(128 * 1024);
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, uuid, owner, seat, physical, pinned, address]() {
+                reply->deleteLater();
+                if (m_WakeRequests.value(uuid) != reply) return;
+                m_WakeRequests.remove(uuid);
+                auto* current = findHostByUuid(uuid);
+                if (!current || !current->enabled || current->ownerId != owner ||
+                    current->identitySeat != seat || current->serverCertPem != pinned ||
+                    current->pairState != NvComputer::PS_PAIRED || inProcessStreamActive() ||
+                    (m_OwnerActive && !m_OwnerActive(owner)) ||
+                    reply->error() != QNetworkReply::NoError ||
+                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200 ||
+                    reply->sslConfiguration().peerCertificate() != QSslCertificate(pinned))
+                    return;
+                const auto xml = QString::fromUtf8(reply->readAll());
+                try {
+                    NvHTTP::verifyResponseStatus(xml);
+                } catch (const std::exception&) {
+                    return;
+                }
+                NvComputer detected(xml, address);
+                if (detected.uuid != physical || !WakeOnLan::isValidMac(detected.macAddress))
+                    return;
+                const auto oldMac = current->macAddress;
+                const auto oldSource = current->macSource;
+                const auto oldLocal = current->localAddress;
+                current->macAddress = detected.macAddress;
+                current->macSource = QStringLiteral("https");
+                if (WakeOnLan::isLocalIpv4(detected.localAddress.address()))
+                    current->localAddress = detected.localAddress;
+                if (!saveHosts()) {
+                    current->macAddress = oldMac;
+                    current->macSource = oldSource;
+                    current->localAddress = oldLocal;
+                    saveHosts(true);
+                    Logger::warning(
+                        "Could not persist paired Wake-on-LAN metadata; will retry later");
+                    return;
+                }
+                m_WakeNeedsRefresh.remove(uuid);
+                emit hostsChanged();
+            });
+    QPointer<QNetworkReply> guard(reply);
+    QTimer::singleShot(NvHTTP::FAST_FAIL_TIMEOUT_MS + 2000, reply, [guard]() {
+        if (guard && !guard->isFinished()) guard->abort();
+    });
+}
+
 // --- Wake-on-LAN -------------------------------------------------------------
 
 std::pair<int, QJsonObject> ComputerManager::handleWakeHost(const QString& uuid)
@@ -1557,9 +1694,16 @@ std::pair<int, QJsonObject> ComputerManager::handleSetWakeConfig(const QString& 
         return {400,
                 {{"status", "error"},
                  {"message", "Provide a private LAN IPv4 address and a valid unicast MAC"}}};
+    const auto oldAddress = host->wakeAddress;
+    const auto oldMac = host->wakeMacOverride;
     host->wakeAddress = ip;
     host->wakeMacOverride = parsed;
-    saveHosts();
+    if (!saveHosts()) {
+        host->wakeAddress = oldAddress;
+        host->wakeMacOverride = oldMac;
+        saveHosts(true);
+        return {503, {{"message", "Could not persist Wake-on-LAN configuration"}}};
+    }
     emit hostsChanged();
     return {200, {{"status", "ok"}}};
 }
@@ -1597,6 +1741,8 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
         err["message"] = "Already paired";
         return {400, err};
     }
+
+    cancelWakeMetadata(uuid);
 
     // Clean up any abandoned previous session. If a pairing chain is still in
     // flight against it, freeing the NvPairingManager would leave its pending
@@ -1729,11 +1875,14 @@ void ComputerManager::startPairingChain(const QString& uuid)
             case PairingChain::Outcome::Paired: {
                 NvComputer* host = findHostByUuid(uuid);
                 if (host) {
+                    cancelWakeMetadata(uuid);
                     host->serverCertPem = result.serverCertPem;
                     host->pairState = NvComputer::PS_PAIRED;
                     host->state = NvComputer::CS_ONLINE;
                     saveHosts();
                     emit hostsChanged();
+                    QTimer::singleShot(0, this,
+                                       [this, uuid]() { refreshWakeMetadata(uuid, true); });
                 }
                 m_ActivePairings.erase(it);
                 m_PairingPins.remove(uuid);
@@ -2250,6 +2399,7 @@ void ComputerManager::onPairCheckFinished()
     }
 
     reply->deleteLater();
+    refreshWakeMetadata(uuid);
 }
 
 // --- Box Art -----------------------------------------------------------------

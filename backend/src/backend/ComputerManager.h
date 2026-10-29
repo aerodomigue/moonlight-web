@@ -243,6 +243,12 @@ private:
     // the stored list for good. Only the explicit delete route may do that.
     bool saveHosts(bool allowEmpty = false);
     void startPolling();
+    void refreshWakeMetadata(const QString& uuid, bool afterPairing = false);
+    void cancelWakeMetadata(const QString& uuid);
+    bool wakeMetadataPending(const NvComputer* host) const;
+    QSet<QString> m_WakeNeedsRefresh;
+    QHash<QString, QPointer<QNetworkReply>> m_WakeRequests;
+    QHash<QString, QElapsedTimer> m_LastWakeAttempt;
     void startMdnsDiscovery();
     void stopMdnsDiscovery();
     NvComputer* findHostByUuid(const QString& uuid) const;
@@ -252,8 +258,9 @@ private:
 
     // A provider bound to one host. Returns nullptr for an unknown uuid.
 
-    bool addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
-                         const QString& ownerId = QStringLiteral("local-owner"));
+    int addOrUpdateHost(const QString& serverInfo, const NvAddress& addr,
+                        const QString& ownerId = QStringLiteral("local-owner"),
+                        bool manual = false);
     void tryAddHostFromAddress(const NvAddress& addr, bool fromMdns,
                                const QString& name = QString(),
                                const QString& ownerId = QStringLiteral("local-owner"));

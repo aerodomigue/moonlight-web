@@ -135,6 +135,12 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(result, status);
     });
 
+    server.router()->get("/api/hosts/:id/wol-config", [&computerManager](const HttpRequest& req) {
+        const auto* host = computerManager.getHost(req.pathParams.value("id"));
+        if (!host) return HttpResponse::error(404, "Host not found");
+        return HttpResponse::json(host->wakeConfigJson());
+    });
+
     server.router()->post("/api/hosts/:id/wol-config", [&computerManager](const HttpRequest& req) {
         const auto body = QJsonDocument::fromJson(req.body).object();
         if (!body.value("address").isString() || !body.value("mac").isString())

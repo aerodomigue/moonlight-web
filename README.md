@@ -241,7 +241,15 @@ est hors ligne.
 
 Sur une carte de PC hors ligne, le bouton de réveil apparaît lorsque les
 informations nécessaires sont valides. Le menu **⋯ → Configurer le Wake-on-LAN** permet de
-renseigner ou corriger l'IP locale et la MAC si la découverte ne suffit pas.
+consulter les valeurs détectées et les réglages déjà enregistrés, puis choisir
+**Automatique** ou **Manuel**. Le mode manuel conserve ses propres valeurs ; revenir
+en automatique retire ces remplacements. La configuration ne réveille pas le PC.
+
+Apollo masque la MAC avant appairage : Moonlight-Web la récupère ensuite en HTTPS
+avec le certificat appairé. Les anciennes machines appairées sans MAC sont complétées
+automatiquement lorsqu’elles sont accessibles, hors flux actif. Les échecs sont
+réessayés au maximum toutes les cinq minutes. Une MAC authentifiée n’est pas
+écrasée par une réponse HTTP ou ARP, ni par une valeur vide.
 
 Le paquet est émis **par le backend sur le LAN de la cible**, avec le masque
 réel de son interface, sur les ports UDP 7 et 9. Les adresses publiques et les

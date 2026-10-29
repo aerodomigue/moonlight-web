@@ -72,7 +72,8 @@ QNetworkReply* NvHTTP::getServerInfoAsync(const NvAddress& address, const QStrin
 
 QNetworkReply* NvHTTP::getServerInfoAsyncHttps(const NvAddress& address, const QString& uniqueId,
                                                const QByteArray& clientCertPem,
-                                               const QByteArray& clientKeyPem, quint16 httpsPort)
+                                               const QByteArray& clientKeyPem, quint16 httpsPort,
+                                               const QByteArray& pinnedServerCert)
 {
     // Build URL as string to avoid any QUrl encoding quirks
     QString urlStr = QString("https://%1:%2/serverinfo?uniqueid=%3&uuid=%4")
@@ -96,7 +97,21 @@ QNetworkReply* NvHTTP::getServerInfoAsyncHttps(const NvAddress& address, const Q
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(sslConfig);
 
-    return m_Nam->get(req);
+    if (!pinnedServerCert.isEmpty()) {
+        // Do not follow a redirect with this registration's client certificate.
+        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::ManualRedirectPolicy);
+        req.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, 0);
+    }
+    auto* reply = m_Nam->get(req);
+    if (!pinnedServerCert.isEmpty()) {
+        const QSslCertificate expected(pinnedServerCert);
+        connect(reply, &QNetworkReply::encrypted, reply, [reply, expected]() {
+            if (expected.isNull() || reply->sslConfiguration().peerCertificate() != expected)
+                reply->abort();
+        });
+    }
+    return reply;
 }
 
 // --- Static XML helpers ----------------------------------------------------

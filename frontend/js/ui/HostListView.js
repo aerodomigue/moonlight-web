@@ -26,7 +26,11 @@
  * The online/offline badge sits next to the host name; "Remove" lives in a
  * per-host "…" menu.
  */
-import { accountRevision, requireAccountRevision } from '../util/authAccountState.js';
+import {
+    accountRevision,
+    requireAccountRevision,
+    watchAccountChanges,
+} from '../util/authAccountState.js';
 import { SsoSession, authenticatedFetch } from '../api/SsoSession.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Host } from '../models/Host.js';
@@ -776,6 +780,7 @@ export class HostListView {
     }
 
     stop() {
+        this._closeWakeConfig?.();
         ++this._discoveryRevision;
         this._active = false;
         if (this.pollTimer) {
@@ -795,6 +800,7 @@ export class HostListView {
     }
 
     destroy() {
+        this._closeWakeConfig?.();
         this._active = false;
         this._destroyed = true;
         window.removeEventListener('resize', this._menuViewportHandler);
@@ -1938,6 +1944,7 @@ export class HostListView {
     }
 
     _configureWake(host) {
+        const revision = accountRevision();
         if (document.querySelector('.host-wol-overlay')) return;
         const overlay = document.createElement('div');
         overlay.className = 'pairing-overlay host-wol-overlay';
@@ -1945,6 +1952,14 @@ export class HostListView {
             <form class="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="wol-title">
                 <h3 id="wol-title">${this.esc(t('hosts.wolConfigure'))}</h3>
                 <p class="pairing-instruction">${this.esc(t('hosts.wolConfigHint'))}</p>
+                <label>${this.esc(t('hosts.wolMode'))}
+                    <select name="mode" class="settings-input" disabled>
+                        <option value="automatic">${t('hosts.wolAutomatic')}</option>
+                        <option value="manual">${t('hosts.wolManual')}</option>
+                    </select>
+                </label>
+                <p class="wol-status" role="status">${t('common.loading')}</p>
+                <button type="button" class="btn btn-secondary wol-retry" hidden>${t('hosts.wolRetry')}</button>
                 <label>${this.esc(t('hosts.wolLocalIp'))}
                     <input name="address" class="settings-input" placeholder="192.168.1.20"
                            autocomplete="off" maxlength="15" />
@@ -1956,14 +1971,23 @@ export class HostListView {
                 <p class="wol-error" role="alert"></p>
                 <div class="pairing-actions">
                     <button type="button" class="btn btn-secondary wol-cancel">${t('common.cancel')}</button>
-                    <button type="submit" class="btn wol-save">${t('common.save')}</button>
+                    <button type="submit" class="btn wol-save" disabled>${t('common.save')}</button>
                 </div>
             </form>`;
         const address = /** @type {HTMLInputElement} */ (overlay.querySelector('[name="address"]'));
         const mac = /** @type {HTMLInputElement} */ (overlay.querySelector('[name="mac"]'));
         const save = /** @type {HTMLButtonElement} */ (overlay.querySelector('.wol-save'));
+        const mode = /** @type {HTMLSelectElement} */ (overlay.querySelector('[name="mode"]'));
+        const retry = /** @type {HTMLButtonElement} */ (overlay.querySelector('.wol-retry'));
         const previousFocus = document.activeElement;
+        let closed = false;
+        let loaded = false;
+        let config;
+        const valid = () => !closed && !this._destroyed && revision === accountRevision();
         const close = () => {
+            closed = true;
+            unwatch?.();
+            this._closeWakeConfig = null;
             document.removeEventListener('keydown', onKey, true);
             overlay.remove();
             if (previousFocus instanceof HTMLElement && previousFocus.isConnected)
@@ -1975,6 +1999,39 @@ export class HostListView {
             e.stopPropagation();
             close();
         };
+        this._closeWakeConfig = close;
+        const unwatch = watchAccountChanges(close);
+        const showMode = () => {
+            const manual = mode.value === 'manual';
+            const values = manual && config.mode === 'manual' ? config.manual : config.detected;
+            address.value = values.address || '';
+            mac.value = values.mac || '';
+            address.readOnly = mac.readOnly = !manual;
+        };
+        const load = async () => {
+            retry.hidden = true;
+            save.disabled = mode.disabled = true;
+            try {
+                const result = await BackendClient.getWakeConfig(host.uuid);
+                if (!valid()) return;
+                config = result;
+                loaded = true;
+                mode.value = config.mode;
+                showMode();
+                overlay.querySelector('.wol-error').textContent = '';
+                overlay.querySelector('.wol-status').textContent = t(
+                    `hosts.wolReason_${config.reason}`,
+                );
+                save.disabled = mode.disabled = false;
+            } catch (err) {
+                if (!valid()) return;
+                overlay.querySelector('.wol-error').textContent = err.message;
+                overlay.querySelector('.wol-status').textContent = '';
+                retry.hidden = false;
+            }
+        };
+        mode.addEventListener('change', showMode);
+        retry.addEventListener('click', load);
         document.addEventListener('keydown', onKey, true);
         overlay.querySelector('.wol-cancel').addEventListener('click', close);
         overlay.addEventListener('click', (e) => {
@@ -1982,23 +2039,26 @@ export class HostListView {
         });
         overlay.querySelector('form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (save.disabled) return;
-            save.disabled = true;
+            if (save.disabled || !loaded || !valid()) return;
+            save.disabled = mode.disabled = true;
             try {
                 await BackendClient.setWakeConfig(
                     host.uuid,
-                    address.value.trim(),
-                    mac.value.trim(),
+                    mode.value === 'manual' ? address.value.trim() : '',
+                    mode.value === 'manual' ? mac.value.trim() : '',
                 );
+                if (!valid()) return;
                 close();
                 await this.refresh();
             } catch (err) {
+                if (!valid()) return;
                 overlay.querySelector('.wol-error').textContent = err.message;
-                save.disabled = false;
+                save.disabled = mode.disabled = false;
             }
         });
         document.body.appendChild(overlay);
         address.focus();
+        void load();
     }
 
     async _renameHost(host) {

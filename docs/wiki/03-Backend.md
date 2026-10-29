@@ -158,13 +158,16 @@ Two modes, each switched on from **Admin → Advanced** (kept in `settings.json`
 
 ## Wake-on-LAN for saved hosts
 
-At registration, the server stores the host's advertised local IP and valid MAC
-alongside its UUID. If serverinfo omits the MAC, Windows resolves it with SendARP
-and Linux reads the completed entry for the directly connected target in
-`/proc/net/arp`, immediately after the successful serverinfo request. Later polls
-retry missing MAC collection for previously registered hosts. A missing or invalid
-MAC in a later response never erases the saved one. These values survive a restart;
-an offline host needs no fresh serverinfo request before it can be woken.
+At registration, manual addition and confirmed discovery store the advertised local
+IP and valid MAC. ARP fallback only resolves directly connected hosts, never a
+router's MAC for a routed destination. Apollo's HTTP serverinfo intentionally masks
+the MAC; after pairing, an asynchronous HTTPS request uses the registration's own
+client identity and verifies the pinned server certificate and physical UUID.
+Existing paired records lacking verified metadata are enriched when reachable,
+outside active streams. Failed attempts are throttled to five minutes, with a
+bounded request timeout and closed connections. A verified MAC takes precedence
+over HTTP/ARP; invalid replies cannot erase it. Values and provenance survive restart.
+Deletion, transfer, disabling or re-pairing invalidates an outstanding request.
 
 The browser's **Wake** action asks the server to broadcast a magic packet on the
 target's LAN. The server matches saved private IPv4 addresses against its active
@@ -176,7 +179,9 @@ router configuration is required or attempted.
 
 For an old host whose MAC was never collected, bring it online once so a poll
 can learn it, or use **Host options → Configure Wake-on-LAN** to enter its local
-IPv4 and MAC while it stays offline. Overrides are stored separately so polling
-cannot replace them; clearing both fields restores automatic settings. The host
-list exposes only capability/configuration booleans, never these addresses.
+IPv4 and MAC while it stays offline. The dialog loads detected and saved values, with explicit automatic/manual modes.
+Overrides are stored separately so polling cannot replace them; choosing automatic
+clears them. Failed writes restore the previous values and report an error. The host
+list exposes only capability/configuration booleans; the owner-authorized
+`GET /api/hosts/:id/wol-config` exposes the dialog metadata and availability reason.
 The target's firmware and network adapter must already support and enable WOL.
