@@ -71,7 +71,12 @@ class Host(fixture.Fixture):
 def run():
     fixture.OidcIsolation.setUpClass()
     try:
-        for existing, measured, worker in [(False, 240000, True), (True, 239760, True), (True, 0, True), (False, 240000, False)]:
+        for existing, measured, worker, fps in [
+            (False, 240000, True, 240), (True, 239760, True, 240),
+            (True, 0, True, 240), (False, 240000, False, 240),
+            (False, 240000, True, 144), (True, 240000, True, 144),
+            (False, 120000, False, 120),
+        ]:
             rtsp = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Rtsp)
             rtsp.daemon_threads = True
             threading.Thread(target=rtsp.serve_forever, daemon=True).start()
@@ -121,7 +126,7 @@ def run():
                 else: raise AssertionError('Fixture host metadata did not refresh')
                 status, result, _ = browser.request('/api/hosts/' + host['uuid'] + '/start', {
                     'appId': 42, 'stream_height': 2160, 'stream_aspect': '3840:2160',
-                    'stream_fps': 240, 'stream_bitrate': 100000, 'client_refresh_mhz': measured, 'video_codec': 'h264',
+                    'stream_fps': fps, 'stream_bitrate': 100000, 'client_refresh_mhz': measured, 'video_codec': 'h264',
                     'transport_mode': 'wss', 'client_uniqueid': 'fixture-viewer',
                 }, local=True)
                 assert status >= 400, 'Fixture must stop the stream at ANNOUNCE'
@@ -129,7 +134,7 @@ def run():
                 assert requests, ('No GameStream launch/resume observed', status, result.get('error'), host.get('pairState'))
                 path, query = requests[0]
                 assert path == ('/resume' if existing else '/launch'), path
-                assert query.get('mode') == ['3840x2160x240'], 'GameStream mode lost'
+                assert query.get('mode') == [f'3840x2160x{fps}'], 'GameStream mode lost'
                 assert query.get('sops') == ['1'], 'Display optimization missing'
                 a = rtsp.attributes
                 if not a:
@@ -139,12 +144,12 @@ def run():
                 assert a, ('No RTSP ANNOUNCE observed', rtsp.methods, result.get('error'))
                 for name, value in [(b'x-nv-video[0].clientViewportWd', b'3840'),
                                     (b'x-nv-video[0].clientViewportHt', b'2160'),
-                                    (b'x-nv-video[0].maxFPS', b'240'),
+                                    (b'x-nv-video[0].maxFPS', str(fps).encode()),
                                     (b'x-ml-video.configuredBitrateKbps', b'100000'),
                                     (b'x-nv-vqos[0].bw.maximumBitrateKbps', b'80000'),
-                                    (b'x-nv-video[0].clientRefreshRateX100', str((measured + 5)//10 if measured else 24000).encode())]:
+                                    (b'x-nv-video[0].clientRefreshRateX100', str((measured + 5)//10 if measured else fps * 100).encode())]:
                     assert a.get(name) == value, f'Incorrect RTSP {name.decode()}: {a.get(name)!r}'
-                print(f'PASS: worker={worker} {path}/RTSP preserve 3840x2160, 240 FPS, configured 100000 kbit/s; client refresh {measured or 240000} mHz.')
+                print(f'PASS: worker={worker} {path}/RTSP preserve 3840x2160, {fps} FPS, configured 100000 kbit/s; client refresh {measured or fps * 1000} mHz.')
             finally:
                 case.tearDown()
                 rtsp.shutdown()

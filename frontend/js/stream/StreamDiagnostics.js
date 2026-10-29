@@ -100,6 +100,7 @@ export class StreamDiagnostics {
     sample(now, data) {
         if (this.stopped || now - this.lastSample < 1000) return;
         this.lastSample = now;
+        /** @type {Record<string, unknown>} */
         const sample = {
             timeMs: now - this.start,
             counters: numericFields(data.counters, COUNTERS),

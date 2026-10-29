@@ -5338,6 +5338,14 @@ export class StreamView {
                     }
                 });
                 if (!inbound) return;
+                this._mediaDiagnosticCounters = numericFields(
+                    {
+                        received: inbound.framesReceived,
+                        decoded: inbound.framesDecoded,
+                        dropped: inbound.framesDropped,
+                    },
+                    ['received', 'decoded', 'dropped'],
+                );
 
                 const now = performance.now();
                 // Resolution
@@ -6240,11 +6248,11 @@ export class StreamView {
         )
             return;
         const latency = {};
-        for (const [name, stats] of [
-            ['decode', this._clientDecodeStats],
-            ['queue', this._clientQueueStats],
-            ['render', this._clientRenderStats],
-        ]) {
+        for (const [name, stats] of Object.entries({
+            decode: this._clientDecodeStats,
+            queue: this._clientQueueStats,
+            render: this._clientRenderStats,
+        })) {
             if (this._useWorker) {
                 const stage = this._clientStages?.[name];
                 if (stage?.n > 0) latency[name + 'P99'] = stage.p99;
@@ -6253,7 +6261,8 @@ export class StreamView {
             }
         }
         this._streamDiagnostics.sample(performance.now(), {
-            counters: this.stats,
+            counters:
+                this._transport === 'webrtc-media' ? this._mediaDiagnosticCounters : this.stats,
             backend: this._backendPipeline,
             requestedFps: this._streamFps,
             width: Number((this._resolution || '').split(/[x×]/)[0]),

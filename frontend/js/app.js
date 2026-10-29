@@ -75,7 +75,6 @@ import { VersionGuard } from './util/VersionGuard.js';
 import {
     IS_MOBILE_OR_TABLET,
     IS_HANDHELD,
-    IS_LOW_MEMORY,
     IS_TV,
     resolveTearing,
     hdrClientCapability,

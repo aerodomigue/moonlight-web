@@ -40,6 +40,18 @@ Le serveur Moonlight-Web local reste nécessaire pour joindre Apollo/Sunshine
 et adapter leur flux au navigateur. L'hôte natif et le partage de session hérités
 du projet amont restent disponibles selon les capacités du matériel et du navigateur.
 
+## Fluidité et diagnostics
+
+Les réglages manuels de résolution, FPS et débit sont conservés pendant une
+congestion ; seuls les paramètres en Auto sont ajustés. Le rendu vidéo HDR est
+alimenté sans attendre une seconde cadence de page. Cela ne garantit pas à lui
+seul le débit de décodage ou d'affichage du matériel.
+
+Un [diagnostic temporaire du flux](docs/wiki/16-Streaming-Diagnostics.md) distingue
+réception, décodage, soumission au rendu et composition vidéo, sans exporter de
+secrets ni d'images. La [revue et les mesures](docs/design/streaming-frame-pacing-review.md)
+précisent les résultats reproductibles et la validation matérielle encore nécessaire.
+
 ## Dashboard et connexion
 
 Le bouton **Découverte automatique** enregistre un choix par utilisateur, partagé
