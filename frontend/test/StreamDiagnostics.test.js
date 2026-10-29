@@ -32,7 +32,7 @@ describe('opt-in bounded streaming diagnostics', () => {
     it('exports only allowed numeric data, never a host, token or payload', () => {
         const { diag } = setup();
         diag.sample(diag.start, {
-            counters: { received: 42, token: 'SECRET' },
+            counters: { received: 42, decodeSubmitted: 40, token: 'SECRET' },
             backend: { submitted: 39, secret: 'SECRET' },
             renderer: 'SECRET',
             host: 'SECRET',
@@ -40,7 +40,7 @@ describe('opt-in bounded streaming diagnostics', () => {
         });
         const result = diag.export();
         expect(JSON.stringify(result)).not.toContain('SECRET');
-        expect(result.samples[0].counters).toEqual({ received: 42 });
+        expect(result.samples[0].counters).toEqual({ received: 42, decodeSubmitted: 40 });
         expect(result.samples[0].latency).toEqual({ decodeP99: 7 });
         expect(numericFields({ received: Infinity }, ['received'])).toEqual({});
         diag.stop();

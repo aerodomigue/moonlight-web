@@ -1,7 +1,15 @@
 // Opt-in, bounded numeric diagnostics. No host, user, URL, token or image data.
 const LIMIT = 180;
 const FRAME_LIMIT = 16384;
-const COUNTERS = ['received', 'decoded', 'rendered', 'dropped', 'networkLost', 'recoveries'];
+const COUNTERS = [
+    'received',
+    'decodeSubmitted',
+    'decoded',
+    'rendered',
+    'dropped',
+    'networkLost',
+    'recoveries',
+];
 const BACKEND = [
     'relayReceived',
     'submitted',
@@ -169,6 +177,9 @@ export class StreamDiagnostics {
             JSON.stringify({
                 version: 1,
                 semantics: {
+                    received: 'complete frames delivered by transport, before client decode gates',
+                    decodeSubmitted:
+                        'legacy pipeline input counter; absent for native media transport',
                     rendered: 'accepted by renderer, not physical display',
                     composed: 'video frames submitted for composition (rVFC), not physical display',
                     backend:

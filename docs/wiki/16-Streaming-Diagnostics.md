@@ -45,6 +45,9 @@ n'est pas disponible ; aucune règle de sécurité ne doit être désactivée po
 - `backend.submitted` : images soumises au transport, sans garantie de réception.
 - `counters.received`, `decoded`, `rendered` : réception navigateur, décodage et
   acceptation par le renderer. `dropped` et `pipeline.dropRender` expliquent des pertes.
+- `counters.decodeSubmitted` : compteur historique d'entrée du décodeur, distinct
+  des images complètes reçues avant les rejets pour ancienneté ou erreur de décodage.
+  Il est absent pour le transport vidéo natif, qui fournit ses propres compteurs.
 - `composed` : compteur du navigateur pour les images vidéo soumises à la composition.
   Il reste absent si la mesure n'est pas disponible ; aucun équivalent n'est inventé
   pour les canvas. Ce n'est pas une mesure physique de l'écran.

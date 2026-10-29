@@ -1254,7 +1254,8 @@ export class StreamView {
         // Stats
         // networkLost: frames the backend sent that never arrived (frameId gaps).
         // Denominator for the loss rate is the frameId span, tracked separately
-        // because `received` counts only what the pipeline actually got.
+        // because the legacy `received` counter counts decoder submissions.
+        this._completeVideoFrames = 0;
         this.stats = {
             received: 0,
             decoded: 0,
@@ -6262,7 +6263,13 @@ export class StreamView {
         }
         this._streamDiagnostics.sample(performance.now(), {
             counters:
-                this._transport === 'webrtc-media' ? this._mediaDiagnosticCounters : this.stats,
+                this._transport === 'webrtc-media'
+                    ? this._mediaDiagnosticCounters
+                    : {
+                          ...this.stats,
+                          received: this._completeVideoFrames,
+                          decodeSubmitted: this.stats.received,
+                      },
             backend: this._backendPipeline,
             requestedFps: this._streamFps,
             width: Number((this._resolution || '').split(/[x×]/)[0]),
@@ -7527,6 +7534,9 @@ export class StreamView {
         // Stop processing frames once quit() has started.  The DC may still
         // deliver queued messages during the async HTTP /quit call.
         if (this._quitting) return;
+        // Count complete transport deliveries before stale/reference/decoder
+        // gates. Decoder submissions alone conceal losses at these gates.
+        this._completeVideoFrames++;
         // Terminal decoder failure (e.g. broken AV1 in Safari): the stream
         // keeps delivering frames — drop them silently, the error is displayed.
         if (this._fatalDecodeError) return;

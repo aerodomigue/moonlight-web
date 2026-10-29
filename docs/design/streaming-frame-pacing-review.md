@@ -18,6 +18,10 @@
    bitrate, and force an enhancer the viewer had disabled. Only Auto knobs may
    now change. A fully manual stream reports congestion without a quality relaunch.
    These changes do not persist new user preferences.
+4. The legacy `received` counter counted decoder submissions, omitting complete
+   frames rejected before decode. The export now counts complete transport deliveries
+   before the stale/reference/fatal-decode gates, including worker handoff, and exposes
+   `decodeSubmitted` separately. Native media transport retains its own counters.
 
 Five renderer-result assertions, three high-rate cadence assertions and four
 manual-quality assertions failed before their respective fixes and pass afterward.
@@ -99,8 +103,15 @@ its waits, and a rejected ready promise clears its timeout (two regression tests
 Production negotiated `0x800`, HEVC RExt 4:4:4 10-bit, at 3840×2160/144, HDR on,
 150000 kbit/s configured. Relay logs show no growing worker/sender/SCTP drop count
 after startup. This narrows the sustained deficit to before browser decoding; it
-does **not** establish the host, network or receiver as its cause. A comparison
-with only 4:4:4 disabled was requested to isolate profile cost. The user settings
+does **not** establish the host, network or receiver as its cause. With only 4:4:4 disabled, the user reports approximately 144 input/output FPS,
+but still insufficient perceived fluidity. A ten-second browser observation reports
+40 page callbacks/s, 39.7 video callbacks/s, 142 composition-counter increments/s,
+142.4 total-video increments/s and no reported video drops. These are not physical
+scanout measurements. A separate TestUFO run reaches 240 Hz on the same client, so
+a general 40 Hz browser/display cap is not established.
+
+Temporarily removing overlay blur gave 26→40 Hz once, then 39.9→40 Hz on repetition:
+there is no reproducible improvement supporting a CSS change. The user settings
 are not changed automatically, and native Moonlight must use the same profile for
 a meaningful comparison. The new relay counters will resolve the remaining hop.
 
