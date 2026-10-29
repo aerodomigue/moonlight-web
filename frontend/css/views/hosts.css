@@ -490,3 +490,8 @@
 
 .discovery-candidate > span { min-width: 0; overflow-wrap: anywhere; }
 .discovery-candidate > button { flex-shrink: 0; }
+
+/* Button display rules must not override the retry control’s hidden state. */
+.host-wol-overlay .wol-retry[hidden] {
+    display: none;
+}

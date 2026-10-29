@@ -1,19 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../js/api/BackendClient.js', () => ({
-    BackendClient: { setWakeConfig: vi.fn(), getHosts: vi.fn(), getAppList: vi.fn() },
+    BackendClient: {
+        getWakeConfig: vi.fn(),
+        setWakeConfig: vi.fn(),
+        getHosts: vi.fn(),
+        getAppList: vi.fn(),
+    },
 }));
 vi.mock('../js/i18n/i18n.js', () => ({ t: (key) => key }));
 
 import { BackendClient } from '../js/api/BackendClient.js';
 import { HostListView } from '../js/ui/HostListView.js';
 import { Host } from '../js/models/Host.js';
+import { leaveAccount } from '../js/util/authAccountState.js';
 
 let view;
 beforeEach(() => {
     document.body.innerHTML = '';
     vi.clearAllMocks();
     BackendClient.adminLocked = false;
+    BackendClient.getWakeConfig.mockResolvedValue({
+        mode: 'automatic',
+        detected: { address: '192.168.1.20', mac: '02:11:22:33:44:55' },
+        manual: { address: '', mac: '' },
+        reason: 'available',
+    });
     view = Object.create(HostListView.prototype);
     view.hosts = [new Host({ uuid: 'h1', name: 'Desk', state: 'offline', wakeSupported: true })];
     view.refresh = vi.fn().mockResolvedValue(undefined);
@@ -46,6 +58,9 @@ describe('Wake-on-LAN for saved offline hosts', () => {
     it('saves a legacy host configuration without waking it', async () => {
         BackendClient.setWakeConfig.mockResolvedValue({ status: 'ok' });
         view._configureWake(view.hosts[0]);
+        await vi.waitFor(() => expect(document.querySelector('.wol-save').disabled).toBe(false));
+        document.querySelector('[name="mode"]').value = 'manual';
+        document.querySelector('[name="mode"]').dispatchEvent(new Event('change'));
         document.querySelector('[name="address"]').value = '192.168.1.20';
         document.querySelector('[name="mac"]').value = '02:11:22:33:44:55';
         document.querySelector('form').dispatchEvent(new Event('submit', { cancelable: true }));
@@ -61,6 +76,7 @@ describe('Wake-on-LAN for saved offline hosts', () => {
     it('keeps invalid configuration visible so it can be corrected', async () => {
         BackendClient.setWakeConfig.mockRejectedValue(new Error('Private IPv4 required'));
         view._configureWake(view.hosts[0]);
+        await vi.waitFor(() => expect(document.querySelector('.wol-save').disabled).toBe(false));
         document.querySelector('form').dispatchEvent(new Event('submit', { cancelable: true }));
         await vi.waitFor(() =>
             expect(document.querySelector('[role="alert"]').textContent).toBe(
@@ -86,5 +102,81 @@ describe('Wake-on-LAN for saved offline hosts', () => {
             .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         expect(document.querySelector('.host-wol-overlay')).toBeNull();
         expect(BackendClient.setWakeConfig).not.toHaveBeenCalled();
+    });
+    it('prefills automatic values without freezing them into manual overrides', async () => {
+        BackendClient.setWakeConfig.mockResolvedValue({ status: 'ok' });
+        view._configureWake(view.hosts[0]);
+        await vi.waitFor(() =>
+            expect(document.querySelector('[name="mac"]').value).toBe('02:11:22:33:44:55'),
+        );
+        expect(document.querySelector('[name="address"]').readOnly).toBe(true);
+        document.querySelector('form').dispatchEvent(new Event('submit', { cancelable: true }));
+        await vi.waitFor(() =>
+            expect(BackendClient.setWakeConfig).toHaveBeenCalledWith('h1', '', ''),
+        );
+    });
+    it('restores saved manual values and allows returning to automatic', async () => {
+        BackendClient.getWakeConfig.mockResolvedValue({
+            mode: 'manual',
+            detected: { address: '10.2.10.20', mac: '02:11:22:33:44:55' },
+            manual: { address: '192.168.5.191', mac: '4c:d5:77:cb:4b:d9' },
+            reason: 'network_unreachable',
+        });
+        view._configureWake(view.hosts[0]);
+        await vi.waitFor(() =>
+            expect(document.querySelector('[name="address"]').value).toBe('192.168.5.191'),
+        );
+        expect(document.querySelector('[name="mac"]').value).toBe('4c:d5:77:cb:4b:d9');
+        expect(document.querySelector('[name="mac"]').readOnly).toBe(false);
+        document.querySelector('[name="mode"]').value = 'automatic';
+        document.querySelector('[name="mode"]').dispatchEvent(new Event('change'));
+        expect(document.querySelector('[name="address"]').value).toBe('10.2.10.20');
+    });
+    it('blocks saving after a failed load and offers retry', async () => {
+        BackendClient.getWakeConfig.mockRejectedValueOnce(new Error('offline'));
+        view._configureWake(view.hosts[0]);
+        await vi.waitFor(() => expect(document.querySelector('.wol-retry').hidden).toBe(false));
+        expect(document.querySelector('.wol-save').disabled).toBe(true);
+        document.querySelector('form').dispatchEvent(new Event('submit', { cancelable: true }));
+        expect(BackendClient.setWakeConfig).not.toHaveBeenCalled();
+        document.querySelector('.wol-retry').click();
+        await vi.waitFor(() => expect(document.querySelector('.wol-save').disabled).toBe(false));
+    });
+    it('ignores a response received after closing', async () => {
+        let resolve;
+        BackendClient.getWakeConfig.mockReturnValue(
+            new Promise((r) => {
+                resolve = r;
+            }),
+        );
+        view._configureWake(view.hosts[0]);
+        document.querySelector('.wol-cancel').click();
+        resolve({
+            mode: 'automatic',
+            detected: { address: 'secret-old-account' },
+            reason: 'available',
+        });
+        await Promise.resolve();
+        expect(document.querySelector('.host-wol-overlay')).toBeNull();
+        expect(document.body.textContent).not.toContain('secret-old-account');
+    });
+    it('does not apply values obtained for a previous account', async () => {
+        let resolve;
+        BackendClient.getWakeConfig.mockReturnValue(
+            new Promise((r) => {
+                resolve = r;
+            }),
+        );
+        view._configureWake(view.hosts[0]);
+        leaveAccount();
+        resolve({
+            mode: 'manual',
+            detected: {},
+            manual: { address: '192.168.5.191', mac: '4c:d5:77:cb:4b:d9' },
+            reason: 'available',
+        });
+        await Promise.resolve();
+        expect(document.querySelector('[name="address"]').value).toBe('');
+        expect(document.querySelector('.wol-save').disabled).toBe(true);
     });
 });
