@@ -1,32 +1,126 @@
 // Native Escape coverage: run under xvfb-run with MW_NATIVE_KEYBOARD=1,
-// full Chromium and xdotool. The default uses Playwright key events.
+// full Chromium, xdotool and xmessage. The default uses Playwright key events.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const { chromium } = await import(process.env.MW_PLAYWRIGHT_MODULE || 'playwright');
 const nativeKeyboard = process.env.MW_NATIVE_KEYBOARD === '1';
-const browser = await chromium.launch({ headless: !nativeKeyboard });
+// Headless Chromium may require a fresh gesture for pointer recapture after
+// fullscreen. Validate the documented one-shot M recovery, not a bypass of it.
+async function settleCapture(page, mode, fullscreen) {
+    await page.waitForFunction(
+        ({ mode, fullscreen }) => {
+            const c = window.streamFixture._exclusive;
+            return (
+                !!document.fullscreenElement === fullscreen &&
+                c.enabled &&
+                !c.pointerPending &&
+                !c.keyboardPending &&
+                (c.needsGesture ||
+                    (c.keyboardLocked === (fullscreen && mode !== 'mouse') &&
+                        (document.pointerLockElement === window.streamFixture.inputEl) ===
+                            (mode !== 'keyboard')))
+            );
+        },
+        { mode, fullscreen },
+    );
+    if (await page.evaluate(() => window.streamFixture._exclusive.needsGesture)) {
+        // Chromium can impose a short cooldown after a browser unlock.
+        // No application retry loop: a later, explicit user gesture retries.
+        await page.waitForTimeout(1100);
+        await page.keyboard.press('Control+Alt+Shift+M');
+    }
+    await page.waitForFunction(
+        ({ mode, fullscreen }) => {
+            const c = window.streamFixture._exclusive;
+            return (
+                !!document.fullscreenElement === fullscreen &&
+                c.enabled &&
+                c.keyboardLocked === (fullscreen && mode !== 'mouse') &&
+                (document.pointerLockElement === window.streamFixture.inputEl) ===
+                    (mode !== 'keyboard')
+            );
+        },
+        { mode, fullscreen },
+    );
+}
+let nativeProcess, profile;
+let browser;
+if (nativeKeyboard) {
+    profile = mkdtempSync(join(tmpdir(), 'mw-keyboard-'));
+    nativeProcess = spawn(
+        chromium.executablePath(),
+        [
+            '--no-sandbox',
+            '--no-first-run',
+            '--ignore-certificate-errors',
+            '--remote-debugging-port=0',
+            '--user-data-dir=' + profile,
+            '--lang=fr-FR',
+            'about:blank',
+        ],
+        { stdio: 'ignore' },
+    );
+    let port;
+    for (let i = 0; i < 100; i++) {
+        try {
+            port = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
+            break;
+        } catch (_) {}
+        await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(port, 'native Chromium did not start');
+    // noDefaults avoids Playwright's permanent focus emulation on its own CDP
+    // session. Disabling it from a second CDP session does not cancel that one.
+    browser = await chromium.connectOverCDP('http://127.0.0.1:' + port, { noDefaults: true });
+} else browser = await chromium.launch();
 try {
-    const context = await browser.newContext({
-        ignoreHTTPSErrors: true,
-        locale: 'fr-FR',
-        extraHTTPHeaders: { 'X-Forwarded-For': '203.0.113.20', 'X-Forwarded-Proto': 'https' },
-    });
+    const context = nativeKeyboard
+        ? browser.contexts()[0]
+        : await browser.newContext({
+              ignoreHTTPSErrors: true,
+              locale: 'fr-FR',
+              extraHTTPHeaders: { 'X-Forwarded-For': '203.0.113.20', 'X-Forwarded-Proto': 'https' },
+          });
+    if (nativeKeyboard) {
+        await context.setExtraHTTPHeaders({
+            'X-Forwarded-For': '203.0.113.20',
+            'X-Forwarded-Proto': 'https',
+        });
+    }
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     const cdp = await browser.newBrowserCDPSession();
     const { browserContextIds } = await cdp.send('Target.getBrowserContexts');
-    assert.equal(browserContextIds.length, 1);
+    if (!nativeKeyboard) assert.equal(browserContextIds.length, 1);
     await cdp.send('Browser.grantPermissions', {
         origin: new URL(process.argv[2]).origin,
-        browserContextId: browserContextIds[0],
+        ...(nativeKeyboard ? {} : { browserContextId: browserContextIds[0] }),
         permissions: ['keyboardLock', 'pointerLock'],
     });
+    if (process.env.MW_STREAM_FIXTURE_ONLY === '1') {
+        await page.route(new URL(process.argv[2]).origin + '/api/**', (route) =>
+            route.fulfill({ json: {} }),
+        );
+        await page.route(process.argv[2], (route) =>
+            route.fulfill({
+                contentType: 'text/html',
+                body: '<!doctype html><html lang="fr"><meta charset="utf-8"><link rel="stylesheet" href="/css/stream.css"><body><div id="app"></div></body></html>',
+            }),
+        );
+    }
     await page.goto(process.argv[2], { waitUntil: 'networkidle' });
-    await page.locator('#btn-login-sso').click();
-    await page.locator('#view-hosts').waitFor();
+    if (process.env.MW_STREAM_FIXTURE_ONLY !== '1') {
+        await page.locator('#btn-login-sso').click();
+        await page.locator('#view-hosts').waitFor();
+    }
     await page.evaluate(async () => {
+        const { init } = await import('/js/i18n/i18n.js');
+        await init();
         window.mountStreamFixture = async () => {
             const { exclusiveSettings } = await import('/js/stream/ExclusiveInput.js');
             const { StreamView } = await import('/js/ui/StreamView.js');
@@ -140,18 +234,89 @@ try {
                 (expected) => !!document.fullscreenElement === expected,
                 fullscreen,
             );
-            await page.waitForFunction(
-                ({ mode, fullscreen }) => {
-                    const capture = window.streamFixture._exclusive;
-                    return (
-                        capture.enabled &&
-                        capture.keyboardLocked === fullscreen &&
-                        (document.pointerLockElement === window.streamFixture.inputEl) ===
-                            (mode === 'both')
-                    );
-                },
-                { mode, fullscreen },
-            );
+            await settleCapture(page, mode, fullscreen);
+        }
+        if (nativeKeyboard) {
+            // A real second browser window changes OS focus without changing the
+            // fullscreen intent in the stream window. Returning must protect Escape
+            // even if pointer recapture is denied until a user gesture.
+            const streamWindow = nativeKeyboard
+                ? execFileSync('xdotool', ['getwindowfocus']).toString().trim()
+                : null;
+            const other = nativeKeyboard ? await context.newPage() : await browser.newPage();
+
+            await other.goto('about:blank');
+            await other.bringToFront();
+            if (nativeKeyboard) {
+                await other.evaluate(() => (document.title = 'MW other focus test'));
+                await other.waitForTimeout(300);
+                const id = execFileSync('xdotool', [
+                    'search',
+                    '--onlyvisible',
+                    '--name',
+                    'MW other focus test',
+                ])
+                    .toString()
+                    .trim()
+                    .split('\n')
+                    .at(-1);
+                execFileSync('xdotool', ['windowfocus', '--sync', id]);
+            }
+            await page.waitForFunction(() => window.streamFixture._exclusive.suspended, null, {
+                polling: 50,
+            });
+            await page.bringToFront();
+            if (nativeKeyboard) execFileSync('xdotool', ['windowfocus', '--sync', streamWindow]);
+            await page.waitForFunction(() => document.hasFocus(), null, { polling: 50 });
+            if (!(await page.evaluate(() => !!document.fullscreenElement))) {
+                await page.keyboard.press('Control+Alt+Shift+X');
+            }
+            await page.waitForFunction(() => window.streamFixture._exclusive.keyboardLocked);
+            if (nativeKeyboard) execFileSync('xdotool', ['key', '--clearmodifiers', 'Escape']);
+            else await page.keyboard.press('Escape');
+            await page.waitForTimeout(150);
+            assert.equal(await page.evaluate(() => !!document.fullscreenElement), true);
+            assert.equal(await page.evaluate(() => window.streamFixture._exclusive.enabled), true);
+            await other.close();
+            // Also leave the browser entirely while keeping its fullscreen document.
+            const external = spawn('xmessage', ['-title', 'MW external focus', 'Focus test'], {
+                stdio: 'ignore',
+            });
+            try {
+                await page.waitForTimeout(300);
+                const id = execFileSync('xdotool', [
+                    'search',
+                    '--onlyvisible',
+                    '--name',
+                    'MW external focus',
+                ])
+                    .toString()
+                    .trim()
+                    .split('\n')
+                    .at(-1);
+                execFileSync('xdotool', ['windowfocus', '--sync', id]);
+                await page.waitForFunction(() => window.streamFixture._exclusive.suspended, null, {
+                    polling: 50,
+                });
+                execFileSync('xdotool', ['windowfocus', '--sync', streamWindow]);
+                await page.waitForFunction(
+                    () => window.streamFixture._exclusive.keyboardLocked,
+                    null,
+                    { polling: 50 },
+                );
+                execFileSync('xdotool', ['key', '--clearmodifiers', 'Escape']);
+                await page.waitForTimeout(150);
+                assert.equal(await page.evaluate(() => !!document.fullscreenElement), true);
+                assert.equal(
+                    await page.evaluate(() => window.streamFixture._exclusive.enabled),
+                    true,
+                );
+                console.log(
+                    `PASS: native tab/window focus return preserves intent and short Escape (${mode}).`,
+                );
+            } finally {
+                external.kill();
+            }
         }
         await page.keyboard.press('Control+Alt+Shift+Z');
         await page.waitForFunction(
@@ -210,19 +375,7 @@ try {
         await page.keyboard.press('Control+Alt+Shift+M');
         for (const fullscreen of [true, false, true, false]) {
             await page.keyboard.press('Control+Alt+Shift+X');
-            await page.waitForFunction(
-                ({ mode, fullscreen }) => {
-                    const capture = window.streamFixture._exclusive;
-                    return (
-                        !!document.fullscreenElement === fullscreen &&
-                        capture.enabled &&
-                        capture.keyboardLocked === (fullscreen && mode !== 'mouse') &&
-                        (document.pointerLockElement === window.streamFixture.inputEl) ===
-                            (mode !== 'keyboard')
-                    );
-                },
-                { mode, fullscreen },
-            );
+            await settleCapture(page, mode, fullscreen);
         }
         await page.keyboard.press('Control+Alt+Shift+Z');
         assert.equal(
@@ -240,4 +393,10 @@ try {
     );
 } finally {
     await browser.close();
+    if (nativeProcess && nativeProcess.exitCode === null) {
+        const exited = new Promise((r) => nativeProcess.once('exit', r));
+        nativeProcess.kill();
+        await exited;
+    }
+    if (profile) rmSync(profile, { recursive: true, force: true });
 }

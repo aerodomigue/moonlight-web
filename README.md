@@ -52,6 +52,26 @@ réception, décodage, soumission au rendu et composition vidéo, sans exporter 
 secrets ni d'images. La [revue et les mesures](docs/design/streaming-frame-pacing-review.md)
 précisent les résultats reproductibles et la validation matérielle encore nécessaire.
 
+## Identifier la version déployée
+
+L’en-tête distingue **Interface** (commit des fichiers chargés, huit caractères)
+et **Serveur** (version du binaire en cours). Le survol affiche le commit complet.
+Une mise à jour du frontend seule change donc l’identifiant Interface sans prétendre
+avoir remplacé le backend. Un paquet issu de sources modifiées est marqué « modifié » ;
+un checkout non empaqueté est indiqué « développement ».
+
+Sur la VM de construction, après configuration CMake, préparer uniquement le frontend :
+
+```sh
+cmake --install build --prefix "$PWD/stage-ui" --component Frontend
+```
+
+Ce composant exclut les tests et dépendances de développement, et génère l’identité
+dans les fichiers préparés. Déployer l’ensemble du frontend préparé avec sa métadonnée,
+après sauvegarde ; vérifier les empreintes des fichiers servis et recharger la page.
+Aucune compilation ni aucun redémarrage du backend n’est nécessaire pour une correction
+limitée à cette interface.
+
 ## Dashboard et connexion
 
 Le bouton **Découverte automatique** enregistre un choix par utilisateur, partagé
@@ -137,7 +157,8 @@ plein écran ; une indication ponctuelle signale une capture indisponible ou par
 | Basculer le plein écran, indépendamment de la capture | Ctrl + Alt + Maj + X | Ctrl + Option + Cmd + X |
 
 À la perte du focus, les touches et boutons distants sont relâchés. Au retour,
-une reprise est tentée une fois ; **« Reprendre la capture »** demande un geste
+la capture clavier est redemandée sans attendre la réponse de la capture souris.
+Une reprise est tentée une fois ; **« Reprendre la capture »** demande un geste
 si le navigateur l’exige. Une libération volontaire annule cette reprise.
 Le raccourci X conserve l’intention de capture lors des transitions dans les deux sens.
 La souris est recapturée si le navigateur la relâche ; le clavier devient indisponible

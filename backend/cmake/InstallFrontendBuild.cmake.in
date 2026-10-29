@@ -1,0 +1,9 @@
+execute_process(COMMAND "@CMAKE_COMMAND@"
+    "-DSOURCE_REVISION=@MW_SOURCE_REVISION@"
+    "-DSOURCE_DIR=@CMAKE_CURRENT_SOURCE_DIR@/.."
+    "-DOUTPUT_DIR=$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/frontend"
+    -P "@CMAKE_CURRENT_SOURCE_DIR@/cmake/WriteFrontendBuild.cmake"
+    RESULT_VARIABLE stamp_rc)
+if(NOT stamp_rc EQUAL 0)
+    message(FATAL_ERROR "Frontend build metadata generation failed")
+endif()

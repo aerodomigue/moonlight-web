@@ -34,17 +34,28 @@ export class ExclusiveInput {
         this.keyboardPending = false;
         this.keyboardLocked = false;
         this.pointerLocked = false;
-        this.needsGesture = false;
+        this.pointerNeedsGesture = false;
+        this.keyboardNeedsGesture = false;
         this.keyboardUnavailable = false;
         this.generation = 0;
+        this.keyboardGeneration = 0;
         this.expectedUnlock = false;
+        this.escapeHeld = false;
         this.onBlur = () => this.suspend();
-        this.onFocus = () => this.resume();
+        this.onFocus = () => {
+            if (this.closed || !this.foreground) return;
+            if (this.suspended) this.resume();
+            else if (this.keyboardLocked) {
+                // A remembered grant is not proof after an OS/window switch.
+                this.invalidateKeyboard();
+                this.syncKeyboard();
+            }
+        };
         this.onVisibility = () => (doc.hidden ? this.suspend() : this.resume());
         this.onPointer = () => this.pointerChanged();
         this.onPointerError = () => {
             if (this.wantsMouse && !this.suspended && !this.closed) {
-                this.needsGesture = true;
+                this.pointerNeedsGesture = true;
                 this.notify();
             }
         };
@@ -54,7 +65,12 @@ export class ExclusiveInput {
             // stream. Releasing it here would swallow the remote key and hand
             // fullscreen back to the browser. Its long-Escape escape hatch is
             // still handled by the browser, not by this keydown listener.
-            if (event.key === 'Escape' && this.enabled && !this.keyboardLocked) this.disable();
+            if (event.key !== 'Escape') return;
+            this.escapeHeld = true;
+            if (this.enabled && !this.keyboardLocked) this.disable();
+        };
+        this.onEscapeUp = (event) => {
+            if (event.key === 'Escape') this.escapeHeld = false;
         };
         win.addEventListener('blur', this.onBlur);
         win.addEventListener('focus', this.onFocus);
@@ -63,12 +79,19 @@ export class ExclusiveInput {
         doc.addEventListener('pointerlockerror', this.onPointerError);
         doc.addEventListener('fullscreenchange', this.onFullscreen);
         doc.addEventListener('keydown', this.onEscape, true);
+        doc.addEventListener('keyup', this.onEscapeUp, true);
     }
     get wantsMouse() {
         return this.enabled && this.mode !== 'keyboard';
     }
     get wantsKeyboard() {
         return this.enabled && this.mode !== 'mouse';
+    }
+    get needsGesture() {
+        return (
+            (this.wantsMouse && this.pointerNeedsGesture) ||
+            (this.wantsKeyboard && this.keyboardNeedsGesture)
+        );
     }
     get foreground() {
         return !this.doc.hidden && this.doc.hasFocus();
@@ -100,7 +123,9 @@ export class ExclusiveInput {
             !this.foreground
         )
             return;
-        this.needsGesture = false;
+        this.pointerNeedsGesture = false;
+        // Never wait for pointer permission/grant before protecting Escape.
+        const keyboardAttempt = this.syncKeyboard();
         const generation = this.generation;
         if (
             this.wantsMouse &&
@@ -108,8 +133,7 @@ export class ExclusiveInput {
             this.doc.pointerLockElement !== this.element
         ) {
             if (this.doc.pointerLockElement) {
-                this.needsGesture = true;
-                this.syncKeyboard();
+                this.pointerNeedsGesture = true;
                 this.notify();
                 return;
             }
@@ -124,7 +148,7 @@ export class ExclusiveInput {
                     }
                 }
             } catch (_) {
-                if (!this.closed && generation === this.generation) this.needsGesture = true;
+                if (!this.closed && generation === this.generation) this.pointerNeedsGesture = true;
             } finally {
                 this.pointerPending = false;
                 if (
@@ -136,8 +160,8 @@ export class ExclusiveInput {
                     this.attempt();
             }
         }
+        await keyboardAttempt;
         if (generation === this.generation && !this.closed) {
-            this.syncKeyboard();
             this.notify();
         }
     }
@@ -149,8 +173,7 @@ export class ExclusiveInput {
             !this.foreground ||
             !this.doc.fullscreenElement
         ) {
-            if (this.keyboardLocked || this.keyboardPending) this.keyboard?.unlock?.();
-            this.keyboardLocked = false;
+            this.invalidateKeyboard();
             this.keyboardUnavailable = this.wantsKeyboard && !this.doc.fullscreenElement;
             this.notify();
             return;
@@ -160,18 +183,20 @@ export class ExclusiveInput {
             this.notify();
             return;
         }
-        if (this.keyboardPending || this.keyboardLocked) return;
-        const generation = this.generation;
+        if (this.keyboardPending) return this.keyboardCompletion;
+        if (this.keyboardLocked) return;
+        const generation = this.keyboardGeneration;
+        this.keyboardNeedsGesture = false;
         this.keyboardPending = true;
-        Promise.resolve()
+        return (this.keyboardCompletion = Promise.resolve()
             .then(() => {
-                if (generation !== this.generation || this.closed) return;
+                if (generation !== this.keyboardGeneration || this.closed) return;
                 return this.keyboard.lock();
             })
             .then(
                 () => {
                     if (
-                        generation !== this.generation ||
+                        generation !== this.keyboardGeneration ||
                         this.closed ||
                         this.suspended ||
                         !this.wantsKeyboard ||
@@ -185,24 +210,25 @@ export class ExclusiveInput {
                     this.keyboardUnavailable = false;
                 },
                 () => {
-                    if (generation === this.generation) {
+                    if (generation === this.keyboardGeneration) {
                         this.keyboardUnavailable = true;
-                        this.needsGesture = true;
+                        this.keyboardNeedsGesture = true;
                     }
                 },
             )
             .finally(() => {
                 this.keyboardPending = false;
+                this.notify();
                 if (
-                    generation !== this.generation &&
+                    generation !== this.keyboardGeneration &&
                     !this.closed &&
                     this.enabled &&
                     !this.suspended
                 )
-                    this.syncKeyboard();
-                this.notify();
-            });
+                    return this.syncKeyboard();
+            }));
     }
+
     pointerChanged() {
         const wasLocked = this.pointerLocked;
         this.pointerLocked = this.doc.pointerLockElement === this.element;
@@ -213,19 +239,30 @@ export class ExclusiveInput {
                 this.doc.exitPointerLock();
                 return;
             }
-            this.needsGesture = false;
+            this.pointerNeedsGesture = false;
         } else if (this.expectedUnlock) {
             this.expectedUnlock = false;
         } else if (wasLocked) {
-            // Give blur/visibility events from a desktop switch the same turn.
+            // Chromium may drop pointer lock a task BEFORE blur/visibility.
+            // With Keyboard Lock, Escape is observable: an unexplained loss
+            // must not permanently disable the user's capture intent.
+            const unexpected = this.keyboardLocked && !this.escapeHeld;
             clearTimeout(this.lossTimer);
             this.lossTimer = setTimeout(() => {
                 if (this.closed || this.doc.pointerLockElement === this.element) return;
                 if (!this.foreground || this.suspended) this.suspend();
-                else this.disable(); // explicit browser unlock: never recapture it
+                else if (unexpected) {
+                    this.pointerNeedsGesture = true;
+                    this.notify(); // no automatic pointer retry while still focused
+                } else this.disable(); // browser/user escape: never recapture it
             }, 0);
         }
         this.notify();
+    }
+    invalidateKeyboard() {
+        ++this.keyboardGeneration;
+        if (this.keyboardLocked || this.keyboardPending) this.keyboard?.unlock?.();
+        this.keyboardLocked = false;
     }
     dropLocks() {
         ++this.generation;
@@ -234,13 +271,13 @@ export class ExclusiveInput {
             this.expectedUnlock = true;
             this.doc.exitPointerLock();
         }
-        this.keyboard?.unlock?.();
-        this.keyboardLocked = false;
+        this.invalidateKeyboard();
         this.pointerLocked = false;
     }
     suspend() {
         if (this.closed || this.suspended) return;
         this.suspended = true;
+        this.escapeHeld = false;
         this.dropLocks();
         this.notify();
     }
@@ -251,7 +288,8 @@ export class ExclusiveInput {
     }
     disable() {
         this.enabled = false;
-        this.needsGesture = false;
+        this.pointerNeedsGesture = false;
+        this.keyboardNeedsGesture = false;
         this.dropLocks();
         this.notify();
     }
@@ -292,5 +330,6 @@ export class ExclusiveInput {
         this.doc.removeEventListener('pointerlockerror', this.onPointerError);
         this.doc.removeEventListener('fullscreenchange', this.onFullscreen);
         this.doc.removeEventListener('keydown', this.onEscape, true);
+        this.doc.removeEventListener('keyup', this.onEscapeUp, true);
     }
 }

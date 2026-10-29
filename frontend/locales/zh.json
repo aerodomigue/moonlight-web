@@ -24,7 +24,11 @@
         "instances": "您的设备",
         "instanceSwitch": "切换到其他设备",
         "adminLabel": "管理",
-        "settingsLabel": "设置"
+        "settingsLabel": "设置",
+        "frontendBuild": "界面",
+        "backendBuild": "服务器",
+        "buildModified": "已修改",
+        "buildUnknown": "开发版"
     },
     "setup": {
         "title": "欢迎使用 MoonlightWeb",

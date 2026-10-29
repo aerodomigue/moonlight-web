@@ -1527,6 +1527,7 @@ export class StreamView {
         // holding them, so their real keyup is still coming — and would land on
         // the host as a release with no press behind it.
         this._swallowKeyUpCodes = new Set();
+        this._controlKeyUps = new Set();
         // Mouse buttons currently held (1-based, as sent to the host). Same
         // reason as above, plus it feeds the held-input heartbeat below.
         this._heldMouseButtons = new Set();
@@ -9782,6 +9783,7 @@ export class StreamView {
     }
 
     handleKeyDown(e) {
+        if (!e.repeat) this._controlKeyUps?.delete(e.code);
         // Ignore all keyboard input while the stream is being shut down
         if (this._quitting) return;
         // Any keystroke is a user gesture: flush a host-clipboard write that
@@ -9957,9 +9959,8 @@ export class StreamView {
         //   Mac: Cmd+Option+Ctrl+{Q,X,Z,M}
         // Mac replaces Shift with Ctrl because Shift combos conflict with
         // system-level macOS keyboard shortcuts.
-        const modCtrl = e.ctrlKey || e.metaKey;
         const isMac = /Mac/.test(navigator.platform);
-        const modThird = isMac ? e.ctrlKey : e.shiftKey; // Ctrl on Mac, Shift elsewhere
+        const controlCombo = e.ctrlKey && e.altKey && (isMac ? e.metaKey : e.shiftKey);
 
         // ── Escape key ────────────────────────────────────────────────────
         // Prevent the browser from exiting fullscreen or releasing pointer
@@ -9987,7 +9988,12 @@ export class StreamView {
         //            (AltGr on Windows can turn Q into ä on US-Intl layouts).
         //            This prevents false positives on AZERTY where pressing A
         //            at the physical KeyQ position would otherwise trigger Q.
-        if (modCtrl && e.altKey && modThird) {
+        if (controlCombo) {
+            // Local controls consume their release too, even after a fullscreen
+            // transition or after the user releases the modifiers first.
+            if (e.code && !/^(Control|Alt|Shift|Meta)(Left|Right)$/.test(e.code)) {
+                (this._controlKeyUps ??= new Set()).add(e.code);
+            }
             // Resolve the printed label of the physical key. On macOS, holding
             // Option mangles e.key into a special char (Option+q → 'œ'), which
             // would force the e.code (QWERTY position) fallback and break AZERTY.
@@ -10215,6 +10221,10 @@ export class StreamView {
     }
 
     handleKeyUp(e) {
+        if (this._controlKeyUps?.delete(e.code)) {
+            e.preventDefault();
+            return;
+        }
         if (e.target === this._kbdCapture) return;
         // Its press, held back for a composition, goes out before its release.
         if (this._composedKey && this._composedKey.code === e.code) this._flushComposedKey();
