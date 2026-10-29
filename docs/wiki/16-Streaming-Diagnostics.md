@@ -63,3 +63,9 @@ HDR et débit. Faire trois passages de 60 secondes par client ; comparer aussi
 
 Les résultats et limites de la correction sont décrits dans la
 [revue de cadence](../design/streaming-frame-pacing-review.md).
+
+Les essais directs sur Apollo distinguent également la livraison réseau du rendu :
+le banc sans décodage reçoit 144 FPS en 4K HEVC 4:2:0 SDR/HDR, contre environ
+102 FPS en 4:4:4 sur la session testée. Ce résultat ne garantit pas la présentation
+sur chaque navigateur. Les mesures détaillées et les limites matérielles figurent
+dans la revue ; aucun profil de qualité n'est remplacé automatiquement.

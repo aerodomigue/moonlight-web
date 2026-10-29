@@ -8,8 +8,9 @@
    result. Both pipeline consumers count accepted submissions and render drops
    separately; unexpected errors release the frame and the draw guard. Completion
    after teardown does not publish stale counters.
-2. Desktop HEVC HDR used the page animation loop to feed a video element already
-   paced by the compositor. A 60 Hz page gate discarded high-rate decoded frames
+2. With page-synchronized rendering selected, desktop HEVC HDR used the page
+   animation loop to feed a video element already paced by the compositor. A 60 Hz
+   page gate discarded high-rate decoded frames
    before the sink could receive them. Video sinks now receive frames on decode,
    retaining serial writes, the existing queue bound and backpressure. Canvas
    VSync, renderer selection and the experimental pacer are unchanged. Native
@@ -113,7 +114,66 @@ a general 40 Hz browser/display cap is not established.
 Temporarily removing overlay blur gave 26→40 Hz once, then 39.9→40 Hz on repetition:
 there is no reproducible improvement supporting a CSS change. The user settings
 are not changed automatically, and native Moonlight must use the same profile for
-a meaningful comparison. The new relay counters will resolve the remaining hop.
+a meaningful comparison. The autonomous relay measurements below narrow the
+remaining hop.
+
+## Autonomous Apollo measurements on the development VM
+
+The application was built locally from `b60c1fc5`. An isolated backend used a
+private copy of the selected PC's already paired client identity; production
+configuration and other users' registrations were not changed. Tests connected
+to the existing Desktop/UFO session, waited five seconds, then measured serially.
+Stopping a test retained the Desktop application. No input, clipboard or account
+content was included in the numeric reports.
+
+The first harness uses the production authentication, MW-BIND and WebRTC/WSS
+receivers, but does **not** decode or render: this isolates delivery from browser
+GPU/compositor work. All following runs request 3840×2160, HEVC and 150000 kbit/s.
+Bitrate is a ceiling, not a promise of constant traffic.
+
+| Profile / transport | Requested FPS | Measurement | Complete browser arrivals/s | Arrival p99 |
+|---|---:|---|---:|---:|
+| HDR 4:2:0 / WebRTC | 144 | 3 × 60 s | 143.98–144.00 | 7.6 ms |
+| SDR 4:2:0 / WebRTC | 144 | 3 × 60 s | 143.98–144.00 | 7.6–7.7 ms |
+| HDR 4:4:4 / WebRTC | 144 | 2 × 60 s | 102.10–102.62 | 11.0–11.1 ms |
+| HDR 4:2:0 / WebRTC | 120 | 15 s | 120.00 | 9.9 ms |
+| HDR 4:2:0 / WebRTC | 240 | 15 s | 144.00 | 7.9 ms |
+| HDR 4:2:0 / WSS | 144 | 60 s | 144.00 | 7.5 ms |
+
+The relay, worker and sender counters show no measured drops or accumulating
+queue in these intervals. The 144 FPS 4:2:0 HDR traffic was approximately
+49.5 Mbit/s. Source timestamps and arrival elapsed time progress at the same rate;
+there is no growing transport delay in the measured interval. A short encoded
+sample independently decodes as 4K Main 10/PQ at 144 FPS; 1090 consecutive frames
+contain no exact adjacent duplicates, and the steady UFO page reports 144 FPS.
+This is not a repeated 60 FPS image counted as 144 distinct deliveries.
+
+The 4:4:4 deficit reproduces before browser decoding, including at the relay's
+input. Reported host capture/encode processing is about 13.7 ms versus roughly
+6–7 ms for 4:2:0. This is evidence of a profile-dependent upstream limit, **not**
+proof of a particular Apollo encoder defect: native Moonlight with the identical
+profile and packet/FEC measurements are still needed to separate causes. No
+automatic switch to 4:2:0 was added.
+
+For the 240 FPS case, backend setup and negotiated `drSetup` both report 240, but
+only 144 frames/s arrive in this already running Desktop session. It must not be
+reported as successful 240 FPS delivery or as an application-side request cap.
+The current display/capture state on the remote PC remains a factor to investigate.
+
+The development VM exposes QEMU VGA/SwiftShader with no hardware render node.
+Its Chromium cannot decode HEVC through WebCodecs. H.264 software rendering tests
+exercise real application lifecycle and accounting, but cannot validate the Mac's
+HEVC/HDR presentation. A 1080p canvas run saturated software decode/render;
+forcing the existing video sink in the **test harness only** accepted 144 FPS
+without drops. Restoring the old page gate in the same 1080p/144 H.264 test
+produced 143.93 decoded FPS but only 55.47 accepted submissions/s and 88.47
+queue drops/s, versus 144 accepted submissions/s and zero drops with the fix.
+Both measurements lasted 15 seconds after five seconds of warm-up. This reproduces
+the scheduling defect with actual Apollo frames; it does not establish that the
+Mac was using that gate. A 4K H.264 software/video-sink run reached about 86
+decoded/submitted FPS with decoder backpressure, retaining the requested 4K/144
+configuration. The software worker/canvas path was slower still; neither result
+is a hardware acceptance test. The production renderer selection is unchanged.
 
 ## Validation and delivery
 
