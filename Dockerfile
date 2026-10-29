@@ -71,7 +71,6 @@ RUN apt-get update \
 # version. The value is baked into the binary (MW_VERSION) and is what
 # `--version`, the update check and the User-Agent report.
 ARG MW_VERSION=""
-ARG MW_SOURCE_REVISION=""
 
 # The project's own service configuration, embedded at configure time exactly
 # as the .deb and the installers embed it (backend/CMakeLists.txt reads these
@@ -94,7 +93,6 @@ COPY frontend frontend
 RUN cmake -S backend -B /tmp/build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DMW_VERSION="${MW_VERSION}" \
-        -DMW_SOURCE_REVISION="${MW_SOURCE_REVISION}" \
  && cmake --build /tmp/build -j "$(nproc)" \
  && cmake --install /tmp/build --prefix /stage \
  && rm -rf /tmp/build

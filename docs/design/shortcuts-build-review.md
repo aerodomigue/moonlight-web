@@ -32,7 +32,7 @@ server version. `cmake --install ... --component Frontend` stages frontend-only
 updates and stamps the actual source HEAD (full hash, eight characters displayed).
 Modified trees are labelled. Archives without Git require an explicit full
 `MW_SOURCE_REVISION`, otherwise the UI says development rather than guessing.
-Container builds can pass that revision as a build argument. Without it, the
+Archive builds can pass that revision to CMake. Without it, the
 checkout is explicitly unidentified; no shortened version is mistaken for a
 full source hash. Metadata has no credentials.
 
