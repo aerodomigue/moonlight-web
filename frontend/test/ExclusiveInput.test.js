@@ -100,6 +100,9 @@ describe('exclusive input lifecycle', () => {
     });
     it('never recaptures after voluntary release', async () => {
         await capture.attempt();
+        const escape = new Event('keydown');
+        escape.key = 'Escape';
+        doc.dispatchEvent(escape);
         doc.pointerLockElement = null;
         doc.dispatchEvent(new Event('pointerlockchange'));
         await vi.advanceTimersByTimeAsync(0);
@@ -292,6 +295,122 @@ describe('exclusive input lifecycle', () => {
         expect(doc.pointerLockElement).toBe(null);
         expect(element.requestPointerLock).toHaveBeenCalledOnce();
     });
+    it('restores keyboard capture before a slow pointer request resolves', async () => {
+        await capture.attempt();
+        await tick();
+        focus = false;
+        win.dispatchEvent(new Event('blur'));
+        let grant;
+        element.requestPointerLock.mockImplementationOnce(
+            () =>
+                new Promise((r) => {
+                    grant = r;
+                }),
+        );
+        focus = true;
+        win.dispatchEvent(new Event('focus'));
+        await tick();
+        expect(capture.pointerPending).toBe(true);
+        expect(capture.keyboardLocked).toBe(true);
+        const event = new Event('keydown');
+        event.key = 'Escape';
+        doc.dispatchEvent(event);
+        expect(capture.enabled).toBe(true);
+        grant();
+        await tick();
+    });
+    it('does not erase a keyboard permission refusal when pointer capture arrives later', async () => {
+        keyboard.lock.mockRejectedValue(new Error('NotAllowedError'));
+        let grant;
+        element.requestPointerLock.mockImplementationOnce(
+            () =>
+                new Promise((r) => {
+                    grant = () => {
+                        doc.pointerLockElement = element;
+                        doc.dispatchEvent(new Event('pointerlockchange'));
+                        r();
+                    };
+                }),
+        );
+        const pending = capture.attempt();
+        await tick();
+        expect(capture.keyboardUnavailable).toBe(true);
+        grant();
+        await pending;
+        await tick();
+        expect(capture.needsGesture).toBe(true);
+        keyboard.lock.mockResolvedValue();
+        capture.toggle();
+        await tick();
+        expect(capture.enabled).toBe(true);
+        expect(capture.keyboardLocked).toBe(true);
+    });
+    it('rechecks a remembered keyboard grant on focus even if blur was not observed', async () => {
+        await capture.attempt();
+        await tick();
+        win.dispatchEvent(new Event('focus'));
+        await tick();
+        expect(keyboard.lock).toHaveBeenCalledTimes(2);
+        expect(capture.keyboardLocked).toBe(true);
+    });
+    it('keeps keyboard capture when pointer permission is refused', async () => {
+        element.requestPointerLock.mockRejectedValue(new Error('NotAllowedError'));
+        await capture.attempt();
+        expect(capture.keyboardLocked).toBe(true);
+        expect(capture.needsGesture).toBe(true);
+        expect(capture.enabled).toBe(true);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(element.requestPointerLock).toHaveBeenCalledTimes(1);
+    });
+    it('rejects an old keyboard grant across an external fullscreen exit and reentry', async () => {
+        capture.mode = 'keyboard';
+        let grant;
+        keyboard.lock.mockImplementationOnce(
+            () =>
+                new Promise((r) => {
+                    grant = r;
+                }),
+        );
+        const pending = capture.attempt();
+        await tick();
+        doc.fullscreenElement = null;
+        doc.dispatchEvent(new Event('fullscreenchange'));
+        doc.fullscreenElement = {};
+        doc.dispatchEvent(new Event('fullscreenchange'));
+        expect(capture.keyboardLocked).toBe(false);
+        grant();
+        await pending;
+        expect(keyboard.lock).toHaveBeenCalledTimes(2);
+        expect(capture.keyboardLocked).toBe(true);
+        expect(capture.enabled).toBe(true);
+    });
+    it('preserves capture intent when pointer loss precedes blur by another task', async () => {
+        await capture.attempt();
+        doc.pointerLockElement = null;
+        doc.dispatchEvent(new Event('pointerlockchange'));
+        await vi.advanceTimersByTimeAsync(50);
+        expect(capture.enabled).toBe(true);
+        expect(capture.needsGesture).toBe(true);
+        expect(element.requestPointerLock).toHaveBeenCalledTimes(1);
+        focus = false;
+        win.dispatchEvent(new Event('blur'));
+        focus = true;
+        win.dispatchEvent(new Event('focus'));
+        await tick();
+        expect(capture.enabled).toBe(true);
+        expect(capture.keyboardLocked).toBe(true);
+        expect(doc.pointerLockElement).toBe(element);
+    });
+    it('does not carry a denied keyboard permission into mouse-only mode', async () => {
+        keyboard.lock.mockRejectedValue(new Error('NotAllowedError'));
+        await capture.attempt();
+        expect(capture.needsGesture).toBe(true);
+        capture.select('mouse');
+        await tick();
+        expect(capture.needsGesture).toBe(false);
+        expect(capture.keyboardLocked).toBe(false);
+        expect(doc.pointerLockElement).toBe(element);
+    });
     it('migrates old settings while separating selection and activation', () => {
         expect(exclusiveSettings({ gaming_mode: true })).toEqual({ mode: 'both', enabled: true });
         expect(exclusiveSettings({ gaming_mode: false })).toEqual({
@@ -338,10 +457,11 @@ describe('exclusive capture promise races', () => {
             win: new EventTarget(),
             keyboard,
         });
-        await capture.attempt();
+        const attempt = capture.attempt();
         await Promise.resolve();
         capture.disable();
         grant();
+        await attempt;
         await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
