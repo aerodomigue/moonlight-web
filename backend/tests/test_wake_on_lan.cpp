@@ -7,7 +7,7 @@
 
 void run_wake_on_lan_tests()
 {
-    SECTION("LAN-only Wake-on-LAN");
+    SECTION("Private IPv4 Wake-on-LAN");
     const QByteArray mac = WakeOnLan::parseMac("02:11:22:33:44:55");
     CHECK_EQ(mac.size(), 6);
     CHECK_EQ(WakeOnLan::parseMac("02-11-22-33-44-55"), mac);
@@ -28,18 +28,28 @@ void run_wake_on_lan_tests()
     CHECK_EQ(targets.size(), 1);
     if (!targets.isEmpty()) {
         CHECK_EQ(targets[0].source, QHostAddress("10.2.10.124"));
-        CHECK_EQ(targets[0].broadcast, QHostAddress("10.2.255.255"));
+        CHECK_EQ(targets[0].destination, QHostAddress("10.2.255.255"));
     }
     for (const auto* invalid :
          {"198.51.100.20", "8.8.8.8", "100.64.0.1", "127.0.0.1", "::1", "fd00::2", "host.example",
-          "10.3.0.5", "10.2.0.0", "10.2.255.255", "10.2.10.124"})
+          "10.2.0.0", "10.2.255.255", "10.2.10.124"})
         CHECK(WakeOnLan::targets({invalid}, {lan}).isEmpty());
+    auto routed = WakeOnLan::targets({"192.168.5.191", "192.168.5.191"}, {lan});
+    CHECK_EQ(routed.size(), 1);
+    if (!routed.isEmpty()) {
+        CHECK_EQ(routed[0].source, QHostAddress(QHostAddress::AnyIPv4));
+        CHECK_EQ(routed[0].destination, QHostAddress("192.168.5.191"));
+    }
+    // ARP eligibility remains strictly on-link, independent of WOL routing.
+    CHECK(WakeOnLan::broadcastTargets({"192.168.5.191"}, {lan}).isEmpty());
+    CHECK_EQ(WakeOnLan::broadcastTargets({"10.2.42.5"}, {lan}).size(), 1);
+    CHECK_EQ(WakeOnLan::targets({"192.168.5.191"}, {}).size(), 1);
     QNetworkAddressEntry other;
     other.setIp(QHostAddress("192.168.5.2"));
     other.setPrefixLength(23);
     auto multiple = WakeOnLan::targets({"10.2.42.5", "192.168.4.20"}, {lan, other});
     CHECK_EQ(multiple.size(), 2);
-    if (multiple.size() == 2) CHECK_EQ(multiple[1].broadcast, QHostAddress("192.168.5.255"));
+    if (multiple.size() == 2) CHECK_EQ(multiple[1].destination, QHostAddress("192.168.5.255"));
     QNetworkAddressEntry publicInterface;
     publicInterface.setIp(QHostAddress("198.51.100.2"));
     publicInterface.setPrefixLength(24);
@@ -49,9 +59,9 @@ void run_wake_on_lan_tests()
     lan.setPrefixLength(24);
     targets = WakeOnLan::targets({"10.2.10.20", "10.2.10.30"}, {lan});
     CHECK_EQ(targets.size(), 1);
-    if (!targets.isEmpty()) CHECK_EQ(targets[0].broadcast, QHostAddress("10.2.10.255"));
+    if (!targets.isEmpty()) CHECK_EQ(targets[0].destination, QHostAddress("10.2.10.255"));
     lan.setPrefixLength(32);
-    CHECK(WakeOnLan::targets({"10.2.10.20"}, {lan}).isEmpty());
+    CHECK_EQ(WakeOnLan::targets({"10.2.10.20"}, {lan}).size(), 1);
 
     const QString arp = "IP address HW type Flags HW address Mask Device\n"
                         "10.2.10.20 0x1 0x2 02:11:22:33:44:55 * eth0\n"

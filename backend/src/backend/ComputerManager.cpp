@@ -1657,15 +1657,14 @@ std::pair<int, QJsonObject> ComputerManager::handleWakeHost(const QString& uuid)
     const auto targets = WakeOnLan::targets(host->wakeAddresses(), WakeOnLan::lanEntries());
     if (targets.isEmpty())
         return {400,
-                {{"status", "error"},
-                 {"message", "No local IPv4 address on a connected LAN for this host"}}};
+                {{"status", "error"}, {"message", "No usable private IPv4 address for this host"}}};
 
     bool sentAny = false;
     for (const auto& target : targets) {
         QUdpSocket socket;
         if (!socket.bind(target.source, 0)) continue;
         for (quint16 port : {quint16(9), quint16(7)}) {
-            if (socket.writeDatagram(packet, target.broadcast, port) == packet.size())
+            if (socket.writeDatagram(packet, target.destination, port) == packet.size())
                 sentAny = true;
         }
     }
