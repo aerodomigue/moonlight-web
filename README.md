@@ -293,15 +293,19 @@ automatiquement lorsqu’elles sont accessibles, hors flux actif. Les échecs so
 réessayés au maximum toutes les cinq minutes. Une MAC authentifiée n’est pas
 écrasée par une réponse HTTP ou ARP, ni par une valeur vide.
 
-Le paquet est émis **par le backend sur le LAN de la cible**, avec le masque
-réel de son interface, sur les ports UDP 7 et 9. Les adresses publiques et les
-cibles hors des sous-réseaux directement connectés sont refusées. Le navigateur
-peut se trouver à distance derrière votre proxy : c'est le serveur qui doit
-avoir accès au LAN du PC.
+Le paquet est émis **par le backend**, sur les ports UDP 7 et 9. Sur un
+sous-réseau directement connecté, il utilise le broadcast calculé avec le masque
+de l’interface. Pour une IP privée située dans un autre VLAN ou réseau routé,
+il est envoyé directement à cette IP en UDP ; le système choisit la route et
+l’interface de sortie. Les IP publiques restent refusées. Les modes Automatique
+et Manuel utilisent cette même règle. La recherche ARP reste limitée au réseau
+directement connecté et ne récupère jamais la MAC d’une passerelle pour une cible routée.
 
-Le WOL doit aussi être activé dans le firmware et sur la carte réseau de la
-machine cible. Le bridge Docker standard ne fournit généralement pas l'accès
-direct au sous-réseau nécessaire ; le Compose fourni utilise donc le réseau hôte.
+Un succès signifie que le paquet a été envoyé, pas que le PC s’est réveillé.
+Le routeur doit pouvoir l’acheminer jusqu’au PC éteint et sa carte réseau doit
+accepter le WOL. Aucun routeur, VLAN ou pare-feu n’est reconfiguré automatiquement.
+Le broadcast local nécessite un accès à ce réseau ; le Compose fourni utilise
+le réseau hôte. Le WOL doit être activé dans le firmware et sur la carte réseau.
 Il n'est pas nécessaire d'exposer un port WOL sur Internet.
 
 ## Variables principales

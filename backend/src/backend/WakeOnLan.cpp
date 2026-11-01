@@ -1,4 +1,4 @@
-// LAN-only Wake-on-LAN helpers. GPL-3.0-or-later.
+// Private IPv4 Wake-on-LAN helpers. GPL-3.0-or-later.
 #include "WakeOnLan.h"
 #include "server/NetClassify.h"
 
@@ -59,7 +59,8 @@ QList<QNetworkAddressEntry> lanEntries()
     return entries;
 }
 
-QVector<Target> targets(const QStringList& addresses, const QList<QNetworkAddressEntry>& entries)
+QVector<Target> broadcastTargets(const QStringList& addresses,
+                                 const QList<QNetworkAddressEntry>& entries)
 {
     QVector<Target> result;
     for (const auto& entry : entries) {
@@ -83,6 +84,33 @@ QVector<Target> targets(const QStringList& addresses, const QList<QNetworkAddres
     return result;
 }
 
+QVector<Target> targets(const QStringList& addresses, const QList<QNetworkAddressEntry>& entries)
+{
+    auto result = broadcastTargets(addresses, entries);
+    for (const auto& text : addresses) {
+        if (!isLocalIpv4(text)) continue;
+        const QHostAddress host(text);
+        bool onLink = false;
+        for (const auto& entry : entries) {
+            if (host == entry.ip() ||
+                (entry.prefixLength() >= 0 && host.isInSubnet(entry.ip(), entry.prefixLength()))) {
+                onLink = true;
+                break;
+            }
+        }
+        // On-link destinations retain the existing broadcast validation (no
+        // self, network or broadcast address). For routed private addresses,
+        // let the OS choose the source/interface and gateway; never infer a
+        // remote subnet's broadcast address or resolve the gateway's MAC.
+        if (onLink) continue;
+        bool duplicate = false;
+        for (const auto& target : result)
+            if (target.destination == host) duplicate = true;
+        if (!duplicate) result.append({QHostAddress::AnyIPv4, host});
+    }
+    return result;
+}
+
 QByteArray macFromArpTable(const QString& table, const QString& ip)
 {
     if (!isLocalIpv4(ip)) return {};
@@ -100,7 +128,7 @@ QByteArray macFromArpTable(const QString& table, const QString& ip)
 QByteArray resolveMac(const QString& ip)
 {
     // Never learn a router's MAC for a public or routed destination.
-    if (targets({ip}, lanEntries()).isEmpty()) return {};
+    if (broadcastTargets({ip}, lanEntries()).isEmpty()) return {};
 #ifdef Q_OS_WIN
     const quint32 host = QHostAddress(ip).toIPv4Address();
     const quint32 dest = qToBigEndian(host);

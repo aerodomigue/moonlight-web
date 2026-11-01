@@ -2,9 +2,12 @@
 """WOL metadata against a mutually authenticated Apollo HTTPS fixture.
 
 Usage: python3 backend/tests/test_wol_integration.py build/MoonlightWeb
-Only ephemeral loopback providers and state are used; no wake packets are sent.
+Only ephemeral providers/state are used. UDP delivery testing requires an isolated
+network namespace with MW_WOL_TEST_IP assigned to loopback.
 """
 import configparser
+import os
+import socket
 from contextlib import contextmanager
 import http.server
 from pathlib import Path
@@ -84,12 +87,42 @@ class WolIntegration(oidc.OidcIsolation):
             data=self.wait_wol(alice,path,lambda d:d['detected']['source']=='https')
             self.assertEqual(data['detected']['mac'],'4c:d5:77:cb:4b:d9')
             self.assertEqual(data['detected']['address'],'192.168.5.191')
-            self.assertEqual(data['reason'],'network_unreachable');self.assertFalse(data['available'])
+            self.assertEqual(data['reason'],'available');self.assertTrue(data['available'])
+            self.assertTrue(alice.request('/api/hosts')[1]['hosts'][0]['wakeSupported'])
             self.assertEqual(peer.clients,[True]);self.assertEqual(peer.requests,1)
             self.assertEqual(alice.request('/api/hosts')[1]['hosts'][0]['pairState'],'paired')
             self.start();alice.base=self.base;self.login(alice)
             self.assertEqual(alice.request(path)[1]['detected'],data['detected'])
             time.sleep(5.5);self.assertEqual(peer.requests,1)
+
+    @unittest.skipUnless(os.environ.get('MW_WOL_TEST_IP'), 'requires isolated UDP test namespace')
+    def test_wol_routed_private_ip_receives_magic_packet(self):
+        ip = os.environ['MW_WOL_TEST_IP']
+        with self.wol_peer() as (alice,path,peer):
+            self.start();alice.base=self.base;self.login(alice)
+            self.wait_wol(alice,path,lambda d:d['detected']['source']=='https')
+            listeners = []
+            try:
+                for port in (7,9):
+                    listener=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+                    listener.bind((ip,port));listener.settimeout(3);listeners.append(listener)
+                # Test the automatic, authenticated Apollo IP/MAC first.
+                self.assertEqual(alice.request(path)[1]['effective']['address'],ip)
+                wake = path.replace('/wol-config','/wol')
+                self.assertEqual(alice.request(wake,{})[0],200)
+                expected=b'\xff'*6+bytes.fromhex(peer.mac.replace(':',''))*16
+                for listener in listeners:self.assertEqual(listener.recv(2048),expected)
+                self.assertEqual(alice.request(path,{'address':ip,'mac':peer.mac})[0],200)
+                self.assertEqual(alice.request(wake,{})[0],200)
+                for listener in listeners:self.assertEqual(listener.recv(2048),expected)
+                self.assertEqual(alice.request(path,{'address':'8.8.8.8','mac':peer.mac})[0],400)
+                bob=Browser(self.base);self.login(bob,subject='other-wol-user')
+                self.assertIn(bob.request(wake,{})[0],(403,404))
+                for listener in listeners:
+                    listener.settimeout(.1)
+                    with self.assertRaises(socket.timeout):listener.recv(2048)
+            finally:
+                for listener in listeners:listener.close()
 
     def test_wol_wrong_certificate_and_physical_identity_are_rejected(self):
         for wrong_pin in (True,False):

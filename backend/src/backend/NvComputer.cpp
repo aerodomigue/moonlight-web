@@ -519,7 +519,7 @@ QJsonObject NvComputer::wakeConfigJson() const
     for (const auto& address : {localAddress, manualAddress, activeAddress}) {
         if (!WakeOnLan::isLocalIpv4(address.address())) continue;
         if (detectedAddress.isEmpty()) detectedAddress = address.address();
-        if (!WakeOnLan::targets({address.address()}, entries).isEmpty()) {
+        if (!WakeOnLan::broadcastTargets({address.address()}, entries).isEmpty()) {
             detectedAddress = address.address();
             break;
         }
