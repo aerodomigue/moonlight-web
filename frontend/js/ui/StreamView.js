@@ -9896,7 +9896,7 @@ export class StreamView {
 
         // Apollo's copy/cut chord uses the host's modifier, never the client's
         // Meta-as-Windows mapping. Release modifiers before the async operation.
-        const localCopyModifier = this._appleKeyboard ? e.metaKey && !e.ctrlKey : e.ctrlKey;
+        const localCopyModifier = this._appleKeyboard ? e.metaKey !== e.ctrlKey : e.ctrlKey;
         if (
             this._apolloClipboard?.read &&
             localCopyModifier &&
@@ -9905,9 +9905,30 @@ export class StreamView {
             ['c', 'x'].includes(e.key.toLowerCase())
         ) {
             e.preventDefault();
+            this._apolloClipboard.cancelLocalRead();
             this._releaseHeldModifiers();
             this._suppressPasteKeyUpCode = e.code;
             this.webrtc.send({ type: 'clipboardcopy', cut: e.key.toLowerCase() === 'x' });
+            return;
+        }
+
+        // macOS has no native paste event for Ctrl+V. Read explicitly within
+        // this user gesture and use Apollo's write-before-paste transaction.
+        // Never forward V first: that would paste the host's stale clipboard.
+        if (
+            this._apolloClipboard &&
+            this._clipboardEnabled &&
+            this._appleKeyboard &&
+            e.ctrlKey &&
+            !e.metaKey &&
+            !e.altKey &&
+            !e.shiftKey &&
+            e.key.toLowerCase() === 'v'
+        ) {
+            e.preventDefault();
+            this._releaseHeldModifiers();
+            this._suppressPasteKeyUpCode = e.code;
+            this._apolloClipboard.pasteFromClient();
             return;
         }
 
@@ -9927,7 +9948,7 @@ export class StreamView {
         // and a swallowed key-up for a paste event that was never coming —
         // and the swallowed release left V held on the host, where typematic
         // turned one paste into an endless one. Ctrl+V on a Mac is a plain
-        // keystroke again: the host pastes its own clipboard, immediately.
+        // keystroke for the legacy local bridge; Apollo is handled above.
         const pasteChord = this._appleKeyboard ? e.metaKey && !e.ctrlKey : e.ctrlKey;
         if (
             this._clipboardEnabled &&
@@ -9936,6 +9957,7 @@ export class StreamView {
             !e.shiftKey &&
             (e.key === 'v' || e.key === 'V')
         ) {
+            this._apolloClipboard?.cancelLocalRead();
             if (this._pendingPasteKey) clearTimeout(this._pendingPasteKey.timer);
             this._pendingPasteKey = {
                 code: e.code,
@@ -10343,6 +10365,7 @@ export class StreamView {
     // on the host. Mouse buttons have the same hole in gaming mode, where a
     // mouseup arriving after focus loss is dropped by the _mouseFocused gate.
     _releaseAllPhysKeys() {
+        this._apolloClipboard?.cancelLocalRead();
         // Caps Lock may have changed while another window owned the keyboard.
         this._appleCapsLockState = undefined;
         // A press still held back would go out after the releases below, with

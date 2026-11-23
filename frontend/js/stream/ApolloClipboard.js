@@ -10,7 +10,10 @@ export class ApolloClipboard {
         error,
         foreground = () => !document.hidden && document.hasFocus(),
     }) {
-        Object.assign(this, { send, pending, error, foreground });
+        this.send = send;
+        this.pending = pending;
+        this.error = error;
+        this.foreground = foreground;
         this.read = false;
         this.write = false;
         this.closed = false;
@@ -18,6 +21,7 @@ export class ApolloClipboard {
         this.assembly = null;
         this.pasting = false;
         this.timer = null;
+        this.localRead = null;
     }
     handle(msg) {
         if (this.closed) return;
@@ -31,6 +35,9 @@ export class ApolloClipboard {
                 msg.code === 'too_large' ? 'tooLarge' : msg.code === 'busy' ? 'busy' : 'failed',
             );
         } else if (msg.type === 'clipboardchunk' && this.read) {
+            // A local paste owns the clipboard while its permission/read is
+            // pending. An older host read must not replace that local text.
+            if (this.localRead || this.pasting) return;
             const { id, index, total, data } = msg;
             if (
                 typeof id !== 'string' ||
@@ -81,11 +88,19 @@ export class ApolloClipboard {
     }
     poll() {
         if (this.closed || !this.read) return;
-        if (this.foreground()) this.send({ type: 'clipboardread' });
+        if (this.foreground() && !this.localRead && !this.pasting)
+            this.send({ type: 'clipboardread' });
         this.timer = setTimeout(() => this.poll(), 1000);
     }
     async copyPending() {
-        if (this.closed || this.text === null || !this.foreground()) return;
+        if (
+            this.closed ||
+            this.localRead ||
+            this.pasting ||
+            this.text === null ||
+            !this.foreground()
+        )
+            return;
         const text = this.text;
         try {
             await navigator.clipboard.writeText(text);
@@ -97,8 +112,49 @@ export class ApolloClipboard {
             /* Keep the text pending for the next existing user gesture. */
         }
     }
+    cancelLocalRead() {
+        const read = this.localRead;
+        this.localRead = null;
+        if (read) {
+            clearTimeout(read.timer);
+            read.cancel();
+        }
+    }
+    async pasteFromClient() {
+        if (this.closed || !this.write || !this.foreground()) return;
+        if (this.localRead || this.pasting) {
+            this.error('busy');
+            return;
+        }
+        const read = {};
+        const cancelled = new Promise((resolve, reject) => {
+            read.cancel = resolve;
+            read.timer = setTimeout(() => reject(new Error('Clipboard read timed out')), 10000);
+        });
+        this.localRead = read;
+        this.text = null;
+        this.assembly = null;
+        this.pending(false);
+        try {
+            // Invoke directly in the keyboard gesture, before any await.
+            const text = await Promise.race([navigator.clipboard.readText(), cancelled]);
+            if (this.localRead !== read || this.closed || !this.write || !this.foreground()) return;
+            if (!text) {
+                this.error('textOnly');
+                return;
+            }
+            this.cancelLocalRead();
+            await this.paste(text);
+        } catch (_) {
+            if (this.localRead === read && !this.closed && this.foreground())
+                this.error('readDenied');
+        } finally {
+            if (this.localRead === read) this.cancelLocalRead();
+        }
+    }
     async paste(text) {
         if (this.closed || !this.write) return;
+        this.cancelLocalRead();
         if (this.pasting) {
             this.error('busy');
             return;
@@ -131,6 +187,7 @@ export class ApolloClipboard {
     }
     destroy() {
         this.closed = true;
+        this.cancelLocalRead();
         clearTimeout(this.timer);
         this.text = null;
         this.assembly = null;

@@ -137,6 +137,11 @@ d’écriture et de clavier s’appliquent séparément au certificat déjà app
 initial d’Apollo sert uniquement de référence, même s’il est vide. Une copie
 explicite sur le PC distant remonte ensuite, y compris si son texte est inchangé.
 Aucun contenu local n’est envoyé automatiquement à l’ouverture : utilisez Coller.
+Sur Mac, **Cmd+V et Ctrl+V** transmettent le texte local à Apollo avant le collage.
+Ctrl+V demande l’autorisation de lecture du presse-papiers au navigateur ; en cas
+de refus, un message invite à autoriser cette lecture ou à utiliser Cmd+V.
+**Cmd+C/X et Ctrl+C/X** copient/coupent sur le PC distant puis récupèrent le texte
+sur le Mac, où il peut être collé avec Cmd+V.
 Le presse-papiers fonctionne sans contrôle supplémentaire dans le flux. Le collage
 attend l’écriture réussie sur Apollo avant d’envoyer le raccourci ; un échec ne colle
 pas l’ancien contenu. La lecture ne s’effectue que pendant un flux au premier

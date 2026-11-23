@@ -947,6 +947,7 @@
         "rcCursor": "浏览器光标",
         "rcCursorVal": "长按返回键",
         "clipboard_failed": "剪贴板操作失败，请检查 Apollo 客户端权限。",
+        "clipboard_readDenied": "无法读取本地剪贴板。请允许浏览器访问剪贴板，或使用 Cmd+V。",
         "clipboard_busy": "正在粘贴，请稍候。",
         "clipboard_tooLarge": "文本超过剪贴板的 256 KiB 限制。",
         "clipboard_textOnly": "仅支持文本，请复制文本后重试。",
