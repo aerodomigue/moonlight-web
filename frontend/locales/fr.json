@@ -947,6 +947,7 @@
         "rcCursor": "Curseur du navigateur",
         "rcCursorVal": "Retour maintenu",
         "clipboard_failed": "Échec du presse-papiers. Vérifiez les permissions du client dans Apollo.",
+        "clipboard_readDenied": "Impossible de lire le presse-papiers local. Autorisez sa lecture dans le navigateur ou utilisez Cmd+V.",
         "clipboard_busy": "Un collage est déjà en cours.",
         "clipboard_tooLarge": "Le texte dépasse la limite de 256 Kio du presse-papiers.",
         "clipboard_textOnly": "Seul le texte peut être collé. Copiez du texte puis réessayez.",

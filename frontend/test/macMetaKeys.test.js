@@ -177,6 +177,23 @@ describe('Cmd+V reaching the host as a paste', () => {
 });
 
 describe('Ctrl+V on a Mac', () => {
+    it('reads the Mac clipboard for Apollo instead of forwarding a stale paste', () => {
+        let reads = 0;
+        const v = keySink({
+            _clipboardEnabled: true,
+            _apolloClipboard: { pasteFromClient: () => reads++ },
+            _releaseHeldModifiers: StreamView.prototype._releaseHeldModifiers,
+        });
+        v.handleKeyDown(ev('ControlLeft', 'Control', { ctrlKey: true }));
+        v.sent.length = 0;
+        v.handleKeyDown(ev('KeyV', 'v', { ctrlKey: true }));
+        v.handleKeyDown(ev('KeyV', 'v', { ctrlKey: true, repeat: true }));
+        v.handleKeyUp(ev('KeyV', 'v', { ctrlKey: true }));
+        expect(reads).toBe(1);
+        expect(v.sent.every((m) => m.type === 'keyup')).toBe(true);
+        expect(v._heldPhysKeys.size).toBe(0);
+        expect(v._pendingPasteKey).toBe(null);
+    });
     // macOS pastes with Cmd, so Ctrl+V never fires a native 'paste' event.
     // Routing it through the clipboard bridge meant waiting 150ms for an event
     // that was not coming, then swallowing V's release — which left V held on
@@ -206,6 +223,37 @@ describe('Ctrl+V on a Mac', () => {
         v.handleKeyUp(ev('KeyV', 'v', { ctrlKey: true }));
         expect(v._heldPhysKeys.has('KeyV')).toBe(false);
         expect(v._suppressPasteKeyUpCode).toBe(null);
+    });
+});
+
+describe('Apollo copy/cut on a Mac', () => {
+    it.each(['c', 'v'])('cancels a pending permission read before Cmd+%s', (key) => {
+        let cancelled = 0;
+        const v = keySink({
+            _clipboardEnabled: true,
+            _apolloClipboard: { read: true, cancelLocalRead: () => cancelled++ },
+            _releaseHeldModifiers() {},
+        });
+        v.handleKeyDown(ev(key === 'c' ? 'KeyC' : 'KeyV', key, { metaKey: true }));
+        expect(cancelled).toBe(1);
+        if (v._pendingPasteKey) clearTimeout(v._pendingPasteKey.timer);
+    });
+    it.each([
+        ['c', false, { ctrlKey: true }],
+        ['x', true, { ctrlKey: true }],
+        ['c', false, { metaKey: true }],
+        ['x', true, { metaKey: true }],
+    ])('synchronizes %s with %j using %j exactly once', (key, cut, mods) => {
+        const v = keySink({
+            _apolloClipboard: { read: true, cancelLocalRead() {} },
+            _releaseHeldModifiers() {},
+        });
+        const code = key === 'c' ? 'KeyC' : 'KeyX';
+        v.handleKeyDown(ev(code, key, mods));
+        v.handleKeyDown(ev(code, key, { ...mods, repeat: true }));
+        v.handleKeyUp(ev(code, key, mods));
+        expect(v.sent).toEqual([{ type: 'clipboardcopy', cut }]);
+        expect(v._heldPhysKeys.size).toBe(0);
     });
 });
 
@@ -265,7 +313,7 @@ describe('Apollo clipboard shortcuts', () => {
     it('maps Cmd+C to one remote copy after releasing held modifiers', () => {
         const release = [];
         const v = keySink({
-            _apolloClipboard: { read: true },
+            _apolloClipboard: { read: true, cancelLocalRead() {} },
             _releaseHeldModifiers: () => release.push(true),
         });
         v.handleKeyDown(ev('KeyC', 'c', { metaKey: true }));
